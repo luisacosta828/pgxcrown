@@ -22,6 +22,7 @@ else:
         echo "pg_config no disponible."
     else:
         #Se debe añadir postgresql-server-dev-XX
+        const pg_version:string = staticExec("""psql -V | awk '{ print "/"int($3)"/server"} '""").split("\n")[0]
         #Se debe añadir la version de postgres antes del /server -> /include_path/version/server
-        const server = " -I" & root & "/server"
-        {.passC: server & " -I"&root.}  
+        const server = " -I" & root & pg_version
+        {.passC: server & " -I"&root.}
