@@ -6,8 +6,8 @@ type
     Datum* {.importc: "Datum".} = cuint
 
 template PG_MODULE_MAGIC* =     
-    const DLL = "PGDLLEXPORT $# $#$#"
-    const V1_DEF = "PGDLLEXPORT $# $#(PG_FUNCTION_ARGS)"
+    const DLL* = "PGDLLEXPORT $# $#$#"
+    const V1_DEF* = "PGDLLEXPORT $# $#(PG_FUNCTION_ARGS)"
     {.pragma: pgdllexport, codegenDecl: DLL, exportc.}
     {.pragma: pgv1 , codegenDecl: V1_DEF, exportc, dynlib.}
 
