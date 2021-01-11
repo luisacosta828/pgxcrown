@@ -25,7 +25,7 @@ cp *.so $(pg_config --pgklibdir)
 
 ### 3- Call your library function from Postgresql
 ```sql
-# Enter to psql and create a function to wrap your library function
+# Enter into psql and create a function to wrap your library function
 # omit library extension.
 
 create function function_name(params) return data_type as
