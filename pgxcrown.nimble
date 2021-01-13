@@ -1,6 +1,6 @@
 # Package
 
-version       = "0.1.4"
+version       = "0.1.5"
 author        = "luisacosta828"
 description   = "Build Postgres extensions in Nim."
 srcDir        = "src"
@@ -8,4 +8,4 @@ license       = "MIT"
 
 # Dependencies
 
-requires "nim >= 1.0.4"
+requires "nim >= 0.12.0"
