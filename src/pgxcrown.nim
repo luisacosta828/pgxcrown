@@ -1,6 +1,4 @@
-import pgxcrown/fmgr
-
-include pgxcrown/fmgr
+include pgxcrown/utils
 
 template PG_MODULE_MAGIC* =
     const DLL* = "PGDLLEXPORT $# $#$#"
