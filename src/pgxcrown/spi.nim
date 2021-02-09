@@ -1,7 +1,12 @@
 {. push header: "executor/spi.h".}
 
-{. emit: """SPITupleTable* spinim_tupletable(){ return SPI_tuptable; }""".}
-{. emit: """int spinim_processed_rows(){ return SPI_processed; }""".}
+{. emit: """
+#include "executor/spi.h"
+
+SPITupleTable* spinim_tupletable(){ return SPI_tuptable; }
+int spinim_processed_rows(){ return SPI_processed; }
+
+""".}
 
 type 
     command* {.importc: "const char*".} = distinct cstring     
