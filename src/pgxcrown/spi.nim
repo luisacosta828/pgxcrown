@@ -1,7 +1,6 @@
 {. push header: "executor/spi.h".}
 
 {. emit: """SPITupleTable* spinim_tupletable(){ return SPI_tuptable; }""".}
-
 {. emit: """int spinim_processed_rows(){ return SPI_processed; }""".}
 
 type 
