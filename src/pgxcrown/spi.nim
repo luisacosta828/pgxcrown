@@ -1,7 +1,12 @@
 {. push header: "executor/spi.h".}
 
+{. emit: """TupleTable* spinim_tupletable(){ return SPI_tuptable; }""".}
+
+{. emit: """uint64 spinim_processed_rows(){ return SPI_processed; }""".}
+
 type 
-    command* {.importc: "const char*".} = distinct cstring
+    command* {.importc: "const char*".} = distinct cstring     
+    PTupleTable* {.importc: "SPITupleTable" .} = ptr object
 
     OK* {. pure .} = enum
 
@@ -20,6 +25,9 @@ type
         PARAM, TRANSACTION, NOATTRIBUTE, NOOUTFUNC,
         TYPEUNKNOWN, REL_DUPLICATE, REL_NOT_FOUND
 
+
+proc tupletable*(): PTupleTable {. importc: "spinim_tupletable" .}
+proc processed_rows*(): uint64 {. importc: "spinim_processed_rows" .}
 
 proc connect(): int {. importc: "SPI_connect".}
 proc finish():  int {. importc: "SPI_finish".}
