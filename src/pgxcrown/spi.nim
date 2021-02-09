@@ -1,8 +1,8 @@
 {. push header: "executor/spi.h".}
 
-{. emit: """TupleTable* spinim_tupletable(){ return SPI_tuptable; }""".}
+{. emit: """SPITupleTable* spinim_tupletable(){ return SPI_tuptable; }""".}
 
-{. emit: """uint64 spinim_processed_rows(){ return SPI_processed; }""".}
+{. emit: """int spinim_processed_rows(){ return SPI_processed; }""".}
 
 type 
     command* {.importc: "const char*".} = distinct cstring     
@@ -27,7 +27,7 @@ type
 
 
 proc tupletable*(): PTupleTable {. importc: "spinim_tupletable" .}
-proc processed_rows*(): uint64 {. importc: "spinim_processed_rows" .}
+proc processed_rows*(): int {. importc: "spinim_processed_rows" .}
 
 proc connect(): int {. importc: "SPI_connect".}
 proc finish():  int {. importc: "SPI_finish".}
