@@ -1,6 +1,6 @@
 {. push header: "executor/spi.h".}
 
-var SPI_processed {. codegenDecl: "$# $#" .}: int 
+var SPI_processed* {. codegenDecl: "$# $#" .}: int 
 
 type 
     command* {.importc: "const char*".} = distinct cstring     
