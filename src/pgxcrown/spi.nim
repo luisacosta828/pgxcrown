@@ -1,11 +1,11 @@
 {. push header: "executor/spi.h".}
 
-proc connect(): int {. importc: "SPI_connect", discardable .}
-proc finish():  int {. importc: "SPI_finish", discardable .}
+proc connect(): int {. importc: "SPI_connect".}
+proc finish():  int {. importc: "SPI_finish".}
 
 template spi_init*(statements: untyped) = 
-    connect()
+    var connection_status = connect()
     statements
-    finish()
+    var finish_status = finish()
 
 {. pop .}
