@@ -1,10 +1,9 @@
 {. push header: "executor/spi.h".}
 
-var SPI_processed* {. codegenDecl: "$# $#" .}: int 
-
 type 
     command* {.importc: "const char*".} = distinct cstring     
-    PTupleTable* {.importc: "SPITupleTable" .} = ptr object
+    TupleTable*  {.importc: "SPITupleTable" .} = object
+    PTupleTable* {.importc: "SPITupleTable" .} = ptr TupleTable
 
     OK* {. pure .} = enum
 
@@ -25,7 +24,7 @@ type
 
 
 proc tupletable*(): PTupleTable {. importc: "spinim_tupletable" .}
-proc processed_rows*(): int {. importc: "spinim_processed_rows" .}
+proc processed_rows*(): int {. importc: "processed_rows" .}
 
 proc connect(): int {. importc: "SPI_connect".}
 proc finish():  int {. importc: "SPI_finish".}
