@@ -1,7 +1,8 @@
 {. push header: "executor/spi.h".}
 
 {. emit: """
-#include "executor/spi.h"
+
+#include <executor/spi.h>
 
 SPITupleTable* spinim_tupletable(){ return SPI_tuptable; }
 int spinim_processed_rows(){ return SPI_processed; }
