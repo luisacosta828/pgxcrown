@@ -3,7 +3,7 @@
 type 
     command* {.importc: "const char*".} = distinct cstring     
     TupleTable*  {.importc: "SPITupleTable" .} = object
-    PTupleTable* {.importc: "SPITupleTable" .} = ptr TupleTable
+    PTupleTable* = ptr TupleTable
 
     OK* {. pure .} = enum
 
@@ -23,8 +23,8 @@ type
         TYPEUNKNOWN, REL_DUPLICATE, REL_NOT_FOUND
 
 
-proc tupletable*(): PTupleTable {. importc: "spinim_tupletable" .}
-proc processed_rows*(): int {. importc: "processed_rows" .}
+#proc tupletable*(): PTupleTable {. importc: "spinim_tupletable" .}
+var processed_rows* {. importc: "processed_rows" .} : int 
 
 proc connect(): int {. importc: "SPI_connect".}
 proc finish():  int {. importc: "SPI_finish".}
