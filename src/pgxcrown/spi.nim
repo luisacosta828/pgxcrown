@@ -2,6 +2,13 @@ from datatypes/basic import PDatum, POid
 
 {. push header: "executor/spi.h".}
 
+{.emit: """ 
+int spi_processed(){ return SPI_processed;} 
+SPITupleTable* spi_tuptable(){ return SPI_tuptable;}
+""" 
+.}
+
+
 type 
     const_char* {.importc: "const char*".} = distinct cstring     
     pconst_char* = ptr const_char
@@ -28,11 +35,15 @@ type
 proc connect(): int {. importc: "SPI_connect".}
 proc finish():  int {. importc: "SPI_finish".}
 
+proc lines_processed*(): int {.importc: "spi_processed".}
+proc tuptable*(): PTupleTable {.importc: "spi_tuptable".}
+
 proc exec*(c: const_char, count: clong): int {. importc: "SPI_exec".}
 proc execute*(c: const_char, read_only: cchar, count: clong): int {. importc: "SPI_execute".}
 proc execute_with_args*(c: const_char, nargs: cint, argtypes: POid, 
                         values: PDatum, Nulls: pconst_char,
                         read_only: cchar, count: clong): int {. importc: "SPI_execute_with_args".}
+
 
 template spi_init*(statements: untyped) = 
     var connection_status {.inject.} = connect()

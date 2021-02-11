@@ -1,6 +1,6 @@
 # Package
 
-version       = "0.1.24"
+version       = "0.1.25"
 author        = "luisacosta828"
 description   = "Build Postgres extensions in Nim."
 srcDir        = "src"
