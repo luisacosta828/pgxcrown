@@ -35,10 +35,12 @@ proc execute_with_args*(c: const_char, nargs: cint, argtypes: POid,
                         values: PDatum, Nulls: pconst_char,
                         read_only: cchar, count: clong): int {. importc: "SPI_execute_with_args".}
 
-
 template spi_init*(statements: untyped) = 
     var connection_status {.inject.} = connect()
-    statements
+    if connection_status > 0:
+        {.emit: """ int spi_processed(){ return SPI_processed;} """ .}
+        proc lines_processed*(): int {.importc: "spi_processed".}
+        statements
     var finish_status {. inject .} = finish()
 
 {. pop .}
