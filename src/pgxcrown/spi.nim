@@ -2,12 +2,6 @@ from datatypes/basic import PDatum, POid
 
 {. push header: "executor/spi.h".}
 
-{.emit: """ 
-int spi_processed(){ return SPI_processed;} 
-SPITupleTable* spi_tuptable(){ return SPI_tuptable;}
-""" 
-.}
-
 
 type 
     const_char* {.importc: "const char*".} = distinct cstring     
