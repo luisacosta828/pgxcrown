@@ -3,6 +3,10 @@
 
 type 
     Datum* {.importc: "Datum".} = cuint
+    Oid*  {.importc: "Oid".} = cuint
+
+    PDatum* = ptr Datum
+    POid* = ptr Oid
     
 {. pop .}
 

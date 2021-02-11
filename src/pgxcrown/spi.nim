@@ -1,12 +1,15 @@
+from datatypes/basic import PDatum, POid
+
 {. push header: "executor/spi.h".}
 
 type 
-    command* {.importc: "const char*".} = distinct cstring     
+    const_char* {.importc: "const char*".} = distinct cstring     
+    pconst_char* = ptr const_char
+
     TupleTable*  {.importc: "SPITupleTable" .} = object
     PTupleTable* = ptr TupleTable
-
+    
     OK* {. pure .} = enum
-
         CONNECT = 1,
         FINISH, FETCH, UTILITY,
         SELECT, SELINTO, INSERT,
@@ -22,13 +25,14 @@ type
         PARAM, TRANSACTION, NOATTRIBUTE, NOOUTFUNC,
         TYPEUNKNOWN, REL_DUPLICATE, REL_NOT_FOUND
 
-
-#proc tupletable*(): PTupleTable {. importc: "spinim_tupletable" .}
-var processed_rows* {. importc: "processed_rows" .} : int 
-
 proc connect(): int {. importc: "SPI_connect".}
 proc finish():  int {. importc: "SPI_finish".}
-proc exec*(c: command, count: clong): int {. importc: "SPI_exec".}
+
+proc exec*(c: const_char, count: clong): int {. importc: "SPI_exec".}
+proc execute*(c: const_char, read_only: cchar, count: clong): int {. importc: "SPI_execute".}
+proc execute_with_args*(c: const_char, nargs: cint, argtypes: POid, 
+                        values: PDatum, Nulls: pconst_char,
+                        read_only: cchar, count: clong): int {. importc: "SPI_execute_with_args".}
 
 template spi_init*(statements: untyped) = 
     var connection_status {.inject.} = connect()
