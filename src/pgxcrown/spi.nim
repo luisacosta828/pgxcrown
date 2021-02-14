@@ -41,8 +41,8 @@ proc execute_with_args*(c: const_char, nargs: cint, argtypes: POid,
 template spi_init*(statements: untyped) = 
     var connection_status {.inject.} = connect()
 
-    var SPI_processed {. codegenDecl: "extern $# $#;", global, inject .} : uint64 
-    var SPI_tuptable  {. codegenDecl:  "extern $# $#;", global, inject .} : PTupleTable
+    var SPI_processed {. codegenDecl: "extern $# $#;".} : uint64 
+#    var SPI_tuptable  {. codegenDecl:  "extern $# $#;", global, inject .} : PTupleTable
 
     {.emit: """ 
     int spi_processed(){ return SPI_processed;} 
