@@ -41,7 +41,7 @@ proc execute_with_args*(c: const_char, nargs: cint, argtypes: POid,
 template spi_init*(statements: untyped) = 
     var connection_status {.inject.} = connect()
     {.emit: """ /*TYPESECTION*/
-    extern int SPI_processed;
+    extern uint64 SPI_processed;
     extern SPITupleTable*  SPI_tuptable;
 """ .}    
     {.emit: """ 
