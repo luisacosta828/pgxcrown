@@ -8,9 +8,9 @@ type
     pconst_char* = ptr const_char
 
     TupleTable*  {.importc: "SPITupleTable" .} = object
-        free: uint64
-        alloced: uint64
-        
+        free*: uint64
+        alloced*: uint64
+
     PTupleTable* = ptr TupleTable
     
     OK* {. pure .} = enum
