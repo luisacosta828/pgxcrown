@@ -3,15 +3,16 @@ from datatypes/basic import PDatum, POid
 {. push header: "executor/spi.h".}
 
 type 
-    const_char* {.importc: "const char*".} = distinct cstring     
-    pconst_char* = ptr const_char
+    const_char* {.importc: "const char*".} = cstring
+
+    HeapTuple  {. importc: "HeapTuple" .} = ref object
+    TupleDesc  {. importc: "TupleDesc" .} = ref object
+        natts*: int
 
     TupleTable*  {.importc: "SPITupleTable" .} = object
-        free*: uint64
-        alloced*: uint64
+        vals*: ref HeapTuple
+        tupdesc*: TupleDesc
 
-    PTupleTable* = ref TupleTable
-    
     OK* {. pure .} = enum
         CONNECT = 1,
         FINISH, FETCH, UTILITY,
@@ -33,27 +34,35 @@ proc finish():  int {. importc: "SPI_finish".}
 
 proc exec*(c: const_char, count: clong): int {. importc: "SPI_exec".}
 proc execute*(c: const_char, read_only: cchar, count: clong): int {. importc: "SPI_execute".}
-proc execute_with_args*(c: const_char, nargs: cint, argtypes: POid, 
-                        values: PDatum, Nulls: pconst_char,
+proc execute_with_args*(c: const_char, nargs: cint, argtypes: POid,
+                        values: PDatum, Nulls: const_char,
                         read_only: cchar, count: clong): int {. importc: "SPI_execute_with_args".}
 
+proc fname*(tupdesc: TupleDesc, fnumber: int): const_char {.importc: "SPI_fname" .}
+proc gettype*(tupdesc: TupleDesc, fnumber: int): const_char {.importc: "SPI_gettype" .}
+proc getvalue*(tupl: HeapTuple, tupdesc: TupleDesc, fnumber: int): const_char {.importc: "SPI_getvalue" .}
 
-template spi_init*(statements: untyped) = 
-    var connection_status {.inject.} = connect()
+template spi_init*(statements: untyped) =
 
-    var SPI_processed {. codegenDecl: "extern $# $#;".} : uint64 
-#    var SPI_tuptable  {. codegenDecl:  "extern $# $#;", global, inject .} : PTupleTable
+    var connection_status  = connect()
 
-    {.emit: """ 
-    int spi_processed(){ return SPI_processed;} 
-    SPITupleTable* spi_tuptable(){ return SPI_tuptable;}
+    var SPI_processed {. codegenDecl: "extern $# $#", inject.} : uint64
+    var SPI_tuptable  {. codegenDecl:  "extern $# $#", inject .} : ref TupleTable
+
+    {.emit: """ HeapTuple getHeapIdx(SPITupleTable* tuptable){
+                static int j = 0;
+                if(j < SPI_processed){
+                   return tuptable->vals[j++];
+                }else{
+                  j = 0;
+                }
+    }
     """ .}
 
-    proc lines_processed(): int {.importc: "spi_processed".}
-    proc tuptable(): PTupleTable {.importc: "spi_tuptable".}
+    proc gettuple(tuptable: ref TupleTable):HeapTuple {.importc: "getHeapIdx".}
 
     statements
 
-    var finish_status {. inject .} = finish()
+    var finish_status = finish()
 
 {. pop .}
