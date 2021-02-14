@@ -11,7 +11,7 @@ type
         free*: uint64
         alloced*: uint64
 
-    PTupleTable* = ptr TupleTable
+    PTupleTable* = ref TupleTable
     
     OK* {. pure .} = enum
         CONNECT = 1,
