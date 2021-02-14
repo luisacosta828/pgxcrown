@@ -2,6 +2,11 @@ from datatypes/basic import PDatum, POid
 
 {. push header: "executor/spi.h".}
 
+{.emit: """ /*TYPESECTION*/
+    int SPI_processed;
+    SPITupleTable*  SPI_tuptable;
+    """ .}
+
 
 type 
     const_char* {.importc: "const char*".} = distinct cstring     
@@ -38,12 +43,10 @@ proc execute_with_args*(c: const_char, nargs: cint, argtypes: POid,
                         values: PDatum, Nulls: pconst_char,
                         read_only: cchar, count: clong): int {. importc: "SPI_execute_with_args".}
 
+
 template spi_init*(statements: untyped) = 
     var connection_status {.inject.} = connect()
-    {.emit: """ /*TYPESECTION*/
-    int SPI_processed;
-    SPITupleTable*  SPI_tuptable;
-    """ .}
+    
     {.emit: """ 
     int spi_processed(){ return SPI_processed;} 
     SPITupleTable* spi_tuptable(){ return SPI_tuptable;}
