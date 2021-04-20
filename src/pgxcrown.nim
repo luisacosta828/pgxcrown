@@ -1,4 +1,5 @@
 include pgxcrown/utils
+import pgxcrown/reports/reports
 
 template PG_MODULE_MAGIC* =
     const DLL* = "PGDLLEXPORT $# $#$#"
@@ -9,3 +10,5 @@ template PG_MODULE_MAGIC* =
 
 template PG_FUNCTION_INFO_V1*(funcname: typed) =
     {.emit: ["""PG_FUNCTION_INFO_V1(""",funcname.astToStr,");"] .}
+
+export reports
