@@ -16,13 +16,27 @@ when defined(windows):
         {.passL: "-L"&libdir & " -lpostgres -lpq" .}        
     
 else:
-    const libdir = staticExec("pg_config --pkglibdir").split("\n")[0]
+    when defined(python):
+        const py_headers = "/usr/include/python2.7/"
+        const py_lib = "python2.7"
 
-    if root == "":
-        echo "pg_config no disponible."
+        const libdir = staticExec("pg_config --pkglibdir").split("\n")[0]
+        if root == "":
+            echo "pg_config no disponible."
+        else:
+           #Se debe añadir postgresql-server-dev-XX
+           const pg_version:string = staticExec("""psql -V | awk '{ print "/"int($3)"/server"} '""").split("\n")[0]
+           #Se debe añadir la version de postgres antes del /server -> /include_path/version/server
+           const server = " -I" & root & pg_version
+           {.passC: server & " -I"&root & " -I"&py_headers & " -L/usr/lib/python2.7/ -l"&py_lib .}
     else:
-        #Se debe añadir postgresql-server-dev-XX
-        const pg_version:string = staticExec("""psql -V | awk '{ print "/"int($3)"/server"} '""").split("\n")[0]
-        #Se debe añadir la version de postgres antes del /server -> /include_path/version/server
-        const server = " -I" & root & pg_version
-        {.passC: server & " -I"&root.}
+        const libdir = staticExec("pg_config --pkglibdir").split("\n")[0]
+
+        if root == "":
+            echo "pg_config no disponible."
+        else:
+           #Se debe añadir postgresql-server-dev-XX
+           const pg_version:string = staticExec("""psql -V | awk '{ print "/"int($3)"/server"} '""").split("\n")[0]
+           #Se debe añadir la version de postgres antes del /server -> /include_path/version/server
+           const server = " -I" & root & pg_version
+           {.passC: server & " -I"&root.}
