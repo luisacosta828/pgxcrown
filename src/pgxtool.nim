@@ -60,3 +60,11 @@ proc build_pg_function*( file:string ):string =
     result = createSQLFunction(file,nim_target_function)
 
 {.pop.}
+
+var buildopt = paramStr(1)
+var filename = paramStr(2)
+
+if buildopt == "--build-extension":
+    discard execCmdEx( "echo "& build_pg_function(filename) & " > " & nim_target_function & ".sql" )
+else:
+    echo "Error"
