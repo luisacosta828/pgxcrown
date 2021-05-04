@@ -1,13 +1,13 @@
 # Package
 
-version       = "0.3.5"
+version       = "0.3.6"
 author        = "luisacosta828"
 description   = "Build Postgres extensions in Nim."
 srcDir        = "src"
 backend       = "c"
 license       = "MIT"
 
-bin           = @["pgxtool"]
+bin           = @["pgxcrown/pgxtool"]
 
 binDir        = "src/bin"
 
