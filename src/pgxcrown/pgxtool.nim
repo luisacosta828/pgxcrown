@@ -44,7 +44,6 @@ proc build_pg_function*( file:string ):string =
     echo "Compiling: ",file, "..."
     compile_library(file)
     
-    echo "Searching postgres libdir..."
     var postgreslib = getPostgresLibDir()
     
     var libname = getLibName(file)
@@ -59,12 +58,24 @@ proc build_pg_function*( file:string ):string =
 
     result = createSQLFunction(file,nim_target_function)
 
+proc cli_helper() =
+   echo """
+Usage: pgxtool --build-extension [filename]
+Hint: filename without .nim extension
+"""
+ 
+
 {.pop.}
 
-var buildopt = paramStr(1)
-var filename = paramStr(2)
 
-if buildopt == "--build-extension":
-    discard execCmdEx( "echo "& build_pg_function(filename) & " > " & nim_target_function & ".sql" )
+
+if paramCount() > 1:
+   var buildopt = paramStr(1)
+   var filename = paramStr(2)
+
+   if buildopt == "--build-extension":
+       discard execCmdEx( """ echo " """& build_pg_function(filename) & """" > """ & nim_target_function & ".sql" )
+   else:
+       cli_helper()
 else:
-    echo "Error"
+    cli_helper()

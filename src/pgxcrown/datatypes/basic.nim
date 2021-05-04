@@ -19,6 +19,14 @@ proc cstring_to_text*(s: const_char): Text {.importc: "cstring_to_text".}
 
 {. push header: "fmgr.h" .}
 
+type
+    FunctionCallInfoData {.importc: "FunctionCallInfoData".} = object
+        nargs*: cshort
+    FunctionCallInfo = ptr FunctionCallInfoData
+
+
+proc getFcinfoData():FunctionCallInfo {.importc: "getFcinfoData".}
+
 # Get argument type value declaration
     
 proc getInt32*(value: cuint): cint   {. importc: "PG_GETARG_INT32" .} 
