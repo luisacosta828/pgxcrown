@@ -5,14 +5,17 @@ import tables
 {. push header: "executor/spi.h".}
 
 type
-#   const_char* {.importc: "const char*".} = cstring
+   const_string* {.importc: "const char*".} = cstring
 
    Column = Table[string,string]
    Row = seq[Column]
    ResultSet = seq[Row]
 
-   HeapTuple  {. importc: "HeapTuple" .} = ref object
-   TupleDesc  {. importc: "TupleDesc" .} = ref object
+   HeapTupleHeader {.importc: "HeapTupleHeader", incompleteStruct.} = ptr object
+       t_hoff*: cuint
+   HeapTuple*  {. importc: "HeapTuple", incompleteStruct .} = ptr object
+       t_data*: HeapTupleHeader
+   TupleDesc*  {. importc: "TupleDesc" .} = ref object
        natts*: int
 
    TupleTable*  {.importc: "SPITupleTable" .} = object
@@ -35,21 +38,23 @@ type
        PARAM, TRANSACTION, NOATTRIBUTE, NOOUTFUNC,
        TYPEUNKNOWN, REL_DUPLICATE, REL_NOT_FOUND
 
+proc IsValid*(t: HeapTuple): bool {.importc: "HeapTupleIsValid".}
+
 proc connect(): int {. importc: "SPI_connect".}
 proc finish():  int {. importc: "SPI_finish".}
 
-proc exec*(c: const_char, count: clong): int {. importc: "SPI_exec".}
-proc execute*(c: const_char, read_only: cchar, count: clong): int {. importc: "SPI_execute".}
-proc execute_with_args*(c: const_char, nargs: cint, argtypes: POid,
-                        values: PDatum, Nulls: const_char,
+proc exec*(c: const_string, count: clong): int {. importc: "SPI_exec".}
+proc execute*(c: const_string, read_only: cchar, count: clong): int {. importc: "SPI_execute".}
+proc execute_with_args*(c: const_string, nargs: cint, argtypes: POid,
+                        values: PDatum, Nulls: const_string,
                         read_only: cchar, count: clong): int {. importc: "SPI_execute_with_args".}
 
 #Return column name
-proc fname*(tupdesc: TupleDesc, fnumber: int): const_char {.importc: "SPI_fname" .}
+proc fname*(tupdesc: TupleDesc, fnumber: int): const_string {.importc: "SPI_fname" .}
 #Return column type
-proc gettype*(tupdesc: TupleDesc, fnumber: int): const_char {.importc: "SPI_gettype" .}
+proc gettype*(tupdesc: TupleDesc, fnumber: int): const_string {.importc: "SPI_gettype" .}
 #Return column value
-proc getvalue*(tupl: HeapTuple, tupdesc: TupleDesc, fnumber: int): const_char {.importc: "SPI_getvalue" .}
+proc getvalue*(tupl: HeapTuple, tupdesc: TupleDesc, fnumber: int): const_string {.importc: "SPI_getvalue" .}
 
 
 template spi_init*(statements: untyped) =
@@ -79,7 +84,7 @@ template get_info_schema*(table_name: string) =
        var last_column:cstring
        echo "getting information schema... ", table_name
        discard 0.getInt32
-       var ret  = exec(const_char("select column_name, data_type from information_schema.columns where table_name='"&table_name&"';"),0)
+       var ret  = exec(const_string("select column_name, data_type from information_schema.columns where table_name='"&table_name&"';"),0)
        var tupdesc = SPI_tuptable[].tupdesc
        if SPI_processed > cast[uint64](0):
           for lines in 0 .. SPI_processed:
@@ -96,8 +101,8 @@ template get_info_schema*(table_name: string) =
        else:
            info_schema[cstring("error")] = "table_not_found"
 
-template query*(c: const_char, obj: untyped) =
-    discard exec(const_char(c),0)
+template query*(c: const_string, obj: untyped) =
+    discard exec(const_string(c),0)
 
     var obj{. inject .}: ResultSet = @[]
 
@@ -118,17 +123,11 @@ template query*(c: const_char, obj: untyped) =
         if row != @[]:
            obj.add(row)    
 
-template getFrom*(property:string, table: ResultSet) =
-    for row in table:
-        for item in row:
-            if item.contains(property):
-               echo item
-
-template SelectFrom*(table: ResultSet, props:seq[string]) =
-    for row in table:
-        for item in row:
-            for p in props:
-                if item.contains(p):
-                   echo p
+template getPLSourceCode*(fn_oid, lang_datum: cuint):string = 
+    spi_init:
+        var q = "select prosrc from pg_proc where prolang = "& $lang_datum & " and oid = "& $fn_oid 
+        query(q, Code)
+    Code[0][0]["prosrc"]
 
 {. pop .}
+

@@ -12,6 +12,8 @@ type
 
 proc cstring_to_text*(s: const_char): Text {.importc: "cstring_to_text".}
 
+proc ObjectIdGetDatum*(id: Oid):Datum {. importc .}
+proc DatumGetObjectId*(datum_id: Datum): Oid {. importc .}
 {. pop .}
 
 
@@ -20,12 +22,15 @@ proc cstring_to_text*(s: const_char): Text {.importc: "cstring_to_text".}
 {. push header: "fmgr.h" .}
 
 type
+
+    FmgrInfo {.importc: "FmgrInfo" .} = object
+        fn_oid*: Oid
+ 
     FunctionCallInfoData {.importc: "FunctionCallInfoData".} = object
         nargs*: cshort
+        flinfo*: ptr FmgrInfo
+
     FunctionCallInfo = ptr FunctionCallInfoData
-
-
-proc getFcinfoData():FunctionCallInfo {.importc: "getFcinfoData".}
 
 # Get argument type value declaration
     
