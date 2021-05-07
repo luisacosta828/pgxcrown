@@ -6,11 +6,12 @@ var nim_target_function* :string
 
 {.push inline .}
 
-proc compile_library(file:string) = discard execCmdEx "nim c -d:release --hints:off --opt:size --app:lib " & file & ".nim"
+proc compile_library*(file:string) = discard execCmdEx "nim c -d:release --hints:off --opt:size --app:lib " & file & ".nim"
 proc getLibName(file:string):string = "lib"&extractFilename(file)
 proc getPostgresLibDir(): string = execCmdEx("pg_config --pkglibdir").output.split("\n")[0]
 
-proc moveTo( libname:string, postgreslib:string ) = discard execCmd "sudo mv "&libname&".so "&postgreslib
+proc moveTo( libname:string, postgreslib:string ) = 
+    discard execCmd "sudo mv "&libname&".so "&postgreslib
 
 proc extractV1Function( file:string ):string =
     execCmdEx("""grep -i pgv1 """ & file & """.nim | awk '{ print $2}' | tr "()" "\n" | head -n1""").output.split("\n")[0]
@@ -63,11 +64,8 @@ proc cli_helper() =
 Usage: pgxtool --build-extension [filename]
 Hint: filename without .nim extension
 """
- 
 
 {.pop.}
-
-
 
 if paramCount() > 1:
    var buildopt = paramStr(1)
