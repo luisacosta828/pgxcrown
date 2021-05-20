@@ -6,7 +6,7 @@ var nim_target_function* :string
 
 {.push inline .}
 
-proc compile_library*(file:string) = discard execCmdEx "nim c -d:release --hints:off --opt:size --app:lib " & file & ".nim"
+proc compile_library(file:string) = echo execCmdEx("nim c -d:release --hints:off --opt:size --app:lib " & file).output
 proc getLibName(file:string):string = "lib"&extractFilename(file)
 proc getPostgresLibDir(): string = execCmdEx("pg_config --pkglibdir").output.split("\n")[0]
 
@@ -39,8 +39,14 @@ proc createSQLFunction( file:string, nim_target_function: string): string =
     param_builder = param_builder & args.join(",") & ")"
     result = create_function & param_builder & returns & " as '"&getLibName(file)&".so' , '"&nim_target_function&"' LANGUAGE C STRICT;"
 
+proc check_nimcache() {.inline.} = 
+    echo "Checking nimcache..."
+    var o = execCmdEx(""" [ -d ".cache/nim" ] || $(mkdir .cache; mkdir .cache/nim)  """).output
+    echo o
 
 proc build_pg_function*( file:string ):string = 
+
+    check_nimcache()
 
     echo "Compiling: ",file, "..."
     compile_library(file)
@@ -51,8 +57,7 @@ proc build_pg_function*( file:string ):string =
 
     echo "Moving ",libname,".so to ", postgreslib
 
-    libname.moveTo(postgreslib)
-    
+    libname.moveTo(postgreslib)    
     nim_target_function = extractV1Function(file)
 
     echo "Creating SQL Function..."
@@ -75,5 +80,9 @@ if paramCount() > 1:
        discard execCmdEx( """ echo " """& build_pg_function(filename) & """" > """ & nim_target_function & ".sql" )
    else:
        cli_helper()
+elif paramCount() == 1: 
+     var buildopt = paramStr(1)
+     if buildopt == "--build-plnim-function-handler":
+        compile_library("~/.nimble/pkgs/pgxcrown-0.4.1/pgxcrown/plnim/plnim")
 else:
     cli_helper()

@@ -123,11 +123,11 @@ template query*(c: const_string, obj: untyped) =
         if row != @[]:
            obj.add(row)    
 
-template getPLSourceCode*(fn_oid, lang_datum: cuint):string = 
+template getPLSourceCode*(fn_oid, lang_datum: cuint): tuple[name: string,src: string,nargs: string,argtypes: string, rettype: string] = 
     spi_init:
-        var q = "select prosrc from pg_proc where prolang = "& $lang_datum & " and oid = "& $fn_oid 
+        var q = "select proname,prosrc,pronargs, proargtypes, prorettype from pg_proc where prolang = "& $lang_datum & " and oid = "& $fn_oid 
         query(q, Code)
-    Code[0][0]["prosrc"]
+    (Code[0][0]["proname"], Code[0][1]["prosrc"], Code[0][2]["pronargs"], Code[0][3]["proargtypes"], Code[0][4]["prorettype"])
 
 {. pop .}
 
