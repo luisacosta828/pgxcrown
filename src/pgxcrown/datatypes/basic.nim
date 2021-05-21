@@ -30,7 +30,7 @@ type
         nargs*: cshort
         flinfo*: ptr FmgrInfo
 
-    FunctionCallInfo = ptr FunctionCallInfoData
+    FunctionCallInfo* = ptr FunctionCallInfoData
 
 # Get argument type value declaration
     
