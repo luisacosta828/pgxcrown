@@ -1,4 +1,5 @@
 include pgxcrown/utils
+include pgxcrown/pgxmacros
 import pgxcrown/reports/reports
 
 template PG_MODULE_MAGIC* =
