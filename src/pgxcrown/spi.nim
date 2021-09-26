@@ -129,5 +129,12 @@ template getPLSourceCode*(fn_oid, lang_datum: cuint): tuple[name: string,src: st
         query(q, Code)
     (Code[0][0]["proname"], Code[0][1]["prosrc"], Code[0][2]["pronargs"], Code[0][3]["proargtypes"], Code[0][4]["prorettype"])
 
+
+template getFunctionHeader*(fn_oid, lang_datum: cuint): tuple[header: string] =
+    spi_init:
+        var q = "select header from nim_proc_header where func_name = (select proname from pg_proc where prolang = " & $lang_datum & " and oid = " & $fn_oid & ")"
+        query(q,Code)
+    (Code[0][0]["header"])
+
 {. pop .}
 
