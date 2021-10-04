@@ -2,7 +2,7 @@ import macros
 import tables
 import strutils
 
-proc explainWrapper(fn: NimNode):untyped =
+proc explainWrapper(fn: NimNode):NimNode =
 
     let pgx_proc = newProc(ident("pgx_" & $fn.name))
     pgx_proc.params[0] = ident("Datum")
@@ -11,9 +11,9 @@ proc explainWrapper(fn: NimNode):untyped =
     pgx_pragmas.add(ident("pgv1"))
     pgx_proc.pragma = pgx_pragmas
 
-    var NimTypes = {"int": "cint" }.toTable
-    var PgxToNim = {"int":"getInt32"}.toTable
-    var ReplyWithPgxTypes = {"int":"Int32",}.toTable
+    var NimTypes = {"int": "cint", "float": "cfloat", "double": "cdouble"}.toTable
+    var PgxToNim = {"int":"getInt32", "float": "getFloat4", "double": "getFloat8"}.toTable
+    var ReplyWithPgxTypes = {"int":"Int32", "float": "Float4", "double": "Float8"}.toTable
     let rbody = newTree(nnkStmtList, pgx_proc.body)
     let fnparams_len = fn.params.len - 1
     var varSection = newNimNode(nnkVarSection)
