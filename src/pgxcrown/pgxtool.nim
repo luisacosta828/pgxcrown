@@ -1,11 +1,11 @@
-from strutils import parseInt, repeat, join, split
-from osproc import execCmd, execCmdEx
-import tables,os
+import std/os
+import std/strutils
+#from osproc import execCmd, execCmdEx
+#import tables,os
 
-var nim_target_function* :string 
+#var nim_target_function* :string
 
-{.push inline .}
-
+#[
 proc compile_library(file:string) = echo execCmdEx("nim c -d:release --hints:off --opt:size --app:lib " & file).output
 proc getLibName(file:string):string = "lib"&extractFilename(file)
 proc getPostgresLibDir(): string = execCmdEx("pg_config --pkglibdir").output.split("\n")[0]
@@ -64,25 +64,84 @@ proc build_pg_function*( file:string ):string =
 
     result = createSQLFunction(file,nim_target_function)
 
+]#
 proc cli_helper() =
    echo """
-Usage: pgxtool --build-extension [filename]
+Usage: pgxtool build-extension [filename]
 Hint: filename without .nim extension
 """
 
-{.pop.}
+proc nim_c(module: string): string =
+  "nim c --d:release -d:entrypoint=" & module & " " & module
 
-if paramCount() > 1:
-   var buildopt = paramStr(1)
-   var filename = paramStr(2)
+template build_project(req) =
+  var 
+    source      = req / "src"
+    entry_point = source / "main.nim"
+
+  createDir(req)
+  createDir(source)
+  writeFile(entry_point, "")
+
+
+proc compile2pgx(input_file: string) =
+  var 
+    pgxcrown_header  = "import pgxcrown/pgx\n\n"
+    original_content = readFile(input_file)
+    tmp_content      = pgxcrown_header & '\n' & original_content
+    (dir, file, ext) = splitFile(input_file)
+    tmp_file         = (dir / ("tmp_" & file & ext))
+  
+  writeFile(tmp_file, tmp_content)
+  discard execShellCmd(nim_c(tmp_file))
+  removeFile(tmp_file)
+
+proc check_command() =
+  var 
+    arg = paramStr(1)
+    req = paramStr(2)
+
+  case arg:
+  of "create-project":   
+    if dirExists(req):
+      echo "Path in use, choose another name."
+      return
+    build_project(req)
+  of "build-extension":
+    var entry_point = req / "src" / "main.nim"
+
+    if dirExists(req) and fileExists(entry_point):
+      compile2pgx(entry_point)
+    
+
+
+#{.pop.}
+
+
+proc main() =
+  let pc = paramCount()
+
+  case pc:
+  of 2: check_command()
+  else: cli_helper()
+
+  #[
+  if pc == 2:
+   var 
+     buildopt = paramStr(1)
+     filename = paramStr(2)
 
    if buildopt == "--build-extension":
-       discard execCmdEx( """ echo " """& build_pg_function(filename) & """" > """ & nim_target_function & ".sql" )
+     echo 1
+       #discard execCmdEx( """ echo " """ & build_pg_function(filename) & """" > """ & nim_target_function & ".sql" )
    else:
        cli_helper()
-elif paramCount() == 1: 
-     var buildopt = paramStr(1)
-     if buildopt == "--build-plnim-function-handler":
-        compile_library("~/.nimble/pkgs/pgxcrown-0.4.1/pgxcrown/plnim/plnim")
-else:
+  #elif paramCount() == 1: 
+  #   var buildopt = paramStr(1)
+  #   if buildopt == "--build-plnim-function-handler":
+  #      compile_library("~/.nimble/pkgs/pgxcrown-0.4.1/pgxcrown/plnim/plnim")
+  else:
     cli_helper()
+    ]#
+
+main()
