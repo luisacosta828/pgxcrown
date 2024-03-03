@@ -1,5 +1,5 @@
 import std/os
-import std/strutils
+#import std/strutils
 #from osproc import execCmd, execCmdEx
 #import tables,os
 
@@ -71,8 +71,12 @@ Usage: pgxtool build-extension [filename]
 Hint: filename without .nim extension
 """
 
-proc nim_c(module: string): string =
-  "nim c --d:release -d:entrypoint=" & module & " " & module
+template nim_c(module: string): string =
+  "nim c -d:entrypoint=" & module & " " & module
+
+template emit_pgx_c_extension(module: string): string =
+  "nim c --d:release --app:lib " & module
+
 
 template build_project(req) =
   var 
@@ -94,7 +98,8 @@ proc compile2pgx(input_file: string) =
   
   writeFile(tmp_file, tmp_content)
   discard execShellCmd(nim_c(tmp_file))
-  removeFile(tmp_file)
+  discard execShellCmd(emit_pgx_c_extension(tmp_file))
+  #removeFile(tmp_file)
 
 proc check_command() =
   var 
