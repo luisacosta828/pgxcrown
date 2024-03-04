@@ -2,17 +2,28 @@ import macros
 import tables
 import strutils
 
+proc NimTypes(dt: string): string =
+  case dt:
+    of "int", "int32": "cint"
+    of "float", "float32": "cfloat"
+    of "float64": "cdouble"
+    of "int64": "clonglong"
+    else: "unknown"
+
+proc PgxToNim(dt: string): string =
+  case dt:
+    of "int", "int32": "getInt32"
+    of "float", "float32": "getFloat4"
+    of "float64": "getFloat8"
+    else: "unknown"
+
 proc explainWrapper(fn: NimNode):NimNode =
 
     let pgx_proc = newProc(ident("pgx_" & $fn.name))
     pgx_proc.params[0] = ident("Datum")
 
-    let pgx_pragmas = newNimNode(nnkPragma)
-    pgx_pragmas.add(ident("pgv1"))
-    pgx_proc.pragma = pgx_pragmas
+    pgx_proc.pragma = newNimNode(nnkPragma).add(ident("pgv1"))
 
-    var NimTypes = {"int": "cint", "float": "cfloat", "double": "cdouble"}.toTable
-    var PgxToNim = {"int":"getInt32", "float": "getFloat4", "double": "getFloat8"}.toTable
     var ReplyWithPgxTypes = {"int":"Int32", "float": "Float4", "double": "Float8"}.toTable
     let rbody = newTree(nnkStmtList, pgx_proc.body)
     let fnparams_len = fn.params.len - 1
@@ -23,16 +34,16 @@ proc explainWrapper(fn: NimNode):NimNode =
         var param = fn.params[i].repr.split(":")
         var pvar  =  param[0]
         var ptype =  param[1].split(" ")[1]
-        varSection.add( newIdentDefs(ident(pvar), ident(NimTypes[ptype])))
+        varSection.add( newIdentDefs(ident(pvar), ident(NimTypes(ptype))))
 
-    varSection.add( newIdentDefs(ident("myres"), ident(NimTypes[fn.params[0].repr])) )
+    varSection.add( newIdentDefs(ident("myres"), ident(NimTypes(fn.params[0].repr))) )
     rbody.add(varSection)
 
     for i in 1..fnparams_len:
         var param = fn.params[i].repr.split(":")
         var pvar  =  param[0]
         var ptype =  param[1].split(" ")[1]
-        var f = PgxToNim[ptype]
+        var f = PgxToNim(ptype)
         if ptype == "string":
             var getValue = newCall(ident(f),[ident("argv"),newIntLitNode(i)])
             rbody.add newNimNode(nnkAsgn).add(ident(pvar),getValue)
@@ -40,12 +51,10 @@ proc explainWrapper(fn: NimNode):NimNode =
             var getValue = newCall(ident(f),[newIntLitNode(i-1)])
             rbody.add newNimNode(nnkAsgn).add(ident(pvar),getValue)
 
-    # Copiamos las operaciones de la funcion original
     let body_lines = fn.body.len - 2
     for lines in 0..body_lines: rbody.add fn.body[lines]
     rbody.add newNimNode(nnkAsgn).add(ident("myres"),fn.body[^1])
 
-    # Especificamos el return type para redis
     var replywith = ident("return" & ReplyWithPgxTypes[fn.params[0].repr])
     rbody.add newCall(replywith,[ident("myres")])
 
