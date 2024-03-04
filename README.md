@@ -4,26 +4,31 @@ Build Postgres Extensions in Nim.
 
 ## Usage
 
-### 1- Write your module
-```nim
-import pgxcrown
+### Create a pgxcrown project
 
-PG_MODULE_MAGIC
-
-proc pg_add_one(): Datum {.pgv1.} = returnInt32( getInt32(0) + 1)
-
-PG_FUNCTION_INFO_V1(pg_add_one)
-```
-### 2- Build a dynamic library
 ```bash
-nim c --d:release --app:lib pg_add_one.nim
 
-#Linux
-#Copy your dynlib to postgres library directory
-cp *.so $(pg_config --pgklibdir)
+# this command will create your project structure
+
+pgxtool create-project test
+
 ```
 
-### 3- Call your library function from Postgresql
+### Write your code into main.nim
+```nim
+proc add_one(a: int): int =
+  a + 1
+
+```
+### Build a dynamic library
+```bash
+
+pgxtool build-extension test
+
+cp *.so $(pg_config --pkglibdir)
+```
+
+### Call your library function from Postgresql
 ```sql
 # Enter into psql and create a function to wrap your library function
 # omit library extension.
@@ -34,7 +39,7 @@ language c strict;
 
 #Example
 create function nim_add_one(integer) return integer as
-'libadd_one', 'pg_add_one'
+'libadd_one', 'pgx_add_one'
 language c strict;
 
 select nim_add_one(10); # -> 11
