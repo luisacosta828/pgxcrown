@@ -1,5 +1,4 @@
 import macros
-import tables
 import strutils
 
 proc NimTypes(dt: string): string =
@@ -17,6 +16,13 @@ proc PgxToNim(dt: string): string =
     of "float64": "getFloat8"
     else: "unknown"
 
+proc ReplyWithPgxTypes(dt: string): string =
+  case dt:
+    of "int", "int32": "Int32"
+    of "float", "float32": "Float4"
+    of "float64": "Float8"
+    else: "unknown"
+
 proc explainWrapper(fn: NimNode):NimNode =
 
     let pgx_proc = newProc(ident("pgx_" & $fn.name))
@@ -24,7 +30,6 @@ proc explainWrapper(fn: NimNode):NimNode =
 
     pgx_proc.pragma = newNimNode(nnkPragma).add(ident("pgv1"))
 
-    var ReplyWithPgxTypes = {"int":"Int32", "float": "Float4", "double": "Float8"}.toTable
     let rbody = newTree(nnkStmtList, pgx_proc.body)
     let fnparams_len = fn.params.len - 1
     var varSection = newNimNode(nnkVarSection)
@@ -55,7 +60,7 @@ proc explainWrapper(fn: NimNode):NimNode =
     for lines in 0..body_lines: rbody.add fn.body[lines]
     rbody.add newNimNode(nnkAsgn).add(ident("myres"),fn.body[^1])
 
-    var replywith = ident("return" & ReplyWithPgxTypes[fn.params[0].repr])
+    var replywith = ident("return" & ReplyWithPgxTypes(fn.params[0].repr))
     rbody.add newCall(replywith,[ident("myres")])
 
     pgx_proc.body = rbody
