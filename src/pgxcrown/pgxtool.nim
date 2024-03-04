@@ -72,8 +72,8 @@ Hint: filename without .nim extension
 """
 
 template nim_c(module: string): string =
-  "nim c -d:entrypoint=" & module & " " & module
-
+  "nim c -r -d:entrypoint=" & module & " " & module
+  
 template emit_pgx_c_extension(module: string): string =
   "nim c --d:release --app:lib " & module
 

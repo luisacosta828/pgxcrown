@@ -3,12 +3,13 @@ import std/[macros, os]
 const entrypoint {. strdefine .} = ""
 
 macro decorateMainFunctions*() =
+  echo getProjectPath()
   var source = parseStmt(readFile(entrypoint))
   del(source)
 
-  result = newNimNode(nnkStmtList)
-  result.add newNimNode(nnkImportStmt).add ident("pgxcrown")
-  result.add ident("PG_MODULE_MAGIC")
+  var res = newNimNode(nnkStmtList)
+  res.add newNimNode(nnkImportStmt).add ident("pgxcrown")
+  res.add ident("PG_MODULE_MAGIC")
 
   var v1fns: seq[NimNode]
   let pgx_pragma = newNimNode(nnkPragma)
@@ -22,7 +23,7 @@ macro decorateMainFunctions*() =
     source.add quote do:
       PG_FUNCTION_INFO_V1(`el.repr`)
 
-  result.add source[0..^1]
-  writeFile(entrypoint,result.repr)
+  res.add source[0..^1]
+  writeFile(entrypoint,res.repr)
 
 decorateMainFunctions()
