@@ -65,10 +65,17 @@ proc build_pg_function*( file:string ):string =
     result = createSQLFunction(file,nim_target_function)
 
 ]#
+
 proc cli_helper() =
    echo """
-Usage: pgxtool build-extension [filename]
-Hint: filename without .nim extension
+Usage: pgxtool [command] [options] [target]
+
+Commands: 
+   create-project: initialize a new pgxcrown project 
+     * pgxcrown create-project test
+
+   build-extension: emits a dynamic library that can be loaded into postgres runtime
+     * pgxcrown build-extension test
 """
 
 template nim_c(module: string): string =
