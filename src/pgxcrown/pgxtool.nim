@@ -80,7 +80,7 @@ Commands:
 
 template nim_c(module: string): string =
   "nim c -r -d:entrypoint=" & module & " " & module
-  
+
 template emit_pgx_c_extension(module: string): string =
   "nim c --d:release --app:lib " & module
 
@@ -89,7 +89,7 @@ template build_project(req) =
   var 
     source      = req / "src"
     entry_point = source / "main.nim"
-
+  
   createDir(req)
   createDir(source)
   writeFile(entry_point, "")
