@@ -6,6 +6,8 @@ proc NimToSQLType(dt: string): string =
   case dt:
     of "int","int32": "int4"
     of "int64":  "int8"
+    of "float", "float32": "float4"
+    of "float64": "float64"
     else: "unknown"
 
 
@@ -20,7 +22,8 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
 
   var (dir, file, ext) = splitFile(entrypoint)
   sql_scripts.add "\nCREATE FUNCTION " & fn.name.repr & "(" & param_list.join(",") & ")" & returnType & " as\n" 
-  sql_scripts.add "'lib" & file & "', 'pgx_" & fn.name.repr & "';\n"
+  sql_scripts.add "'lib" & file & "', 'pgx_" & fn.name.repr & "'\n"
+  sql_scripts.add "language c strict;\n"
 
 
 macro decorateMainFunctions*() =
