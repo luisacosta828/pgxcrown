@@ -8,19 +8,26 @@ template init_emit_hook(file: string) =
 
   var res = newNimNode(nnkStmtList)
   res.add newNimNode(nnkImportStmt).add ident("pgxcrown")
-
-  res.add quote do:
-    {. emit: """/*INCLUDESECTION*/
-#include "postgres.h"
-""".}
-
+  res.add ident("PG_MODULE_MAGIC")
+  res.add ident("ActivateHooks")
   
-  res.add newNimNode(nnkVarSection).add newIdentDefs(ident("""emit_log_hook {. codegenDecl: "$1 $2", exportc .}"""), ident("emit_log_hook_type"), newNilLit())
-  res.add newNimNode(nnkVarSection).add newIdentDefs(ident("""prev_emit_log {. codegenDecl: "static $1 $2", exportc .}"""), ident("emit_log_hook_type"), newNilLit())
-  var pg_init = newProc(ident("pg_init"), pragmas = newNimNode(nnkPragma))
-  
-  var body = quote do:
+  res.add newNimNode(nnkVarSection).add newIdentDefs(ident("""emit_log_hook {. hook_symbol .}"""), ident("emit_log_hook_type"), newNilLit())
+  res.add newNimNode(nnkVarSection).add newIdentDefs(ident("""prev_emit_log {. static_hook .}"""), ident("emit_log_hook_type"), newNilLit())
+  var 
+    pg_init = newProc(ident("pg_init"), pragmas = newNimNode(nnkPragma))
+
+  var body = quote do: 
     prev_emit_log = emit_log_hook
+    emit_log_hook = custom_emit_log
+
+  var params = [newIdentDefs(ident("edata"),newNimNode(nnkPtrTy).add(ident("ErrorData"))) ]
+  var custom_emit_log = newProc(ident("custom_emit_log"))
+  custom_emit_log.params.add params
+  custom_emit_log.pragma = newNimNode(nnkPragma).add(ident("cdecl"))
+  custom_emit_log.body.add quote do:
+    discard
+
+  res.add custom_emit_log
 
   pg_init.body.add body
   var exprc, exprc2 = newNimNode(nnkExprColonExpr)

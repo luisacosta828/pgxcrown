@@ -27,7 +27,6 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
 
 
 macro decorateMainFunctions*() =
-  echo getProjectPath()
   var source = parseStmt(readFile(entrypoint))
   del(source)
 
@@ -37,7 +36,6 @@ macro decorateMainFunctions*() =
 
   var v1fns: seq[NimNode]
   var sql_scripts:string
-  echo entrypoint
   var (dir, file, ext) = splitFile(entrypoint)
   let pgx_pragma = newNimNode(nnkPragma)
   pgx_pragma.add(ident("pgx"))
