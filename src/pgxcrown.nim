@@ -21,6 +21,7 @@ template ActivateHooks* =
   {.pragma: hook_symbol, codegenDecl: "$1 $2", exportc.}
   {.emit: """/*INCLUDESECTION*/
 #include "postgres.h"
+#include "fmgr.h"
 """.}
 
 
