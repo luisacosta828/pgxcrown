@@ -1,4 +1,6 @@
-import std/os
+import std/[os, strutils]
+
+const available_hooks = ["emit_hook"]
 
 proc cli_helper() =
    echo """
@@ -6,47 +8,66 @@ Usage: pgxtool [command] [options] [target]
 
 Commands: 
    create-project: initialize a new pgxcrown project
-     * pgxcrown create-project test
+     * pgxtool create-project test
 
    build-extension: emits a dynamic library that can be loaded into postgres runtime
-     * pgxcrown build-extension test
+     * pgxtool build-extension test
 
    create-hook: template for creating postgres hooks
-     * pgxcrown create-hook emit_log
+     * pgxtool create-hook emit_log
 
    available-hooks: list hooks supported for pgxcrown
-     * pgxcrown available-hooks
+     * pgxtool available-hooks
 """
 
 template nim_c(module: string): string =
-  "nim c -r -d:entrypoint=" & module & " " & module
+  "nim c -d:entrypoint=" & module & " " & module
+
 
 template emit_pgx_c_extension(module: string): string =
   "nim c --d:release --app:lib " & module
 
+template generate_tmp_file(input_file: string, kind: string = "") =
+  var 
+    pgxcrown_header               = if "hook" in kind: "import pgxcrown/hooks/hook_builder\n\n" else: "import pgxcrown/pgx\n\n"
+    original_content              = readFile(input_file)
+    tmp_content {. inject .}      = pgxcrown_header & '\n' & original_content
+    (dir, file, ext)              = splitFile(input_file)
+    tmp_file {. inject .}         = (dir / ("tmp_" & file & ext))
 
-template build_project(req) =
+
+template build_project(req: string, kind: string) =
   var 
     source      = req / "src"
     entry_point = source / "main.nim"
-  
+ 
   createDir(req)
   createDir(source)
   writeFile(entry_point, "")
 
+  if "hook" in kind:
+    generate_tmp_file(entry_point, kind)
+    writeFile(tmp_file, tmp_content)
+    discard execShellCmd(nim_c(tmp_file))
+    #writeFile(source / "hook_type.txt", kind.split(":")[1])
+
 
 proc compile2pgx(input_file: string) =
-  var 
-    pgxcrown_header  = "import pgxcrown/pgx\n\n"
-    original_content = readFile(input_file)
-    tmp_content      = pgxcrown_header & '\n' & original_content
-    (dir, file, ext) = splitFile(input_file)
-    tmp_file         = (dir / ("tmp_" & file & ext))
-  
+  generate_tmp_file input_file  
   writeFile(tmp_file, tmp_content)
   discard execShellCmd(nim_c(tmp_file))
   discard execShellCmd(emit_pgx_c_extension(tmp_file))
   #removeFile(tmp_file)
+
+proc compile2hook(input_file: string) =
+  discard execShellCmd(emit_pgx_c_extension(input_file))
+
+template build_project_template(req: string, kind: string = "") =
+  if dirExists(req):
+    echo "Path in use, choose another name."
+    return
+  build_project(req, kind)
+
 
 proc check_command() =
   var 
@@ -54,23 +75,25 @@ proc check_command() =
     req = if arg == "available-hooks": "" else: paramStr(2)
 
   case arg:
+  of "create-hook":
+    if req in available_hooks:
+      build_project_template(req, "hook:" & req)
+    else:
+      echo req & " is not supported yet. Check pgxtool available-hooks!"
   of "create-project":
-    if dirExists(req):
-      echo "Path in use, choose another name."
-      return
-    build_project(req)
+    build_project_template(req)
   of "build-extension":
     var entry_point = req / "src" / "main.nim"
-
     if dirExists(req) and fileExists(entry_point):
-      compile2pgx(entry_point)
+      if "hook" notin req:
+        compile2pgx(entry_point)
+      else:
+        compile2hook(entry_point)
   of "available-hooks":
     echo """ 
     * emit_hook 
     """
     
-
-
 #{.pop.}
 
 
