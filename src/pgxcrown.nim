@@ -17,8 +17,8 @@ template PG_FUNCTION_INFO_V1*(funcname: typed) =
 
 
 template ActivateHooks* =
-  {.pragma: static_hook, codegenDecl: "static $1 $2", exportc.}
-  {.pragma: hook_symbol, codegenDecl: "$1 $2", exportc.}
+  {.pragma: user_hook, codegenDecl: "static $1 $2", exportc.}
+  {.pragma: original_hook, codegenDecl: "$1 $2", exportc, nodecl.}
   {.emit: """/*INCLUDESECTION*/
 #include "postgres.h"
 #include "fmgr.h"

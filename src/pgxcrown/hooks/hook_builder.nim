@@ -11,8 +11,8 @@ template init_emit_hook(file: string) =
   res.add ident("PG_MODULE_MAGIC")
   res.add ident("ActivateHooks")
   
-  res.add newNimNode(nnkVarSection).add newIdentDefs(ident("""emit_log_hook {. hook_symbol .}"""), ident("emit_log_hook_type"), newNilLit())
-  res.add newNimNode(nnkVarSection).add newIdentDefs(ident("""prev_emit_log {. static_hook .}"""), ident("emit_log_hook_type"), newNilLit())
+  res.add newNimNode(nnkVarSection).add newIdentDefs(ident("""emit_log_hook {. original_hook .}"""), ident("emit_log_hook_type"))
+  res.add newNimNode(nnkVarSection).add newIdentDefs(ident("""prev_emit_log {. user_hook .}"""), ident("emit_log_hook_type"), newNilLit())
   var 
     pg_init = newProc(ident("pg_init"), pragmas = newNimNode(nnkPragma))
 
