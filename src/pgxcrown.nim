@@ -1,6 +1,9 @@
 include pgxcrown/utils
 include pgxcrown/pgxmacros
 import pgxcrown/reports/reports
+import pgxcrown/hooks/emit_hook
+
+
 
 template PG_MODULE_MAGIC* =
     const DLL* = "PGDLLEXPORT $# $#$#"
@@ -12,4 +15,15 @@ template PG_MODULE_MAGIC* =
 template PG_FUNCTION_INFO_V1*(funcname: typed) =
     {.emit: ["""PG_FUNCTION_INFO_V1(""",funcname.astToStr,");"] .}
 
+
+template ActivateHooks* =
+  {.pragma: static_hook, codegenDecl: "static $1 $2", exportc.}
+  {.pragma: hook_symbol, codegenDecl: "$1 $2", exportc.}
+  {.emit: """/*INCLUDESECTION*/
+#include "postgres.h"
+""".}
+
+
+
 export reports
+export emit_hook
