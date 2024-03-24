@@ -47,8 +47,7 @@ template init_emit_hook(file: string) =
   pg_fini.pragma = newNimNode(nnkPragma).add(exprc2)
 
   res.add pg_fini
-
-  writeFile(file,res.repr)
+  writeFile(file.replace("tmp_",""),res.repr)
 
 template emit_hook(file: string) =
   init_emit_hook(file)
