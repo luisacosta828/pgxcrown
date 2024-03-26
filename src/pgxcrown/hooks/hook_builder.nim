@@ -2,64 +2,78 @@ import std/[os, strutils, macros]
 
 const entrypoint {. strdefine .} = ""
 
-template init_emit_hook(file: string) =
+template remove_and_install_dependencies(file: string) =
   var source = parseStmt(readFile(file))
   del(source)
 
-  var res = newNimNode(nnkStmtList)
+  var res {.inject.} = newNimNode(nnkStmtList)
   res.add newNimNode(nnkImportStmt).add ident("pgxcrown")
   res.add ident("PG_MODULE_MAGIC")
   res.add ident("ActivateHooks")
-  
-  res.add newNimNode(nnkVarSection).add newIdentDefs(ident("""emit_log_hook {. original_hook .}"""), ident("emit_log_hook_type"))
-  res.add newNimNode(nnkVarSection).add newIdentDefs(ident("""prev_emit_log {. user_hook .}"""), ident("emit_log_hook_type"), newNilLit())
+
+
+template init_hook(file: string, kind: string, params: seq[NimNode]) =
+  remove_and_install_dependencies(file)
+
   var 
-    pg_init = newProc(ident("pg_init"), pragmas = newNimNode(nnkPragma))
+    hook_type           = kind & "_hook_type"
+    original_hook_sym   = ident(kind & "_hook")
+    user_hook_sym       = ident("prev_" & kind)
+    custom_proc_ident   = ident("custom_proc")
+    original_hook_var = original_hook_sym.repr & " {. original_hook .}"
+    user_hook_var     = user_hook_sym.repr & " {. user_hook .}"
 
-  var body = quote do: 
-    prev_emit_log = emit_log_hook
-    emit_log_hook = custom_emit_log
+  res.add newNimNode(nnkVarSection).add newIdentDefs(ident(original_hook_var), ident(hook_type))
+  res.add newNimNode(nnkVarSection).add newIdentDefs(ident(user_hook_var), ident(hook_type))
 
-  var params = [newIdentDefs(ident("edata"),newNimNode(nnkPtrTy).add(ident("ErrorData"))) ]
-  var custom_emit_log = newProc(ident("custom_emit_log"))
-  custom_emit_log.params.add params
-  custom_emit_log.pragma = newNimNode(nnkPragma).add(ident("cdecl"))
-  custom_emit_log.body.add quote do:
-    discard
-
-  res.add custom_emit_log
-
-  pg_init.body.add body
   var exprc, exprc2 = newNimNode(nnkExprColonExpr)
   exprc.add(ident("exportc"))
   exprc2.add(ident("exportc"))
   exprc.add(newStrLitNode("_PG_init"))
   exprc2.add(newStrLitNode("_PG_fini"))
+
+  var 
+    pg_init = newProc(ident("pg_init"), pragmas = newNimNode(nnkPragma)) 
+    pg_fini = newProc(ident("pg_fini"), pragmas = newNimNode(nnkPragma))
+    custom_proc = newProc(custom_proc_ident, pragmas = newNimNode(nnkPragma))
+
+
+  custom_proc.params.add params
+  custom_proc.pragma = newNimNode(nnkPragma).add(ident("cdecl"))
+  custom_proc.body.add quote do:
+    discard
+
   pg_init.pragma = newNimNode(nnkPragma).add(exprc)
+  pg_init.body.add quote do:
+    `user_hook_sym.repr` = `original_hook_sym.repr`
+    `original_hook_sym.repr` = `custom_proc_ident.repr`
+  
 
-  res.add pg_init
-
-  var pg_fini = newProc(ident("pg_fini"), pragmas = newNimNode(nnkPragma))
-  var body2 = quote do:
-    emit_log_hook = prev_emit_log
-
-  pg_fini.body.add body2
   pg_fini.pragma = newNimNode(nnkPragma).add(exprc2)
+  pg_fini.body.add quote do:
+    `original_hook_sym.repr` = `user_hook_sym.repr`
 
+
+  res.add custom_proc
+  res.add pg_init
   res.add pg_fini
+
   writeFile(file.replace("tmp_",""),res.repr)
-
-template emit_hook(file: string) =
-  init_emit_hook(file)
-
 
 macro build_hook*() =
   var (dir, _, _) = splitFile(entrypoint)
   var selectedHook     = dir.split("/")[0]
 
-  case selectedHook:
-    of "emit_hook": emit_hook(entrypoint)
-    else: discard
+  var params: seq[NimNode] = case selectedHook:
+      of "emit_log": @[newIdentDefs(ident("edata"),newNimNode(nnkPtrTy).add(ident("ErrorData"))) ]
+      of "post_parse_analyze": @[
+        newIdentDefs(ident("pstate"), newNimNode(nnkPtrTy).add(ident("ParseState"))),
+        newIdentDefs(ident("query"), newNimNode(nnkPtrTy).add(ident("Query"))),
+        newIdentDefs(ident("jstate"), newNimNode(nnkPtrTy).add(ident("JumbleState")))
+      ]
+      else: @[]
 
+  init_hook(entrypoint, selectedHook, params)
+  
 
 build_hook()
