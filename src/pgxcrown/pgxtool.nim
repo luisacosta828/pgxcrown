@@ -1,6 +1,6 @@
 import std/[os, strutils]
 
-const available_hooks = ["emit_hook"]
+const available_hooks = ["emit_hook", "post_parse_analyze_hook"]
 
 proc cli_helper() =
    echo """
