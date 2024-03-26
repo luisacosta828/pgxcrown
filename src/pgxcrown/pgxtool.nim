@@ -91,7 +91,8 @@ proc check_command() =
         compile2hook(entry_point)
   of "available-hooks":
     echo """ 
-    * emit_hook 
+    * emit_hook
+    * post_parse_analyze_hook
     """
     
 #{.pop.}
