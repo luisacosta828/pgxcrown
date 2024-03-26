@@ -21,6 +21,8 @@ else:
     if root == "":
       echo pg_config_error
     else:
-      const pg_version:string = staticExec("""psql -V | awk '{ print "/"int($3)"/server"} '""").split("\n")[0]
-      const server = " -I" & root & pg_version
-      {.passC: server & " -I"&root.}
+      const pg_version:string = staticExec("""psql -V | awk '{ print "/"int($3)""} '""").split("\n")[0]
+      const server = " -I" & root & pg_version & "/server"
+      const internals = " -I" & root & "/internal"
+      
+      {.passC: server & internals & " -I" & root.}
