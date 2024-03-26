@@ -1,8 +1,7 @@
 include pgxcrown/utils
 include pgxcrown/pgxmacros
 import pgxcrown/reports/reports
-import pgxcrown/hooks/emit_hook
-
+import pgxcrown/hooks/[emit_hook, post_parse_hook]
 
 
 template PG_MODULE_MAGIC* =
@@ -28,3 +27,4 @@ template ActivateHooks* =
 
 export reports
 export emit_hook
+export post_parse_hook
