@@ -1,6 +1,6 @@
 import std/[os, strutils]
 
-const available_hooks = ["emit_hook", "post_parse_analyze_hook"]
+const available_hooks = ["emit_log", "post_parse_analyze"]
 
 proc cli_helper() =
    echo """
@@ -85,14 +85,14 @@ proc check_command() =
   of "build-extension":
     var entry_point = req / "src" / "main.nim"
     if dirExists(req) and fileExists(entry_point):
-      if "hook" notin req:
-        compile2pgx(entry_point)
-      else:
+      if req in available_hooks:
         compile2hook(entry_point)
+      else:
+        compile2pgx(entry_point)
   of "available-hooks":
     echo """ 
-    * emit_hook
-    * post_parse_analyze_hook
+    * emit_log
+    * post_parse_analyze
     """
     
 #{.pop.}
