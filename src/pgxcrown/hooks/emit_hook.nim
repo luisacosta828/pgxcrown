@@ -11,7 +11,7 @@
 type
   ErrorData* {.importc:  "ErrorData" , incompletestruct .} = object
     elevel: cint
-    output_to_server: bool
+    output_to_server*: bool
     output_to_client: bool
     hide_stmt: bool
     hide_ctx: bool
