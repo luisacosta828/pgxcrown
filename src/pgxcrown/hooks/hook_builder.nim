@@ -26,7 +26,7 @@ template init_hook(file: string, kind: string, params: seq[NimNode]) =
   res.add newNimNode(nnkVarSection).add newIdentDefs(ident(original_hook_var), ident(hook_type))
   res.add newNimNode(nnkVarSection).add newIdentDefs(ident(user_hook_var), ident(hook_type))
 
-  var exprc, exprc2 = newNimNode(nnkExprColonExpr)
+  var exprc, exprc2, exprc3 = newNimNode(nnkExprColonExpr)
   exprc.add(ident("exportc"))
   exprc2.add(ident("exportc"))
   exprc.add(newStrLitNode("_PG_init"))
@@ -44,6 +44,7 @@ template init_hook(file: string, kind: string, params: seq[NimNode]) =
     discard
 
   pg_init.pragma = newNimNode(nnkPragma).add(exprc)
+  pg_init.pragma.add newNimNode(nnkPragma).add(ident("pginitexport"))
   pg_init.body.add quote do:
     `user_hook_sym.repr` = `original_hook_sym.repr`
     `original_hook_sym.repr` = `custom_proc_ident.repr`

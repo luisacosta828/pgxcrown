@@ -1,5 +1,9 @@
 {.push header: "parser/analyze.h".}
 
+{.emit: """/*INCLUDESECTION*/
+#include "postgres.h"
+""".}
+
 type
   CmdType* = enum
     CMD_UNKNOWN

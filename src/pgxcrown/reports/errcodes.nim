@@ -4,7 +4,7 @@ type ErrorCodes* = enum
      INFO = 17,
      NOTICE = 18,
      WARNING = 19,
-     ERROR = 20
+     ERROR = 21
 
 proc log_client_only*(): cint {. inline .} = ord(ErrorCodes.LOG_CLIENT_ONLY)
 proc log_server_only*(): cint {. inline .} = ord(ErrorCodes.LOG_SERVER_ONLY)
