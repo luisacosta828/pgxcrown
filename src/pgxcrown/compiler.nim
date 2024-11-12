@@ -1,52 +1,14 @@
-import std/[os, staticos]
 from std/strutils import split
 
 
-proc pgconfigFinder*(): string =
-  ## Find "pg_config" CLI tool path at run-time.
-  # Windows may not add all CLI tools to PATH by default.
-  # Windows full path is something like (int is semver):
-  # "C:\Program Files\PostgreSQL\17\bin\pg_config.exe"
-  result = "pg_config"
-  when defined(windows):
-    if not fileExists("pg_config.exe"):
-      const
-        folder = """C:\Program Files\PostgreSQL\"""
-        binary = """\bin\pg_config.exe"""
-      if dirExists(folder):
-        for semver in 15 .. 25:
-          if fileExists(folder & $semver & binary):
-            result = folder & $semver & binary
-            break
-          if semver == 25:
-            echo "WARNING: Can not find pg_config.exe"
-
-
-proc staticPgconfigFinder*(): string =
-  ## Find "pg_config" CLI tool path at compile-time.
-  result = "pg_config"
-  when defined(windows):
-    if not staticFileExists("pg_config.exe"):
-      const
-        folder = """C:\Program Files\PostgreSQL\"""
-        binary = """\bin\pg_config.exe"""
-      if staticDirExists(folder):
-        for semver in 15 .. 25:
-          if staticFileExists(folder & $semver & binary):
-            result = folder & $semver & binary
-            break
-          if semver == 25:
-            echo "WARNING: Can not find pg_config.exe"
-
 
 const
-  pg_config = staticPgconfigFinder()
-  root = staticExec(pg_config & " --includedir").split("\n")[0]
+  root = staticExec("pg_config --includedir").split("\n")[0]
   pg_config_error = "pg_config is not available"
 
 
 when defined(windows):
-    const libdir = staticExec(pg_config & " --libdir").split("\n")[0]
+    const libdir = staticExec("pg_config --libdir").split("\n")[0]
     if root == "":
         echo pg_config_error
     else:
