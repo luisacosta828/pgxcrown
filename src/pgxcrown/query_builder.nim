@@ -1,4 +1,3 @@
-
 type
   command {.importc: "const char*", used.} = distinct cstring
 
