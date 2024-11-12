@@ -1,0 +1,26 @@
+name: Build
+on: [push, pull_request]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:       [ubuntu-latest, windows-latest]
+        nim-channel:    [stable, devel]
+    name: ${{ matrix.platform }}-${{ matrix.nim-channel }}
+    runs-on: ${{ matrix.platform }}
+    steps:
+    - uses: actions/checkout@v4
+    - uses: jiro4989/setup-nim-action@v2
+      with:
+        nim-version: ${{ matrix.nim-channel }}
+
+    - name: Nimble setup
+      run: |
+        nimble -y refresh
+        nimble -y install
+
+    - name: Build
+      run: |
+        pgxtool available-hooks

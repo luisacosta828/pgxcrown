@@ -1,6 +1,8 @@
 import std/[os, strutils, macros]
 
-const entrypoint {. strdefine .} = ""
+
+const entrypoint {.strdefine.} = ""
+
 
 template remove_and_install_dependencies(file: string) =
   var source = parseStmt(readFile(file))
@@ -15,13 +17,13 @@ template remove_and_install_dependencies(file: string) =
 template init_hook(file: string, kind: string, params: seq[NimNode]) =
   remove_and_install_dependencies(file)
 
-  var 
-    hook_type           = kind & "_hook_type"
-    original_hook_sym   = ident(kind & "_hook")
-    user_hook_sym       = ident("prev_" & kind)
-    custom_proc_ident   = ident("custom_proc")
+  var
+    hook_type = kind & "_hook_type"
+    original_hook_sym = ident(kind & "_hook")
+    user_hook_sym = ident("prev_" & kind)
+    custom_proc_ident = ident("custom_proc")
     original_hook_var = original_hook_sym.repr & " {. original_hook .}"
-    user_hook_var     = user_hook_sym.repr & " {. user_hook .}"
+    user_hook_var = user_hook_sym.repr & " {. user_hook .}"
 
   res.add newNimNode(nnkVarSection).add newIdentDefs(ident(original_hook_var), ident(hook_type))
   res.add newNimNode(nnkVarSection).add newIdentDefs(ident(user_hook_var), ident(hook_type))
@@ -32,11 +34,10 @@ template init_hook(file: string, kind: string, params: seq[NimNode]) =
   exprc.add(newStrLitNode("_PG_init"))
   exprc2.add(newStrLitNode("_PG_fini"))
 
-  var 
-    pg_init = newProc(ident("pg_init"), pragmas = newNimNode(nnkPragma)) 
+  var
+    pg_init = newProc(ident("pg_init"), pragmas = newNimNode(nnkPragma))
     pg_fini = newProc(ident("pg_fini"), pragmas = newNimNode(nnkPragma))
     custom_proc = newProc(custom_proc_ident, pragmas = newNimNode(nnkPragma))
-
 
   custom_proc.params.add params
   custom_proc.pragma = newNimNode(nnkPragma).add(ident("cdecl"))
@@ -48,33 +49,32 @@ template init_hook(file: string, kind: string, params: seq[NimNode]) =
   pg_init.body.add quote do:
     `user_hook_sym.repr` = `original_hook_sym.repr`
     `original_hook_sym.repr` = `custom_proc_ident.repr`
-  
 
   pg_fini.pragma = newNimNode(nnkPragma).add(exprc2)
   pg_fini.body.add quote do:
     `original_hook_sym.repr` = `user_hook_sym.repr`
 
-
   res.add custom_proc
   res.add pg_init
   res.add pg_fini
 
-  writeFile(file.replace("tmp_",""),res.repr)
+  writeFile(file.replace("tmp_", ""), res.repr)
+
 
 macro build_hook*() =
   var (dir, _, _) = splitFile(entrypoint)
-  var selectedHook     = dir.split("/")[0]
+  var selectedHook = dir.split("/")[0]
 
-  var params: seq[NimNode] = case selectedHook:
-      of "emit_log": @[newIdentDefs(ident("edata"),newNimNode(nnkPtrTy).add(ident("ErrorData"))) ]
-      of "post_parse_analyze": @[
-        newIdentDefs(ident("pstate"), newNimNode(nnkPtrTy).add(ident("ParseState"))),
-        newIdentDefs(ident("query"), newNimNode(nnkPtrTy).add(ident("Query"))),
-        newIdentDefs(ident("jstate"), newNimNode(nnkPtrTy).add(ident("JumbleState")))
-      ]
-      else: @[]
+  var params: seq[NimNode] = case selectedHook
+    of "emit_log": @[newIdentDefs(ident("edata"), newNimNode(nnkPtrTy).add(ident("ErrorData")))]
+    of "post_parse_analyze": @[
+      newIdentDefs(ident("pstate"), newNimNode(nnkPtrTy).add(ident("ParseState"))),
+      newIdentDefs(ident("query"), newNimNode(nnkPtrTy).add(ident("Query"))),
+      newIdentDefs(ident("jstate"), newNimNode(nnkPtrTy).add(ident("JumbleState")))
+    ]
+    else: @[]
 
   init_hook(entrypoint, selectedHook, params)
-  
+
 
 build_hook()

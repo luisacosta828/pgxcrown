@@ -15,13 +15,11 @@ type
     CMD_UTILITY
     CMD_NOTHING
 
-  ParseState*  {.importc: "ParseState", incompletestruct.}  = object
-  Query*       {.importc: "Query", incompletestruct.}       = object
+  ParseState* {.importc: "ParseState", incompletestruct.} = object
+  Query* {.importc: "Query", incompletestruct.} = object
     commandType*: CmdType
   JumbleState* {.importc: "JumbleState", incompletestruct.} = object
 
+  post_parse_analyze_hook_type* {.exportc.} = proc(pstate: ptr ParseState, query: ptr Query, jstate: ptr JumbleState) {.cdecl.}
 
-  post_parse_analyze_hook_type* {.exportc.} = proc(pstate: ptr ParseState, query: ptr Query, jstate: ptr JumbleState) {. cdecl .}
-
-
-{. pop .}
+{.pop.}
