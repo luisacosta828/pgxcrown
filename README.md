@@ -16,7 +16,7 @@ pgxtool create-project test
 
 ### Write your code into main.nim
 ```nim
-proc add_one(a: int): int =
+proc add_one*(a: int): int =
   a + 1
 
 ```
