@@ -26,7 +26,7 @@ proc staticPgconfigFinder*(): string =
   ## Find "pg_config" CLI tool path at compile-time.
   result = "pg_config"
   when defined(windows):
-    if staticFileExists("pg_config.exe"):
+    if not staticFileExists("pg_config.exe"):
       const
         folder = """C:\Program Files\PostgreSQL\"""
         binary = """\bin\pg_config.exe"""
