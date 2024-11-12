@@ -1,4 +1,5 @@
 import std/[os, strutils]
+import pathfinders
 
 
 const available_hooks = ["emit_log", "post_parse_analyze"]
@@ -20,15 +21,18 @@ Commands:
 
   available-hooks: List Postgres hooks supported for pgxcrown
      * pgxtool available-hooks
+
+  path-finders: List Postgres pg_config, libdir, includedir paths
+     * pgxtool path-finders
 """
 
 
 template nim_c(module: string): string =
-  "nim c -d:entrypoint=" & module & " " & module
+  "nim c --listCmd -d:entrypoint=" & module & ' ' & module
 
 
 template emit_pgx_c_extension(module: string): string =
-  "nim c --d:release --app:lib " & module
+  "nim c -d:release --app:lib --listCmd " & module
 
 
 template generate_tmp_file(input_file: string, kind: string = "") =
@@ -78,7 +82,7 @@ template build_project_template(req: string, kind: string = "") =
 proc check_command() =
   var
     arg = paramStr(1)
-    req = if arg == "available-hooks": "" else: paramStr(2)
+    req = if arg == "available-hooks" or arg == "path-finders" : "" else: paramStr(2)
 
   case arg
   of "create-hook":
@@ -95,6 +99,10 @@ proc check_command() =
         compile2hook(entry_point)
       else:
         compile2pgx(entry_point)
+  of "path-finders":
+    echo "pg_config  = ", pgconfigFinder()
+    echo "includedir = ", pgIncludeFinder()
+    echo "libdir     = ", pgLibFinder()
   of "available-hooks":
     echo """
     * emit_log

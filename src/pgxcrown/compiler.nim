@@ -1,7 +1,10 @@
 from std/strutils import split
 
-const root = staticExec("pg_config --includedir").split("\n")[0]
-const pg_config_error = "pg_config is not available"
+
+
+const
+  root = staticExec("pg_config --includedir").split("\n")[0]
+  pg_config_error = "pg_config is not available"
 
 
 when defined(windows):

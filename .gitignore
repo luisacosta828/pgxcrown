@@ -1,3 +1,5 @@
 *.exe
 *.so
 *.dll
+emit_log/
+test/
