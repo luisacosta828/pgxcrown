@@ -40,9 +40,21 @@ proc add_one*(a: int): int =
 
 ```bash
 pgxtool build-extension test
+```
 
+Linux:
+
+```bash
 cp *.so $(pg_config --pkglibdir)
 ```
+
+Windows:
+
+- Windows may not add all CLI tools to PATH by default(?)
+- Locate `pg_config.exe` in the folders `"C:\Program Files\PostgreSQL\"`.
+- Run it in a terminal like so `pg_config.exe --pkglibdir` to get the pkglibdir path.
+- See `pgconfigFinder()` function source code as hint.
+- Check if you have development header files ("postgres.h", "spi.h", "analyze.h", "elog.h").
 
 
 ### Call your library function from Postgresql
