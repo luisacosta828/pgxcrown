@@ -7,7 +7,7 @@ jobs:
       fail-fast: false
       matrix:
         platform:       [ubuntu-latest, windows-latest]
-        nim-channel:    [stable, devel]
+        nim-channel:    [stable]  # , devel] devel and windows are not supported.
     name: ${{ matrix.platform }}-${{ matrix.nim-channel }}
     runs-on: ${{ matrix.platform }}
     steps:
@@ -23,4 +23,7 @@ jobs:
 
     - name: Build
       run: |
+        pgxtool
         pgxtool available-hooks
+        pgxtool create-project test
+        pgxtool create-hook emit_log
