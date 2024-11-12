@@ -14,4 +14,4 @@ binDir        = "src/bin"
 installExt = @["nim"]
 
 # Dependencies
-requires "nim >= 0.12.0"
+requires "nim >= 2.0.0"
