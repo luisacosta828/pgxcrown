@@ -50,7 +50,7 @@ cp *.so $(pg_config --pkglibdir)
 
 Windows:
 
-- Windows may not add all CLI tools to PATH by default(?)
+- Windows may not add all Postgres CLI tools to PATH by default(?)
 - Locate `pg_config.exe` in the folders `"C:\Program Files\PostgreSQL\"`.
 - Run it in a terminal like so `pg_config.exe --pkglibdir` to get the pkglibdir path.
 - See `pgconfigFinder()` function source code as hint.
