@@ -27,3 +27,4 @@ jobs:
         pgxtool available-hooks
         pgxtool create-project test
         pgxtool create-hook emit_log
+        pgxtool build-extension test
