@@ -2,14 +2,14 @@
 #include "postgres.h"
 #""".}
 
-{. push header: "utils/elog.h" .}
+{.push header: "utils/elog.h".}
 
 {.emit: """/*INCLUDESECTION*/
 #include "postgres.h"
 """.}
 
 type
-  ErrorData* {.importc:  "ErrorData" , incompletestruct .} = object
+  ErrorData* {.importc: "ErrorData", incompletestruct.} = object
     elevel: cint
     output_to_server*: bool
     output_to_client: bool
@@ -27,6 +27,6 @@ type
     constraint_name: cstring
     lineno: cint
 
-  emit_log_hook_type* {.exportc.} = proc(edata: ptr ErrorData) {. cdecl .}
+  emit_log_hook_type* {.exportc.} = proc(edata: ptr ErrorData) {.cdecl.}
 
 {.pop.}
