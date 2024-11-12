@@ -9,32 +9,34 @@ proc pgconfigFinder*(): string =
   # "C:\Program Files\PostgreSQL\17\bin\pg_config.exe"
   result = "pg_config"
   when defined(windows):
-    const
-      folder = """C:\Program Files\PostgreSQL\"""
-      binary = """\bin\pg_config.exe"""
-    if dirExists(folder):
-      for semver in 15 .. 25:
-        if fileExists(folder & $semver & binary):
-          result = folder & $semver & binary
-          break
-        if semver == 25:
-          echo "WARNING: Can not find pg_config.exe"
+    if not fileExists("pg_config.exe"):
+      const
+        folder = """C:\Program Files\PostgreSQL\"""
+        binary = """\bin\pg_config.exe"""
+      if dirExists(folder):
+        for semver in 15 .. 25:
+          if fileExists(folder & $semver & binary):
+            result = folder & $semver & binary
+            break
+          if semver == 25:
+            echo "WARNING: Can not find pg_config.exe"
 
 
 proc staticPgconfigFinder*(): string =
   ## Find "pg_config" CLI tool path at compile-time.
   result = "pg_config"
   when defined(windows):
-    const
-      folder = """C:\Program Files\PostgreSQL\"""
-      binary = """\bin\pg_config.exe"""
-    if staticDirExists(folder):
-      for semver in 15 .. 25:
-        if staticFileExists(folder & $semver & binary):
-          result = folder & $semver & binary
-          break
-        if semver == 25:
-          echo "WARNING: Can not find pg_config.exe"
+    if staticFileExists("pg_config.exe"):
+      const
+        folder = """C:\Program Files\PostgreSQL\"""
+        binary = """\bin\pg_config.exe"""
+      if staticDirExists(folder):
+        for semver in 15 .. 25:
+          if staticFileExists(folder & $semver & binary):
+            result = folder & $semver & binary
+            break
+          if semver == 25:
+            echo "WARNING: Can not find pg_config.exe"
 
 
 const
