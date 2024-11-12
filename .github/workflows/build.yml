@@ -23,5 +23,4 @@ jobs:
 
     - name: Build
       run: |
-        pgxtool create-project test
         pgxtool available-hooks
