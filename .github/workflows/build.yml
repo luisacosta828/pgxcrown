@@ -16,6 +16,11 @@ jobs:
       with:
         nim-version: ${{ matrix.nim-channel }}
 
+    - name: Dev dependencies setup
+      if: runner.os == 'Linux'
+      run: |
+        apt install build-essential postgresql-server-dev-all libpq-dev
+
     - name: Nimble setup
       run: |
         nimble -y refresh
