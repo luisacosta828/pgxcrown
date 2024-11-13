@@ -19,7 +19,8 @@ jobs:
     - name: Dev dependencies setup
       if: runner.os == 'Linux'
       run: |
-        sudo apt install build-essential postgresql-server-dev-all libpq-dev
+        sudo apt -y update
+        sudo apt -y install build-essential postgresql-server-dev-all libpq-dev
 
     - name: Nimble setup
       run: |
