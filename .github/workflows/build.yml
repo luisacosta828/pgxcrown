@@ -16,6 +16,12 @@ jobs:
       with:
         nim-version: ${{ matrix.nim-channel }}
 
+    - name: Dev dependencies setup
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt -y update
+        sudo apt -y install build-essential libpq-dev
+
     - name: Nimble setup
       run: |
         nimble -y refresh

@@ -120,23 +120,5 @@ proc main() =
   of 1, 2: check_command()
   else: cli_helper()
 
-  #[
-  if pc == 2:
-   var
-     buildopt = paramStr(1)
-     filename = paramStr(2)
-
-   if buildopt == "--build-extension":
-     echo 1
-       #discard execCmdEx( """ echo " """ & build_pg_function(filename) & """" > """ & nim_target_function & ".sql" )
-   else:
-       cli_helper()
-  #elif paramCount() == 1:
-  #   var buildopt = paramStr(1)
-  #   if buildopt == "--build-plnim-function-handler":
-  #      compile_library("~/.nimble/pkgs/pgxcrown-0.4.1/pgxcrown/plnim/plnim")
-  else:
-    cli_helper()
-    ]#
 
 main()

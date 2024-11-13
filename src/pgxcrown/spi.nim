@@ -131,7 +131,7 @@ template query*(c: const_string, obj: untyped) =
     row = @[]
     var values = gettuple(SPI_tuptable)
     for i in 1..tupdesc.natts:
-    # Catching N+1 problem!
+      # Catching N+1 problem!
       if lines != (SPI_processed - 1):
         #var ttype:cstring = gettype(tupdesc,i)
         var colname: cstring = fname(tupdesc, i)
