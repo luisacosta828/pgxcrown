@@ -22,10 +22,10 @@ when defined(windows):
   const HAVE_LONG_LONG_INT_64 = "HAVE_LONG_LONG_INT_64"
 
   {.passC: "-D" & HAVE_LONG_LONG_INT_64 & " -DWIN32 -DWINDOWS -D__WINDOWS__ -D__WIN32__ -D_CRT_SECURE_NO_DEPRECATE -D_CRT_NONSTDC_NO_DEPRECATE" & win_32 & msvc & server & " -I" & includeDir.}
-  
+
 elif defined(linux):
-  const server = " -I" & includeDir & pgVersion & "/server"
-  const internals = " -I" & includeDir & "/internal"
+  const server = " -I" & includeDir & "/" & pgVersion & "/server"
+  const internals = " -I" & includeDir & "/" & pgVersion & "/internal"
 
   {.passC: server & internals & " -I" & includeDir.}
 else:
