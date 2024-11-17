@@ -3,6 +3,13 @@ import pathfinders
 
 
 const available_hooks = ["emit_log", "post_parse_analyze"]
+const platform_compiler: string = when defined(windows):
+  "vcc"
+elif defined(linux):
+  "gcc"
+else:
+  quit "Unsupported operating system"
+
 
 
 proc cli_helper() =
@@ -28,11 +35,11 @@ Commands:
 
 
 template nim_c(module: string): string =
-  "nim c --listCmd -d:entrypoint=" & module & ' ' & module
+  "nim c --cc:" & platform_compiler & " -d:release --listCmd -d:entrypoint=" & module & ' ' & module
 
 
 template emit_pgx_c_extension(module: string): string =
-  "nim c -d:release --app:lib --listCmd " & module
+  "nim c --cc:" & platform_compiler & " -d:release --app:lib --listCmd " & module
 
 
 template generate_tmp_file(input_file: string, kind: string = "") =
@@ -109,8 +116,6 @@ proc check_command() =
     * post_parse_analyze
     """
   else: cli_helper()
-
-#{.pop.}
 
 
 proc main() =
