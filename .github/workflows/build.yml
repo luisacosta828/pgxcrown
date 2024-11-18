@@ -20,7 +20,7 @@ jobs:
       if: runner.os == 'Linux'
       run: |
         sudo apt -y update
-        sudo apt -y install build-essential libpq-dev
+        sudo apt -y install build-essential libpq-dev postgresql-server-dev-all
 
     - name: Nimble setup
       run: |
