@@ -89,21 +89,35 @@ template build_project_template(req: string, kind: string = "") =
     return
   build_project(req, kind)
 
+template validate_second_arg(pc: int) =
+  if pc != 2:
+    cli_helper()
+    return
 
-proc check_command() =
+
+proc check_command(pc: int) =
   var
     arg = paramStr(1)
-    req = if arg == "available-hooks" or arg == "path-finders" : "" else: paramStr(2)
+    req:string
+
+  if arg == "available-hooks" or arg == "path-finders" : 
+    req = ""    
 
   case arg
   of "create-hook":
+    validate_second_arg(pc)
+    req = paramStr(2)
     if req in available_hooks:
       build_project_template(req, "hook:" & req)
     else:
       echo req & " is not supported yet. Check pgxtool available-hooks!"
   of "create-project":
+    validate_second_arg(pc)
+    req = paramStr(2)
     build_project_template(req)
   of "build-extension":
+    validate_second_arg(pc)
+    req = paramStr(2)
     var entry_point = req / "src" / "main.nim"
     if dirExists(req) and fileExists(entry_point):
       if req in available_hooks:
@@ -126,7 +140,7 @@ proc main() =
   let pc = paramCount()
 
   case pc
-  of 1, 2: check_command()
+  of 1, 2: check_command(pc)
   else: cli_helper()
 
 
