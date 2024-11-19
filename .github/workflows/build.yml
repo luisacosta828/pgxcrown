@@ -20,8 +20,8 @@ jobs:
       if: runner.os == 'Linux'
       run: |
         sudo apt -y update
-        sudo apt --purge remove postgresql-* libpq-dev
-        sudo apt -y install build-essential postgresql postgresql-contrib libpq-dev postgresql-server-dev-all
+        sudo apt --purge remove postgresql-* libpq5 libpq-dev -y
+        sudo apt -y install build-essential postgresql postgresql-contrib libpq5 libpq-dev postgresql-server-dev-all
 
     - name: Nimble setup
       run: |
