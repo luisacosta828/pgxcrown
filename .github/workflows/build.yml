@@ -16,16 +16,12 @@ jobs:
       with:
         nim-version: ${{ matrix.nim-channel }}
 
-    - name:  Windows Dev dependencies setup
-      if: runner.os == 'Windows' 
+    - name: Windows Dev dependencies setup
+      if: runner.os == 'Windows'
       run: |
-        Write-Host "Installing WinGet PowerShell module from PSGallery..."
-        Install-PackageProvider -Name NuGet -Force | Out-Null
-        Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery | Out-Null
-        Repair-WinGetPackageManager
-        winget install PostgreSQL.PostgreSQL.16 --disable-interactivity
-     
-
+        Invoke-WebRequest -UseBasicParsing -Uri "https://get.enterprisedb.com/postgresql/postgresql-17.0-1-windows-x64.exe"
+        .\postgresql-17.0-1-windows-x64.exe --mode unattended
+            
     - name: Linux Dev dependencies setup      
       if: runner.os == 'Linux'
       run: |
