@@ -19,7 +19,7 @@ jobs:
     - name: Windows Dev dependencies setup
       if: runner.os == 'Windows'
       run: |
-        Invoke-WebRequest -UseBasicParsing -Uri "https://get.enterprisedb.com/postgresql/postgresql-17.0-1-windows-x64.exe"
+        Invoke-WebRequest -UseBasicParsing -Uri "https://get.enterprisedb.com/postgresql/postgresql-17.0-1-windows-x64.exe" -OutFile "postgresql-17.0-1-windows-x64.exe"
         .\postgresql-17.0-1-windows-x64.exe --mode unattended
             
     - name: Linux Dev dependencies setup      
