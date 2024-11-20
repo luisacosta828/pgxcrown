@@ -17,6 +17,9 @@ jobs:
         nim-version: ${{ matrix.nim-channel }}
 
     - name: Dev dependencies setup
+      if: runner.os == 'Windows'
+      run: |
+        winget install PostgreSQL.PostgreSQL.16 --disable-interactivity
       if: runner.os == 'Linux'
       run: |
         sudo apt -y update
