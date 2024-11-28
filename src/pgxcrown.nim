@@ -1,8 +1,5 @@
 include pgxcrown/utils
 include pgxcrown/pgxmacros
-import pgxcrown/reports/reports
-import pgxcrown/hooks/[emit_hook, post_parse_hook]
-
 
 template PG_MODULE_MAGIC*() =
   const DLL* = "PGDLLEXPORT $# $#$#"
@@ -25,8 +22,3 @@ template ActivateHooks*() =
     #include "postgres.h"
     #include "fmgr.h"
   """.}
-
-
-export reports
-export emit_hook
-export post_parse_hook
