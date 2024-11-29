@@ -1,7 +1,6 @@
 import std/[os, strutils]
 import pathfinders
 
-
 const available_hooks = ["emit_log", "post_parse_analyze"]
 const platform_compiler: string = when defined(windows):
   "vcc"
@@ -11,12 +10,19 @@ else:
   quit "Unsupported operating system"
 
 
+const
+  home = getHomeDir()
+  current_user = home.lastPathPart
+  pgxtool_init_dir = home / current_user & "_pgxtool"
 
 proc cli_helper() =
   echo """
 Usage: pgxtool [command] [options] [target]
 
 Commands:
+  init: Initialize working directory
+     * pgxtool init
+
   create-project: Initialize a new pgxcrown project template to edit
      * pgxtool create-project test
 
@@ -35,11 +41,11 @@ Commands:
 
 
 template nim_c(module: string): string =
-  findExe("nim") & " c -d:release --listCmd --cc:" & platform_compiler & " -d:entrypoint=" & module & ' ' & module
+  findExe("nim") & " c -d:release --cc:" & platform_compiler & " -d:entrypoint=" & module & ' ' & module
 
 
 template emit_pgx_c_extension(module: string): string =
-  findExe("nim") & " c -d:release --app:lib --listCmd --cc:" & platform_compiler & ' ' & module
+  findExe("nim") & " c -d:release --app:lib --cc:" & platform_compiler & ' ' & module
 
 
 template generate_tmp_file(input_file: string, kind: string = "") =
@@ -56,12 +62,16 @@ template run(cmd: string) =
 
 
 template build_project(req: string, kind: string) =
+  if not fileExists(pgxtool_init_dir / "config.json"):
+    quit("Run 'pgxtool init' command first.")
+
   var
-    source = req / "src"
+    source = pgxtool_init_dir / req / "src"
+    private = pgxtool_init_dir / req / "private" 
     entry_point = source / "main.nim"
 
-  createDir(req)
   createDir(source)
+  createDir(private)
   writeFile(entry_point, "")
 
   if "hook" in kind:
@@ -69,7 +79,6 @@ template build_project(req: string, kind: string) =
     writeFile(tmp_file, tmp_content)
     run nim_c(tmp_file)
     #writeFile(source / "hook_type.txt", kind.split(":")[1])
-
 
 proc compile2pgx(input_file: string) =
   generate_tmp_file input_file
@@ -84,7 +93,7 @@ proc compile2hook(input_file: string) =
 
 
 template build_project_template(req: string, kind: string = "") =
-  if dirExists(req):
+  if dirExists( pgxtool_init_dir / req):
     echo "Path in use, directory already exists, choose another name."
     return
   build_project(req, kind)
@@ -94,13 +103,21 @@ template validate_second_arg(pc: int) =
     cli_helper()
     return
 
+template prepare_working_directory =
+  if dirExists(pgxtool_init_dir):
+    echo "working directory " & pgxtool_init_dir & " already exists." 
+  else:
+    echo "Initializing working directory: " & pgxtool_init_dir
+    createDir(pgxtool_init_dir)
+    writeFile(pgxtool_init_dir / "config.json", "{}")
+
 
 proc check_command(pc: int) =
   var
     arg = paramStr(1)
     req:string
 
-  if arg == "available-hooks" or arg == "path-finders" : 
+  if arg in ["available-hooks","path-finders","init"] : 
     req = ""    
 
   case arg
@@ -133,6 +150,8 @@ proc check_command(pc: int) =
     * emit_log
     * post_parse_analyze
     """
+  of "init":
+    prepare_working_directory
   else: cli_helper()
 
 
