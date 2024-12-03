@@ -1,4 +1,4 @@
-import std/[os, strutils]
+import std/[os, osproc, strutils, json]
 import pathfinders
 
 const available_hooks = ["emit_log", "post_parse_analyze"]
@@ -9,11 +9,11 @@ elif defined(linux):
 else:
   quit "Unsupported operating system"
 
-
 const
   home = getHomeDir()
   current_user = home.lastPathPart
   pgxtool_init_dir = home / current_user & "_pgxtool"
+  pgxtool_config = pgxtool_init_dir / "config.json"
 
 proc cli_helper() =
   echo """
@@ -37,15 +37,20 @@ Commands:
 
   path-finders: List Postgres pg_config, libdir, includedir paths
      * pgxtool path-finders
+
+  test: Test an extension
+     * pgxtool test project
+
 """
 
 
 template nim_c(module: string): string =
-  findExe("nim") & " c -d:release --cc:" & platform_compiler & " -d:entrypoint=" & module & ' ' & module
+  findExe("nim") & " c -d:release --cc:" & platform_compiler & " -d:entrypoint=" & module & " " & module
 
 
 template emit_pgx_c_extension(module: string): string =
-  findExe("nim") & " c -d:release --app:lib --cc:" & platform_compiler & ' ' & module
+  var prj = module.splitPath.head
+  findExe("nim") & " c -d:release --app:lib --cc:" & platform_compiler & " -o:" & prj.splitPath.head.splitPath.tail & " --outdir:" & prj & " " & module
 
 
 template generate_tmp_file(input_file: string, kind: string = "") =
@@ -62,8 +67,16 @@ template run(cmd: string) =
 
 
 template build_project(req: string, kind: string) =
-  if not fileExists(pgxtool_init_dir / "config.json"):
+  if not fileExists(pgxtool_config):
     quit("Run 'pgxtool init' command first.")
+  else:
+    var 
+      file = parseJson(readFile(pgxtool_config))
+      modules = file.getOrDefault("modules")
+      project = req.split("pgxtool_init_dir")[^1]
+    modules.add(project, %*{"test": {}})
+    file["modules"] = modules
+    writeFile(pgxtool_config, pretty(file))
 
   var
     source = pgxtool_init_dir / req / "src"
@@ -73,6 +86,7 @@ template build_project(req: string, kind: string) =
   createDir(source)
   createDir(private)
   writeFile(entry_point, "")
+
 
   if "hook" in kind:
     generate_tmp_file(entry_point, kind)
@@ -109,7 +123,8 @@ template prepare_working_directory =
   else:
     echo "Initializing working directory: " & pgxtool_init_dir
     createDir(pgxtool_init_dir)
-    writeFile(pgxtool_init_dir / "config.json", "{}")
+    var content = %*{"modules":{}}
+    writeFile(pgxtool_init_dir / "config.json", $content)
 
 
 proc check_command(pc: int) =
@@ -135,8 +150,8 @@ proc check_command(pc: int) =
   of "build-extension":
     validate_second_arg(pc)
     req = paramStr(2)
-    var entry_point = req / "src" / "main.nim"
-    if dirExists(req) and fileExists(entry_point):
+    var entry_point = pgxtool_init_dir / req / "src" / "main.nim"
+    if fileExists(entry_point):
       if req in available_hooks:
         compile2hook(entry_point)
       else:
@@ -152,6 +167,35 @@ proc check_command(pc: int) =
     """
   of "init":
     prepare_working_directory
+  of "test":
+    validate_second_arg(pc)
+    req = paramStr(2)
+    #[
+    if dockerFinder() == 0:
+      var 
+        pgVersion = execCmdEx("""pg_config --version""").output.split(" ")[1].split(".")[0].parseInt
+      
+      if "postgres" notin dockerImage(version = pgVersion).output:
+        dockerPull(version = pgVersion)
+     
+      var 
+        file = parseJson(readFile(pgxtool_config))
+        modules = file.getOrDefault("modules")
+
+      if modules.hasKey(req):
+        var test = modules.getOrDefault(req)
+        if not test["test"].hasKey("version"):
+          dockerPgInstance(version = pgVersion)
+          test["test"] = %*{ "version": $pgVersion, "container_name": newJString("pgxtool_test_v" & $pgVersion) }
+          modules.add(req, test)
+          file["modules"] = modules
+          writeFile(pgxtool_config, pretty(file))
+        else:
+          dockerPgRestartInstance(version = pgVersion)
+          echo pgxtool_init_dir / req / "src"
+
+      ]# 
+
   else: cli_helper()
 
 
