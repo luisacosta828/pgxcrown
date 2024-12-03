@@ -4,7 +4,7 @@ import std/[macros, os, strutils]
 const entrypoint {.strdefine.} = ""
 
 
-func NimToSQLType(dt: string): string =
+template NimToSQLType(dt: string): string =
   case dt
   of "int", "int32": "int4"
   of "int64": "int8"
@@ -22,7 +22,7 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
   for e in fn.params[1 .. paramLen]:
     param_list.add NimToSQLType e[1].repr
 
-  var (_, file, _) = splitFile(entrypoint)
+  var file = entrypoint.splitPath.head.splitPath.head.splitPath.tail
   sql_scripts.add "\nCREATE FUNCTION " & fn.name.repr & '(' & param_list.join(",") & ')' & returnType & " as\n"
   sql_scripts.add "'lib" & file & "', 'pgx_" & fn.name.repr & "'\n"
   sql_scripts.add "language c strict;\n"
