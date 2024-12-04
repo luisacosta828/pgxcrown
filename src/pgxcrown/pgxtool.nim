@@ -35,11 +35,11 @@ Commands:
 
 
 template nim_c(module: string): string =
-  "nim c --cc:" & platform_compiler & " -d:release --listCmd -d:entrypoint=" & module & ' ' & module
+  findExe("nim") & " c -d:release --listCmd --cc:" & platform_compiler & " -d:entrypoint=" & module & ' ' & module
 
 
 template emit_pgx_c_extension(module: string): string =
-  "nim c --cc:" & platform_compiler & " -d:release --app:lib --listCmd " & module
+  findExe("nim") & " c -d:release --app:lib --listCmd --cc:" & platform_compiler & ' ' & module
 
 
 template generate_tmp_file(input_file: string, kind: string = "") =
@@ -49,6 +49,10 @@ template generate_tmp_file(input_file: string, kind: string = "") =
     tmp_content {.inject.} = pgxcrown_header & '\n' & original_content
     (dir, file, ext) = splitFile(input_file)
     tmp_file {.inject.} = (dir / ("tmp_" & file & ext))
+
+
+template run(cmd: string) =
+  if execShellCmd(cmd) != 0: quit "Error executing: " & cmd
 
 
 template build_project(req: string, kind: string) =
@@ -63,20 +67,20 @@ template build_project(req: string, kind: string) =
   if "hook" in kind:
     generate_tmp_file(entry_point, kind)
     writeFile(tmp_file, tmp_content)
-    discard execShellCmd(nim_c(tmp_file))
+    run nim_c(tmp_file)
     #writeFile(source / "hook_type.txt", kind.split(":")[1])
 
 
 proc compile2pgx(input_file: string) =
   generate_tmp_file input_file
   writeFile(tmp_file, tmp_content)
-  discard execShellCmd(nim_c(tmp_file))
-  discard execShellCmd(emit_pgx_c_extension(tmp_file))
+  run nim_c(tmp_file)
+  run emit_pgx_c_extension(tmp_file)
   #removeFile(tmp_file)
 
 
 proc compile2hook(input_file: string) =
-  discard execShellCmd(emit_pgx_c_extension(input_file))
+  run emit_pgx_c_extension(input_file)
 
 
 template build_project_template(req: string, kind: string = "") =

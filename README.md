@@ -2,6 +2,8 @@
 
 Build Postgres Extensions in Nim.
 
+![](banner.jpg)
+
 
 # Requisites
 
@@ -55,6 +57,7 @@ Windows:
 - Run it in a terminal like so `pg_config.exe --pkglibdir` to get the pkglibdir path.
 - See `pgconfigFinder()` function source code as hint.
 - Check if you have development header files ("postgres.h", "spi.h", "analyze.h", "elog.h").
+- [See Windows CI builds for more.](https://github.com/luisacosta828/pgxcrown/blob/master/.github/workflows/build.yml#L22)
 
 
 ### Call your library function from Postgresql

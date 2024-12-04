@@ -4,7 +4,7 @@ from std/strutils import split
 const
   includeDir {.strdefine.} = staticExec("pg_config --includedir").split("\n")[0]
   libDir {.strdefine.} = staticExec("pg_config --libdir").split("\n")[0]
-  pgVersion {.strdefine.} = staticExec("""pg_config --version""").split(" ")[1].split(".")[0]  # pg_config --version ???
+  pgVersion {.strdefine.} = staticExec("""pg_config --version""").split(" ")[1].split(".")[0]
 
 
 if includeDir.len == 0:
