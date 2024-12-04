@@ -1,4 +1,4 @@
-import std/[os, osproc, strutils, json]
+import std/[os, strutils, json]
 import pathfinders
 
 const available_hooks = ["emit_log", "post_parse_analyze"]
@@ -44,13 +44,13 @@ Commands:
 """
 
 
-template nim_c(module: string): string =
+proc nim_c(module: string): string {.inline.} =
   findExe("nim") & " c -d:release --cc:" & platform_compiler & " -d:entrypoint=" & module & " " & module
 
 
-template emit_pgx_c_extension(module: string): string =
+proc emit_pgx_c_extension(module: string): string {.inline.} =
   var prj = module.splitPath.head
-  findExe("nim") & " c -d:release --app:lib --cc:" & platform_compiler & " -o:" & prj.splitPath.head.splitPath.tail & " --outdir:" & prj & " " & module
+  findExe("nim") & " c -d:release --cc:" & platform_compiler & " --app:lib -o:" & prj.splitPath.head.splitPath.tail & " --outdir:" & prj & " " & module
 
 
 template generate_tmp_file(input_file: string, kind: string = "") =
@@ -99,7 +99,11 @@ proc compile2pgx(input_file: string) =
   writeFile(tmp_file, tmp_content)
   run nim_c(tmp_file)
   run emit_pgx_c_extension(tmp_file)
-  #removeFile(tmp_file)
+
+  #clean up project folder
+  removeFile(tmp_file)
+  var exe = tmp_file.splitFile()
+  removeFile(exe.dir / exe.name)
 
 
 proc compile2hook(input_file: string) =
@@ -170,6 +174,7 @@ proc check_command(pc: int) =
   of "test":
     validate_second_arg(pc)
     req = paramStr(2)
+    echo findExe("docker")
     #[
     if dockerFinder() == 0:
       var 

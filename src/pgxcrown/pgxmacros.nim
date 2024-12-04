@@ -89,7 +89,5 @@ proc explainWrapper(fn: NimNode): NimNode =
   when defined(debug): echo pgx_proc.repr
   result = pgx_proc
 
-  echo result.repr
-
 
 macro pgx*(fn: untyped): untyped = explainWrapper(fn)

@@ -2,7 +2,7 @@
 # if it can not find "pg_config" then can not find "libdir" nor "includedir".
 # Windows full path is something like (int is semver):
 # "C:\Program Files\PostgreSQL\17\bin\pg_config.exe"
-import std/[os, osproc, strutils]
+import std/[osproc, strutils]
 
 
 proc pgconfigFinder*(): string =
