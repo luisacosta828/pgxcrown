@@ -37,6 +37,7 @@ jobs:
     - name: Build
       run: |
         pgxtool
+        pgxtool init
         pgxtool available-hooks
         pgxtool create-project test
         pgxtool create-hook emit_log
