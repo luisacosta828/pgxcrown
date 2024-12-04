@@ -52,7 +52,7 @@ template copy_fn_body =
 
 proc explainWrapper(fn: NimNode): NimNode =
 
-  let pgx_proc = newProc(ident("pgx_" & $fn.name))
+  let pgx_proc = newProc(ident("pgx_" & $fn.name), proc_type = nnkFuncDef)
   pgx_proc.params[0] = ident("Datum")
 
   pgx_proc.pragma = newNimNode(nnkPragma).add(ident("pgv1"))

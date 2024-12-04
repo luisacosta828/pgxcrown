@@ -1,5 +1,6 @@
 import std/[os, strutils, json]
 import pathfinders
+import test_suite
 
 const available_hooks = ["emit_log", "post_parse_analyze"]
 const platform_compiler: string = when defined(windows):
@@ -174,7 +175,8 @@ proc check_command(pc: int) =
   of "test":
     validate_second_arg(pc)
     req = paramStr(2)
-    echo findExe("docker")
+    serveTestEnv()  
+    #echo findExe("docker")
     #[
     if dockerFinder() == 0:
       var 
