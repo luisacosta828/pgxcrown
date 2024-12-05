@@ -175,33 +175,7 @@ proc check_command(pc: int) =
   of "test":
     validate_second_arg(pc)
     req = paramStr(2)
-    serveTestEnv()  
-    #echo findExe("docker")
-    #[
-    if dockerFinder() == 0:
-      var 
-        pgVersion = execCmdEx("""pg_config --version""").output.split(" ")[1].split(".")[0].parseInt
-      
-      if "postgres" notin dockerImage(version = pgVersion).output:
-        dockerPull(version = pgVersion)
-     
-      var 
-        file = parseJson(readFile(pgxtool_config))
-        modules = file.getOrDefault("modules")
-
-      if modules.hasKey(req):
-        var test = modules.getOrDefault(req)
-        if not test["test"].hasKey("version"):
-          dockerPgInstance(version = pgVersion)
-          test["test"] = %*{ "version": $pgVersion, "container_name": newJString("pgxtool_test_v" & $pgVersion) }
-          modules.add(req, test)
-          file["modules"] = modules
-          writeFile(pgxtool_config, pretty(file))
-        else:
-          dockerPgRestartInstance(version = pgVersion)
-          echo pgxtool_init_dir / req / "src"
-
-      ]# 
+    serveTestEnv(pgxtool_init_dir, pgxtool_config, req)  
 
   else: cli_helper()
 
