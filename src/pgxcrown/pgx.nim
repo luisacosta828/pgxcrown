@@ -9,7 +9,7 @@ template NimToSQLType(dt: string): string =
   of "int", "int32": "int4"
   of "int64": "int8"
   of "float", "float32": "float4"
-  of "float64": "float64"
+  of "float64": "float8"
   else: "unknown"
 
 proc project(path: string): string {.inline.} =
