@@ -6,6 +6,7 @@
 type
   Datum* {.importc: "Datum".} = cuint
   Text* {.importc: "text".} = ref object
+  Pointer* {.importc: "Pointer".} = cstring
   Oid* {.importc: "Oid".} = cuint
   const_char* {.importc: "const char*".} = cstring
   PDatum* = ptr Datum
@@ -13,14 +14,36 @@ type
 
 proc cstring_to_text*(s: const_char): Text {.importc: "cstring_to_text".}
 
-proc ObjectIdGetDatum*(id: Oid): Datum {.importc.}
 
 proc DatumGetObjectId*(datum_id: Datum): Oid {.importc.}
+proc DatumGetInt32*(x: Datum): int32 {.importc.}
+proc DatumGetInt16*(x: Datum): int16 {.importc.}
+proc DatumGetInt8*(x: Datum): int8 {.importc.}
+proc DatumGetUInt32*(x: Datum): uint32 {.importc.}
+proc DatumGetUInt16*(x: Datum): uint16 {.importc.}
+proc DatumGetUInt8*(x: Datum): uint8 {.importc.}
+proc DatumGetChar*(x: Datum): cchar {.importc.}
+proc DatumGetBool*(x: Datum): cchar | bool {.importc.}
+proc DatumGetFloat4*(x: Datum): cfloat | float32 | float {.importc.}
+proc DatumGetPointer*(x: Datum): Pointer {.importc.}
+
+proc ObjectIdGetDatum*(id: Oid): Datum {.importc.}
+proc Int32GetDatum*(x: int32 | int ): Datum {.importc.}
+proc Int16GetDatum*(x: int16 ): Datum {.importc.}
+proc Int8GetDatum*(x: int8 ): Datum {.importc.}
+proc UInt32GetDatum*(x: uint32 | uint): Datum {.importc.}
+proc UInt16GetDatum*(x: uint16): Datum {.importc.}
+proc UInt8GetDatum*(x: uint8): Datum {.importc.}
+proc CharGetDatum*(x: cchar): Datum {.importc.}
+proc BoolGetDatum*(x: cchar | bool): Datum {.importc.}
+proc Float4GetDatum*(x: cfloat | float32 | float): Datum {.importc.}
+proc PointerGetDatum*(x: Pointer): Datum {.importc.}
 {.pop.}
 
 
 # Basic Data Types definitions from fmgr.h
-
+type
+  PGType* = proc(): Datum {.cdecl, noSideEffect, gcsafe.}
 
 {.push header: "fmgr.h".}
 
@@ -34,6 +57,7 @@ type
     flinfo*: ptr FmgrInfo
 
   FunctionCallInfo* = ptr FunctionCallInfoData
+
 
 
 # Get argument type value declaration
@@ -76,5 +100,19 @@ template returnFloat8*(value: typed) = {.emit: ["""PG_RETURN_FLOAT8(""", value, 
 template returnVarchar*(value: typed) = {.emit: ["""PG_RETURN_VARCHAR_P(""", value, ");"].}
 
 template returnCString*(value: typed) = {.emit: ["""PG_RETURN_CSTRING(""", value, ");"].}
+
+
+proc DirectFunctionCall1*(fn: PGType, arg1: Datum): Datum {.importc.}
+proc DirectFunctionCall2*(fn: PGType, arg1: Datum, arg2: Datum): Datum {.importc.}
+proc DirectFunctionCall3*(fn: PGType, arg1: Datum, arg2: Datum, arg3: Datum): Datum {.importc.}
+proc DirectFunctionCall4*(fn: PGType, arg1: Datum, arg2: Datum, arg3: Datum, arg4: Datum): Datum {.importc.}
+proc DirectFunctionCall5*(fn: PGType, arg1: Datum, arg2: Datum, arg3: Datum, arg4: Datum, arg5: Datum): Datum {.importc.}
+proc DirectFunctionCall6*(fn: PGType, arg1: Datum, arg2: Datum, arg3: Datum, arg4: Datum, arg5: Datum, arg6: Datum): Datum {.importc.}
+proc DirectFunctionCall7*(fn: PGType, arg1: Datum, arg2: Datum, arg3: Datum, arg4: Datum, arg5: Datum, arg6: Datum, arg7: Datum): Datum {.importc.}
+proc DirectFunctionCall8*(fn: PGType, arg1: Datum, arg2: Datum, arg3: Datum, arg4: Datum, arg5: Datum, arg6: Datum, arg7: Datum, arg8: Datum): Datum {.importc.}
+proc DirectFunctionCall9*(fn: PGType, arg1: Datum, arg2: Datum, arg3: Datum, arg4: Datum, arg5: Datum, arg6: Datum, arg7: Datum, arg8: Datum, arg9: Datum): Datum {.importc.}
+
+
+
 
 {.pop.}
