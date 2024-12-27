@@ -6,6 +6,7 @@ template PG_MODULE_MAGIC*() =
   const V1_DEF* = "PGDLLEXPORT $# $#(PG_FUNCTION_ARGS)"
   {.pragma: pgdllexport, codegenDecl: DLL, exportc.}
   {.pragma: pgv1 , codegenDecl: V1_DEF, exportc, dynlib.}
+  {.pragma: pgv1_plnim , codegenDecl: "PGDLLEXPORT $# $#$#", exportc, dynlib.}
   {.emit: """PG_MODULE_MAGIC;""" .}
 
 
@@ -22,4 +23,3 @@ template ActivateHooks*() =
     #include "postgres.h"
     #include "fmgr.h"
   """.}
-
