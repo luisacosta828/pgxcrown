@@ -52,11 +52,12 @@ type
   FmgrInfo {.importc: "FmgrInfo".} = object
     fn_oid*: Oid
 
-  FunctionCallInfoData {.importc: "FunctionCallInfoData".} = object
+  FunctionCallInfoBaseData {. importc .} = object
     nargs*: cshort
     flinfo*: ptr FmgrInfo
 
-  FunctionCallInfo* = ptr FunctionCallInfoData
+  #Standard parameter list for fmgr-compatible functions
+  FunctionCallInfo* = ptr FunctionCallInfoBaseData
 
 
 
