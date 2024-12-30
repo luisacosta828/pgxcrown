@@ -11,14 +11,17 @@ type
   const_char* {.importc: "const char*".} = cstring
   PDatum* = ptr Datum
   POid* = ptr Oid
+  NameData* {.importc.} = object
+    data*: array[64, char]
+  Name* = ptr NameData
 
-proc cstring_to_text*(s: const_char): Text {.importc: "cstring_to_text".}
-
+proc cstring_to_text*(s: const_char): Text {.importc.}
+proc NameStr*(name: NameData): cstring {.importc.}
 
 proc DatumGetObjectId*(datum_id: Datum): Oid {.importc.}
 proc DatumGetInt32*(x: Datum): int32 {.importc.}
 proc DatumGetInt16*(x: Datum): int16 {.importc.}
-proc DatumGetInt8*(x: Datum): int8 {.importc.}
+#proc DatumGetInt8*(x: Datum): int8 {.importc.}
 proc DatumGetUInt32*(x: Datum): uint32 {.importc.}
 proc DatumGetUInt16*(x: Datum): uint16 {.importc.}
 proc DatumGetUInt8*(x: Datum): uint8 {.importc.}
@@ -26,6 +29,7 @@ proc DatumGetChar*(x: Datum): cchar {.importc.}
 proc DatumGetBool*(x: Datum): cchar | bool {.importc.}
 proc DatumGetFloat4*(x: Datum): cfloat | float32 | float {.importc.}
 proc DatumGetPointer*(x: Datum): Pointer {.importc.}
+proc DatumGetCString*(x: Datum): cstring {.importc.}
 
 proc ObjectIdGetDatum*(id: Oid): Datum {.importc.}
 proc Int32GetDatum*(x: int32 | int ): Datum {.importc.}
