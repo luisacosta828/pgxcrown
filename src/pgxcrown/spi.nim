@@ -1,6 +1,10 @@
 import std/tables
 
-from datatypes/basic import PDatum, POid
+from datatypes/basic import PDatum, POid, NameData, Oid
+
+type Form_pg_proc* {.importc, header: "catalog/pg_proc.h".} = ptr object
+  oid: Oid
+  proname*: NameData
 
 
 {.push header: "executor/spi.h".}
@@ -12,10 +16,15 @@ type
   Row = seq[Column]
   ResultSet = seq[Row]
 
-  HeapTupleHeader {.importc: "HeapTupleHeader", incompleteStruct.} = ptr object
+  HeapTupleHeader {.importc: "HeapTupleHeader".} = ptr object
     t_hoff*: cuint
-  HeapTuple* {.importc: "HeapTuple", incompleteStruct.} = ptr object
+
+  HeapTupleData {.importc: "HeapTupleData".} = object
+    t_len*: cuint
     t_data*: HeapTupleHeader
+
+  HeapTuple* = ptr HeapTupleData
+
   TupleDesc* {.importc: "TupleDesc".} = ref object
     natts*: int
 
@@ -39,6 +48,8 @@ type
     PARAM, TRANSACTION, NOATTRIBUTE, NOOUTFUNC,
     TYPEUNKNOWN, REL_DUPLICATE, REL_NOT_FOUND
 
+
+proc getStruct*(t: HeapTuple):pointer {.importc: "GETSTRUCT".}
 
 proc IsValid*(t: HeapTuple): bool {.importc: "HeapTupleIsValid".}
 
