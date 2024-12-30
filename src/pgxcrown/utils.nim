@@ -4,4 +4,4 @@ include spi
 
 
 proc getFnOid*(fcinfo: FunctionCallInfo): Oid {. inline .} = 
-  fcinfo.flinfo[].fn_oid
+  fcinfo[].flinfo[].fn_oid
