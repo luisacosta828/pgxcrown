@@ -30,6 +30,7 @@ proc DatumGetBool*(x: Datum): cchar | bool {.importc.}
 proc DatumGetFloat4*(x: Datum): cfloat | float32 | float {.importc.}
 proc DatumGetPointer*(x: Datum): Pointer {.importc.}
 proc DatumGetCString*(x: Datum): cstring {.importc.}
+proc DatumGetName*(x: Datum): Name {.importc.}
 
 proc ObjectIdGetDatum*(id: Oid): Datum {.importc.}
 proc Int32GetDatum*(x: int32 | int ): Datum {.importc.}
@@ -42,6 +43,8 @@ proc CharGetDatum*(x: cchar): Datum {.importc.}
 proc BoolGetDatum*(x: cchar | bool): Datum {.importc.}
 proc Float4GetDatum*(x: cfloat | float32 | float): Datum {.importc.}
 proc PointerGetDatum*(x: Pointer): Datum {.importc.}
+proc CStringGetDatum*(x: cstring): Datum {.importc.}
+proc NameGetDatum*(x: Name): Datum {.importc.}
 {.pop.}
 
 
