@@ -32,7 +32,6 @@ type
     values*: UncheckedArray[Oid]
 
 
-
 proc cstring_to_text*(s: const_char): Text {.importc.}
 proc NameStr*(name: NameData): cstring {.importc.}
 
@@ -88,6 +87,8 @@ type
 
 # Get argument type value declaration
 
+proc getFnOid*(fcinfo: FunctionCallInfo): Oid {. inline .} = 
+  fcinfo[].flinfo[].fn_oid
 
 proc getInt32*(value: cuint): cint {.importc: "PG_GETARG_INT32".}
 
