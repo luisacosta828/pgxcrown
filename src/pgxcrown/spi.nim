@@ -1,6 +1,7 @@
 import std/tables
 
 from datatypes/basic import PDatum, POid, NameData, Oid, oidvector
+  
 
 type Form_pg_proc* {.importc, header: "catalog/pg_proc.h", incompletestruct.} = ptr object
   oid: Oid
@@ -17,9 +18,6 @@ type Form_pg_proc* {.importc, header: "catalog/pg_proc.h", incompletestruct.} = 
   pronargdefaults*: int16
   prorettype*: Oid
   proargtypes*: oidvector
-
-  
-
 
 {.push header: "executor/spi.h".}
 
