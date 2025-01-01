@@ -1,4 +1,6 @@
-include pgxcrown/utils
+import pgxcrown/compiler
+import pgxcrown/datatypes/basic
+#import pgxcrown/utils
 include pgxcrown/pgxmacros
 
 template PG_MODULE_MAGIC*() =
@@ -23,3 +25,6 @@ template ActivateHooks*() =
     #include "postgres.h"
     #include "fmgr.h"
   """.}
+
+export compiler
+export basic
