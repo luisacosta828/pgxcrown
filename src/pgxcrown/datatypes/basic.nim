@@ -5,15 +5,33 @@
 
 type
   Datum* {.importc: "Datum".} = cuint
+  
   Text* {.importc: "text".} = ref object
+  
   Pointer* {.importc: "Pointer".} = cstring
+  
   Oid* {.importc: "Oid".} = cuint
+  
   const_char* {.importc: "const char*".} = cstring
+  
   PDatum* = ptr Datum
+  
   POid* = ptr Oid
+
   NameData* {.importc.} = object
     data*: array[64, char]
+  
   Name* = ptr NameData
+
+  oidvector* {.importc.} = object
+    v1_len: int32
+    ndim: int
+    dataoffset: int32
+    elemtype: Oid
+    ldim1, lboudn1: int
+    values*: UncheckedArray[Oid]
+
+
 
 proc cstring_to_text*(s: const_char): Text {.importc.}
 proc NameStr*(name: NameData): cstring {.importc.}
