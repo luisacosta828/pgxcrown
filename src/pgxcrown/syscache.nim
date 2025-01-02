@@ -1,4 +1,5 @@
 from datatypes/basic import Datum, Oid
+import datatypes/basic
 from spi import HeapTuple
 
 {.push header: "utils/syscache.h" .}
@@ -19,7 +20,7 @@ proc SearchSysCache1*(cacheId: int, key1: Datum): HeapTuple {.importc.}
 proc SearchSysCache2*(cacheId: int, key1, key2: Datum): HeapTuple {.importc.}
 proc SearchSysCache3*(cacheId: int, key1, key2, key3: Datum): HeapTuple {.importc.}
 proc SearchSysCache4*(cacheId: int, key1, key2, key4: Datum): HeapTuple {.importc.}
-proc SysCacheGetAttr*(cacheId: int, heap_tuple: HeapTuple, lang_number: cuint, is_null: ptr bool):Datum {. importc .}
+proc SysCacheGetAttr*(cacheId: int, heap_tuple: HeapTuple, attr_number: cuint, is_null: ptr bool):Datum {. importc .}
 proc ReleaseSysCache*(heap_tuple: HeapTuple) {.importc.}
 
 {.pop.}
