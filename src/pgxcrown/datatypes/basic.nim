@@ -8,7 +8,7 @@ type
   
   Text* {.importc: "text".} = object
     vl_len:   array[4, char]
-    vl_data*:  UncheckedArray[char]
+    vl_dat*:  UncheckedArray[char]
 
   
   Pointer* {.importc: "Pointer".} = cstring
