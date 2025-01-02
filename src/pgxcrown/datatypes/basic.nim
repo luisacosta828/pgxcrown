@@ -6,7 +6,10 @@
 type
   Datum* {.importc: "Datum".} = cuint
   
-  Text* {.importc: "text".} = ref object
+  Text* {.importc: "text".} = object
+    vl_len:   array[4, char]
+    vl_data*:  UncheckedArray[char]
+
   
   Pointer* {.importc: "Pointer".} = cstring
   
@@ -33,6 +36,7 @@ type
 
 
 proc cstring_to_text*(s: const_char): Text {.importc.}
+proc text_to_cstring*(s: Text): const_char {.importc.}
 proc NameStr*(name: NameData): cstring {.importc.}
 
 proc DatumGetObjectId*(datum_id: Datum): Oid {.importc.}
@@ -85,10 +89,10 @@ type
 
 
 
-# Get argument type value declaration
-
-proc getFnOid*(fcinfo: FunctionCallInfo): Oid {. inline .} = 
+template getFnOid*(fcinfo: FunctionCallInfo): Oid = 
   fcinfo[].flinfo[].fn_oid
+
+# Get argument type value declaration
 
 proc getInt32*(value: cuint): cint {.importc: "PG_GETARG_INT32".}
 
