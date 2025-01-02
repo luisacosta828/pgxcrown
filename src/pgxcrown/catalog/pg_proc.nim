@@ -1,22 +1,5 @@
 from ../datatypes/basic import NameData, Oid, oidvector
 
-type 
-  Form_pg_proc* {.importc, header: "catalog/pg_proc.h", incompletestruct.} = ptr object
-    oid: Oid
-    proname*: NameData
-    #pronamespace*: Oid
-    #proowner*: Oid
-    #prolang*: Oid
-    #procost*: float32
-    #prorows*: float32
-    #provariadic*: Oid
-    #regproc*: Oid
-    padding1: array[35, byte]
-    pronargs*: int16
-    pronargdefaults*: int16
-    prorettype*: Oid
-    proargtypes*: oidvector
-
 {.push header: "catalog/pg_proc_d.h".}
 
 var
@@ -25,6 +8,7 @@ var
 
   #Name of the function
   Anum_pg_proc_proname* {.importc.}: cuint
+
   #Implementation language or call interface of this function
   Anum_pg_proc_prolang* {.importc.}: cuint
 
@@ -50,3 +34,4 @@ var
   Anum_pg_proc_proargnames* {.importc.}: cuint
 
 {.pop.}
+
