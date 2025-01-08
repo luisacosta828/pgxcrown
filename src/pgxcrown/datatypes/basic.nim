@@ -8,9 +8,8 @@ type
   
   Text* {.importc: "text".} = object
     vl_len:   array[4, char]
-    vl_dat*:  UncheckedArray[char]
-
-  
+    vl_dat*:  array[256, char]
+ 
   Pointer* {.importc: "Pointer".} = cstring
   
   Oid* {.importc: "Oid".} = cuint
@@ -27,18 +26,17 @@ type
   Name* = ptr NameData
 
   oidvector* {.importc.} = object
-    v1_len: int32
-    ndim: int
-    dataoffset: int32
-    elemtype: Oid
-    ldim1, lboudn1: int
-    values*: UncheckedArray[Oid]
+    vl_len {.importc: "vl_len_".}: int32
+    ndim*: int
+    dataoffset*: int32
+    elemtype*: Oid
+    dim1*: int 
+    lbound1: int
+    values*: ptr Oid
 
 
 proc cstring_to_text*(s: const_char): Text {.importc.}
-proc text_to_cstring*(s: Text): const_char {.importc.}
 proc NameStr*(name: NameData): cstring {.importc.}
-
 proc DatumGetObjectId*(datum_id: Datum): Oid {.importc.}
 proc DatumGetInt32*(x: Datum): int32 {.importc.}
 proc DatumGetInt16*(x: Datum): int16 {.importc.}
@@ -68,6 +66,9 @@ proc CStringGetDatum*(x: cstring): Datum {.importc.}
 proc NameGetDatum*(x: Name): Datum {.importc.}
 {.pop.}
 
+{.push header: "utils/builtins.h".}
+proc TextDatumGetCString*(x: Datum): cstring {.importc.} 
+{.pop.}
 
 # Basic Data Types definitions from fmgr.h
 type
