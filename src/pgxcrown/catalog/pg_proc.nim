@@ -72,6 +72,13 @@ template get_pg_proc_default_nargs*(ttuple: typed): int16 =
     fn_default_nargs = DatumGetInt16(datum)
   fn_default_nargs
 
+template get_pg_proc_rettype*(ttuple: typed): Oid =
+  var
+    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_prorettype, addr(is_null))
+    fn_rettype = DatumGetObjectId(datum)
+  fn_rettype
+
+
 template get_pg_proc_argtypes*(ttuple: typed): ptr Oid =
   var
     datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_proargtypes, addr(is_null))
