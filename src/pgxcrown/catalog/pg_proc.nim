@@ -1,4 +1,10 @@
-from ../datatypes/basic import NameData, Oid, oidvector, Pointer
+import ../datatypes/basic
+import ../datatypes/arrays
+from pg_type import TEXTOID
+
+{.push header: "funcapi.h".}
+proc get_func_input_arg_names*(proargnames, proargmodes: Datum, arg_names: ptr cstringArray): int {.importc.}
+{.pop.}
 
 {.push header: "catalog/pg_proc_d.h".}
 
@@ -78,6 +84,15 @@ template get_pg_proc_rettype*(ttuple: typed): Oid =
     fn_rettype = DatumGetObjectId(datum)
   fn_rettype
 
+template get_pg_proc_argnames*(ttuple: typed, nargs: typed): seq[string] =
+  var
+    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_proargnames, addr(is_null))
+    nelems: int
+    arg_names: cstringArray
+  
+  nelems = get_func_input_arg_names(datum,0, arg_names.addr)  
+  arg_names.cstringArrayToSeq(nelems)
+  
 
 template get_pg_proc_argtypes*(ttuple: typed): ptr Oid =
   var
@@ -90,7 +105,5 @@ template asIntptr(vector: ptr Oid): int = cast[int](vector)
 template asOid*(address: int): Oid =
   (cast[ptr Oid](address))[]
 
-proc `+`*(vector: ptr Oid, offset: int): int {.inline.} = 
+proc `+`*(vector: ptr Oid, offset: int): int {.inline.}= 
   vector.asIntptr + (sizeof(Oid) * offset)
-
-

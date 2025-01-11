@@ -1,15 +1,14 @@
 # Basic Data Types definitions from postgres.h
-
-
 {.push header: "postgres.h".}
 
 type
   Datum* {.importc: "Datum".} = cuint
   
   Text* {.importc: "text".} = object
-    vl_len:   array[4, char]
-    vl_dat*:  array[256, char]
+    vl_len {.importc: "vl_len_".}:   array[4, char]
+    vl_dat*:  cstring
  
+
   Pointer* {.importc: "Pointer".} = cstring
   
   Oid* {.importc: "Oid".} = cuint
@@ -33,7 +32,6 @@ type
     dim1*: int 
     lbound1: int
     values*: ptr Oid
-
 
 proc cstring_to_text*(s: const_char): Text {.importc.}
 proc NameStr*(name: NameData): cstring {.importc.}
@@ -64,11 +62,20 @@ proc Float4GetDatum*(x: cfloat | float32 | float): Datum {.importc.}
 proc PointerGetDatum*(x: Pointer): Datum {.importc.}
 proc CStringGetDatum*(x: cstring): Datum {.importc.}
 proc NameGetDatum*(x: Name): Datum {.importc.}
+proc VARDATA*(x: pointer): cstring {.importc.}
+proc VARDATA_ANY*(x: pointer): cstring {.importc.}
+proc palloc*(x: cuint): pointer {.importc.}
 {.pop.}
 
 {.push header: "utils/builtins.h".}
 proc TextDatumGetCString*(x: Datum): cstring {.importc.} 
 {.pop.}
+
+
+{.push header: "utils/datum.h".}
+proc datumGetSize*(x: Datum, typByVal: bool, typLen: int): uint {.importc.} 
+{.pop.}
+
 
 # Basic Data Types definitions from fmgr.h
 type
@@ -87,7 +94,6 @@ type
 
   #Standard parameter list for fmgr-compatible functions
   FunctionCallInfo* = ptr FunctionCallInfoBaseData
-
 
 
 template getFnOid*(fcinfo: FunctionCallInfo): Oid = 
@@ -111,6 +117,7 @@ proc getFloat4*(value: cuint): cfloat {.importc: "PG_GETARG_FLOAT4".}
 
 proc getFloat8*(value: cuint): cdouble {.importc: "PG_GETARG_FLOAT8".}
 
+proc DatumGetTextPP*(value: Datum): ptr Text {.importc.}
 
 # Return types declaration
 
@@ -143,8 +150,6 @@ proc DirectFunctionCall6*(fn: PGType, arg1: Datum, arg2: Datum, arg3: Datum, arg
 proc DirectFunctionCall7*(fn: PGType, arg1: Datum, arg2: Datum, arg3: Datum, arg4: Datum, arg5: Datum, arg6: Datum, arg7: Datum): Datum {.importc.}
 proc DirectFunctionCall8*(fn: PGType, arg1: Datum, arg2: Datum, arg3: Datum, arg4: Datum, arg5: Datum, arg6: Datum, arg7: Datum, arg8: Datum): Datum {.importc.}
 proc DirectFunctionCall9*(fn: PGType, arg1: Datum, arg2: Datum, arg3: Datum, arg4: Datum, arg5: Datum, arg6: Datum, arg7: Datum, arg8: Datum, arg9: Datum): Datum {.importc.}
-
-
 
 
 {.pop.}
