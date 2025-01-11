@@ -13,6 +13,9 @@ var
   Anum_pg_type_typdefault {.importc.}: cuint
   Anum_pg_type_typdefaultbin {.importc.}: cuint
 
+
+var TEXTOID* {.importc.}: Oid
+
 {.pop.}
 
 template get_pg_type_oid*(ttuple: typed): Oid =
