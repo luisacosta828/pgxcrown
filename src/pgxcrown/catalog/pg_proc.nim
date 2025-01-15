@@ -3,7 +3,7 @@ import ../datatypes/arrays
 from pg_type import TEXTOID
 
 {.push header: "funcapi.h".}
-proc get_func_input_arg_names*(proargnames, proargmodes: Datum, arg_names: ptr cstringArray): int {.importc.}
+proc get_func_input_arg_names*(proargnames, proargmodes: Datum, arg_names: var cstringArray): int {.importc.}
 {.pop.}
 
 {.push header: "catalog/pg_proc_d.h".}
@@ -84,13 +84,14 @@ template get_pg_proc_rettype*(ttuple: typed): Oid =
     fn_rettype = DatumGetObjectId(datum)
   fn_rettype
 
-template get_pg_proc_argnames*(ttuple: typed, nargs: typed): seq[string] =
+template get_pg_proc_argnames*(ttuple: typed): seq[string] =
   var
     datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_proargnames, addr(is_null))
     nelems: int
     arg_names: cstringArray
   
-  nelems = get_func_input_arg_names(datum,0, arg_names.addr)  
+  if not is_null:
+    nelems = get_func_input_arg_names(datum,0, arg_names)  
   arg_names.cstringArrayToSeq(nelems)
   
 
