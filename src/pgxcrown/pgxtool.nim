@@ -46,12 +46,12 @@ Commands:
 
 
 proc nim_c(module: string): string {.inline.} =
-  findExe("nim") & " c -d:release --cc:" & platform_compiler & " -d:entrypoint=" & module & " " & module
+  "nim c -d:release --cc:" & platform_compiler & " -d:entrypoint=" & module & " " & module
 
 
 proc emit_pgx_c_extension(module: string): string {.inline.} =
   var prj = module.splitPath.head
-  findExe("nim") & " c -d:release --cc:" & platform_compiler & " --app:lib -o:" & prj.splitPath.head.splitPath.tail & " --outdir:" & prj & " " & module
+  "nim c -d:release --cc:" & platform_compiler & " --app:lib -o:" & prj.splitPath.head.splitPath.tail & " --outdir:" & prj & " " & module
 
 
 template generate_tmp_file(input_file: string, kind: string = "") =
