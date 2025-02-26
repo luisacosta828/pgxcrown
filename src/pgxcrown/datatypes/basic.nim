@@ -119,6 +119,8 @@ proc getFloat8*(value: cuint): cdouble {.importc: "PG_GETARG_FLOAT8".}
 
 proc DatumGetTextPP*(value: Datum): ptr Text {.importc.}
 
+proc getOid*(value: cuint): Oid {.importc: "PG_GETARG_OID".}
+
 # Return types declaration
 
 
