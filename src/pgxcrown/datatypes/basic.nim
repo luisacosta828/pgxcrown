@@ -155,3 +155,29 @@ proc DirectFunctionCall9*(fn: PGType, arg1: Datum, arg2: Datum, arg3: Datum, arg
 
 
 {.pop.}
+
+converter DatumToObjectId*(x: Datum): Oid = DatumGetObjectId(x) 
+converter DatumToInt32*(x: Datum): int =  DatumGetInt32(x)
+converter DatumToInt16*(x: Datum): int16 = DatumGetInt16(x)
+converter DatumToUInt32*(x: Datum): uint = DatumGetUInt32(x)
+converter DatumToUInt16*(x: Datum): uint16 = DatumGetUInt16(x)
+converter DatumToUInt8*(x: Datum): uint8 = DatumGetUInt8(x)
+converter DatumToChar*(x: Datum): cchar = DatumGetChar(x)
+converter DatumToBool*(x: Datum): cchar | bool = DatumGetBool(x)
+converter DatumToFloat4*(x: Datum): cfloat | float32 | float = DatumGetFloat4(x)
+converter DatumToPointer*(x: Datum): Pointer = DatumGetPointer(x)
+converter DatumToCString*(x: Datum): cstring = DatumGetCString(x)
+converter DatumToName*(x: Datum): Name = DatumGetName(x)
+
+converter ObjectIdToDatum*(value: Oid): Datum = ObjectIdGetDatum(value)
+converter Int32ToDatum*(value: int32 | int): Datum = Int32GetDatum(value)
+converter Int16ToDatum*(value: int16): Datum = Int16GetDatum(value)
+converter UInt32ToDatum*(value: uint): Datum = UInt32GetDatum(value)
+converter UInt16ToDatum*(value: uint16): Datum = UInt16GetDatum(value)
+converter UInt8ToDatum*(value: uint8): Datum = UInt8GetDatum(value)
+converter CharToDatum*(value: cchar): Datum =  CharGetDatum(value) 
+converter BoolToDatum*(value: cchar | bool): Datum = BoolGetDatum(value) 
+converter Float4GetDatum*(value: cfloat | float32 | float): Datum = Float4GetDatum(value)
+converter PointerToDatum*(value: Pointer): Datum = PointerGetDatum(value)
+converter CStringToDatum*(value: cstring): Datum = CStringGetDatum(value)
+converter NameToDatum*(value: Name): Datum = NameGetDatum(value)
