@@ -66,6 +66,9 @@ proc check_if_section(code: NimNode): NimNode
 proc check_case_section(code: NimNode): NimNode 
 proc check_asgn_section(code: NimNode): NimNode
 proc check_block_section(code: NimNode): NimNode
+proc check_discard_section(code: NimNode): NimNode
+proc check_while_section(code: NimNode): NimNode
+proc check_for_section(code: NimNode): NimNode
 proc analyze_node(code: NimNode): NimNode
 
 proc check_infix_section(code: NimNode): NimNode =
@@ -80,6 +83,9 @@ proc check_literal_values(code: NimNode): NimNode =
 proc check_return_section(code: NimNode): NimNode =
   result = newNimNode(code.kind)
   result.add analyze_node(code[0])
+
+proc check_discard_section(code: NimNode): NimNode =
+  result = check_return_section(code)
 
 proc check_block_section(code: NimNode): NimNode = analyze_node(code)
 
@@ -110,6 +116,12 @@ proc analyze_node(code: NimNode): NimNode =
     result = check_case_section(code)
   of nnkReturnStmt:
     result = check_return_section(code)
+  of nnkDiscardStmt:
+    result = check_discard_section(code)
+  of nnkWhileStmt:
+    result = check_while_section(code)
+  of nnkForStmt:
+    result = check_for_section(code)
   else:
     echo code.kind
     echo code.treerepr
@@ -171,6 +183,19 @@ proc check_case_section(code: NimNode): NimNode =
     new_node.add analyze_node(stmt[^1])
     caseSection.add new_node
   return caseSection
+
+proc check_while_section(code: NimNode): NimNode =
+  var whileSection = newNimNode(code.kind)
+  for stmt in code:
+    whileSection.add analyze_node(stmt)
+  return whileSection
+
+proc check_for_section(code: NimNode): NimNode =
+  var forSection = newNimNode(code.kind)
+  forSection.add code[0]
+  for stmt in code[1 .. ^1]:
+    forSection.add analyze_node(stmt)
+  return forSection
 
 
 proc check_asgn_section(code: NimNode): NimNode =
