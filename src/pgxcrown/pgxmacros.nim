@@ -59,7 +59,7 @@ template call_return_macro(fn_call: string, code: NimNode): NimNode =
 
 proc check_infix_section(code: NimNode): NimNode
 proc check_literal_values(code: NimNode): NimNode
-proc check_return_section(code: NimNode, fn: NimNode): NimNode
+proc check_return_section(code: NimNode): NimNode
 proc check_call_section(code: NimNode): NimNode
 proc check_var_section(code: NimNode): NimNode
 proc check_if_section(code: NimNode): NimNode 
@@ -77,9 +77,9 @@ proc check_literal_values(code: NimNode): NimNode =
   var return_macro = "return" & ReplyLiteralsWithPgxTypes(code)
   call_return_macro(return_macro, code)
 
-proc check_return_section(code: NimNode, fn: NimNode): NimNode =
-  var return_macro = "return" & ReplyWithPgxTypes(fn.params[0].repr)
-  call_return_macro(return_macro, code[0])
+proc check_return_section(code: NimNode): NimNode =
+  result = newNimNode(code.kind)
+  result.add analyze_node(code[0])
 
 proc check_block_section(code: NimNode): NimNode = analyze_node(code)
 
@@ -108,6 +108,8 @@ proc analyze_node(code: NimNode): NimNode =
     result = check_if_section(code)
   of nnkCaseStmt:
     result = check_case_section(code)
+  of nnkReturnStmt:
+    result = check_return_section(code)
   else:
     echo code.kind
     echo code.treerepr
