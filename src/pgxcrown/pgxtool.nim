@@ -43,15 +43,15 @@ Commands:
      * pgxtool test project
 
 """
-
+proc wrap(s: string): string {. inline .} = "\"" & s & "\""
 
 proc nim_c(module: string): string {.inline.} =
-  "nim c -d:release --cc:" & platform_compiler & " -d:entrypoint=" & module & " " & module
+  "nim c -d:release --cc:" & platform_compiler & " -d:entrypoint=" & wrap(module) & " " & wrap(module)
 
 
 proc emit_pgx_c_extension(module: string): string {.inline.} =
   var prj = module.splitPath.head
-  "nim c -d:release --cc:" & platform_compiler & " --app:lib -o:" & prj.splitPath.head.splitPath.tail & " --outdir:" & prj & " " & module
+  "nim c -d:release --cc:" & platform_compiler & " --app:lib -o:" & wrap(prj.splitPath.head.splitPath.tail) & " --outdir:" & wrap(prj) & " " & wrap(module)
 
 
 template generate_tmp_file(input_file: string, kind: string = "") =
