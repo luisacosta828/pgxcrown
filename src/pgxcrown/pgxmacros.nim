@@ -7,17 +7,29 @@ const
 template NimTypes(dt: string): string =
   case dt
   of "int", "int32": "cint"
+  of "uint", "uint32": "culong"
   of "float", "float32": "cfloat"
   of "float64": "cdouble"
   of "int64": "clonglong"
+  of "uint64": "culonglong"
+  of "uint16": "cushort"
+  of "char": "cchar"
+  of "string": "cstring"
   else: "unknown"
 
 
 template PgxToNim(dt: string): string =
   case dt
   of "int", "int32": "getInt32"
+  of "int16": "getInt16"
+  of "uint16": "getUInt16"
+  of "int64": "getInt64"
+  of "char": "getChar"
+  of "bool": "getBool"
+  of "uint", "uint32": "getUInt32"
   of "float", "float32": "getFloat4"
   of "float64": "getFloat8"
+  of "string": "getCString"
   else: "unknown"
 
 
@@ -44,9 +56,8 @@ template move_nim_params_as_locals =
     var pvar = param[0]
     var ptype = param[1].split(" ")[1]
     var f = PgxToNim(ptype)
-    if ptype != "string":
-      var getValue = newCall(ident(f), [newIntLitNode(i-1)])
-      varSection.add(newIdentDefs(ident(pvar), ident(NimTypes(ptype)), getValue))
+    var getValue = newCall(ident(f), [newIntLitNode(i-1)])
+    varSection.add(newIdentDefs(ident(pvar), ident(NimTypes(ptype)), getValue))
 
 template copy_fn_body =
   let body_lines = fn.body.len - 2
