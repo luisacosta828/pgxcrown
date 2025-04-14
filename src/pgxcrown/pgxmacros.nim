@@ -133,10 +133,10 @@ proc analyze_node(code: NimNode): NimNode =
     result = check_while_section(code)
   of nnkForStmt:
     result = check_for_section(code)
+  of nnkProcDef:
+    result = code
   else:
-    echo code.kind
-    echo code.treerepr
-    discard
+    raise newException(Exception, "Unsupported instruction: " & $code.kind)
 
 proc check_call_section(code: NimNode):NimNode =
   var 
