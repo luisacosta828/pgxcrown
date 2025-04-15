@@ -114,7 +114,7 @@ proc analyze_node(code: NimNode): NimNode =
     result = check_var_section(code)
   of nnkAsgn:
     result = check_asgn_section(code)
-  of nnkCall: 
+  of nnkCall, nnkCommand: 
     result = check_call_section(code)
   of nnkBlockStmt:
     result.add code[0]
