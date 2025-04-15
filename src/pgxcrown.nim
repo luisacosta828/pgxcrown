@@ -9,6 +9,7 @@ template PG_MODULE_MAGIC*() =
   {.pragma: pgdllexport, codegenDecl: DLL, exportc.}
   {.pragma: pgv1 , codegenDecl: V1_DEF, exportc, dynlib.}
   {.pragma: pgv1_plnim , codegenDecl: "PGDLLEXPORT $# $#$#", exportc, dynlib.}
+  {.pragma: trusted, raises: [], forbids: [], tags: [].}
   {.emit: """PG_MODULE_MAGIC;""" .}
 
 

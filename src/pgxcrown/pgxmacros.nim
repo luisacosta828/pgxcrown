@@ -80,6 +80,7 @@ proc check_block_section(code: NimNode): NimNode
 proc check_discard_section(code: NimNode): NimNode
 proc check_while_section(code: NimNode): NimNode
 proc check_for_section(code: NimNode): NimNode
+proc check_proc_def(code: NimNode): NimNode
 proc analyze_node(code: NimNode): NimNode
 
 proc check_infix_section(code: NimNode): NimNode =
@@ -99,6 +100,12 @@ proc check_discard_section(code: NimNode): NimNode =
   result = check_return_section(code)
 
 proc check_block_section(code: NimNode): NimNode = analyze_node(code)
+
+proc check_proc_def(code: NimNode): NimNode =
+  var sanitized_proc = newProc(code.name, proc_type = nnkFuncDef)
+  sanitized_proc.params = code.params
+  sanitized_proc.body = code.body
+  result = sanitized_proc
 
 proc analyze_node(code: NimNode): NimNode =
   result = newNimNode(code.kind)
@@ -133,8 +140,8 @@ proc analyze_node(code: NimNode): NimNode =
     result = check_while_section(code)
   of nnkForStmt:
     result = check_for_section(code)
-  of nnkProcDef:
-    result = code
+  of nnkProcDef, nnkFuncDef:
+    result = check_proc_def(code)
   else:
     raise newException(Exception, "Unsupported instruction: " & $code.kind)
 
@@ -229,7 +236,7 @@ proc explainWrapper(fn: NimNode): NimNode =
   let pgx_proc = newProc(ident("pgx_" & $fn.name), proc_type = nnkFuncDef)
   pgxFunctions[fn.name.repr] = fn.params
   pgx_proc.params[0] = ident("Datum")
-  pgx_proc.pragma = newNimNode(nnkPragma).add(ident("pgv1"))
+  pgx_proc.pragma = newNimNode(nnkPragma).add(ident("pgv1")).add(ident("trusted"))
 
   var rbody = newTree(nnkStmtList)
 
