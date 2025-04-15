@@ -104,7 +104,7 @@ proc check_block_section(code: NimNode): NimNode = analyze_node(code)
 proc check_proc_def(code: NimNode): NimNode =
   var sanitized_proc = newProc(code.name, proc_type = nnkFuncDef)
   sanitized_proc.params = code.params
-  sanitized_proc.body = code.body
+  sanitized_proc.body = analyze_node(code.body)
   result = sanitized_proc
 
 proc analyze_node(code: NimNode): NimNode =
