@@ -8,7 +8,6 @@ type
     vl_len {.importc: "vl_len_".}:   array[4, char]
     vl_dat*:  cstring
  
-
   Pointer* {.importc: "Pointer".} = cstring
   
   Oid* {.importc: "Oid".} = cuint
@@ -72,7 +71,8 @@ proc palloc*(x: cuint): pointer {.importc.}
 {.pop.}
 
 {.push header: "utils/builtins.h".}
-proc TextDatumGetCString*(x: Datum): cstring {.importc.} 
+proc TextDatumGetCString*(x: Datum): cstring {.importc.}
+proc CStringGetTextDatum*(x: cstring): Datum {.importc.}
 {.pop.}
 
 
@@ -104,6 +104,8 @@ template getFnOid*(fcinfo: FunctionCallInfo): Oid =
   fcinfo[].flinfo[].fn_oid
 
 # Get argument type value declaration
+
+proc getDatum*(value: cuint): Datum {.importc: "PG_GETARG_DATUM".}
 
 proc getInt64*(value: cuint): clonglong {.importc: "PG_GETARG_INT64".}
 
@@ -194,4 +196,4 @@ converter PointerToDatum*(value: Pointer): Datum = PointerGetDatum(value)
 converter CStringToDatum*(value: cstring): Datum = CStringGetDatum(value)
 converter NameToDatum*(value: Name): Datum = NameGetDatum(value)
 converter CstringToNimString*(value: cstring): string = $value
-converter StringToDatum*(value: string):Datum = cstring(value)
+converter StringToDatum*(value: string):Datum = CStringGetTextDatum(cstring(value))

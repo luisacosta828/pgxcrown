@@ -14,7 +14,8 @@ template NimTypes(dt: string): string =
   of "uint64": "culonglong"
   of "uint16": "cushort"
   of "char": "cchar"
-  of "string": "cstring"
+  of "string": "string"
+  of "cstring": "cstring"
   else: "unknown"
 
 
@@ -29,7 +30,8 @@ template PgxToNim(dt: string): string =
   of "uint", "uint32": "getUInt32"
   of "float", "float32": "getFloat4"
   of "float64": "getFloat8"
-  of "string": "getCString"
+  of "string": "TextDatumGetCString"
+  of "cstring": "getCString" 
   else: "unknown"
 
 
@@ -56,7 +58,12 @@ template move_nim_params_as_locals =
     var pvar = param[0]
     var ptype = param[1].split(" ")[1]
     var f = PgxToNim(ptype)
-    var getValue = newCall(ident(f), [newIntLitNode(i-1)])
+    var getValue: NimNode
+    if ptype != "string":
+      getValue = newCall(ident(f), [newIntLitNode(i-1)])
+    else:
+      getValue = newCall(ident("$"), [newCall(ident(f), [ newCall(ident("getDatum"), [newIntLitNode(i-1)]) ] )])
+
     varSection.add(newIdentDefs(ident(pvar), ident(NimTypes(ptype)), getValue))
 
 template copy_fn_body =
