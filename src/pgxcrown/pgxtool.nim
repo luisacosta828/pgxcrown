@@ -16,6 +16,21 @@ const
   pgxtool_init_dir = home / current_user & "_pgxtool"
   pgxtool_config = pgxtool_init_dir / "config.json"
 
+
+const available_base_types = ["int", "int32", "int64", "uint", "uint32", "uint64", "char", "string", "cstring","float32", "float64"]
+
+const type_template = """
+import std/strutils
+
+type $udf = $base_type
+
+proc $udf_input(a: cstring): $udf =
+  discard
+
+proc $udf_output(a: $udf): cstring =
+  discard
+"""
+
 proc cli_helper() =
   echo """
 Usage: pgxtool [command] [options] [target]
@@ -26,6 +41,9 @@ Commands:
 
   create-project: Initialize a new pgxcrown project template to edit
      * pgxtool create-project test
+
+  create-type: Create a template for defining new types
+     * pgxtool create-type test --base-type nim_datatype
 
   build-extension: Compile a dynamic library that can be loaded into Postgres (.so in Linux, .dll in Windows)
      * pgxtool build-extension test
@@ -86,13 +104,18 @@ template build_project(req: string, kind: string) =
 
   createDir(source)
   createDir(private)
-  writeFile(entry_point, "")
+  
+  if kind in "create-project":
+    writeFile(entry_point, "")
+  elif "create-type" in kind:
+    writeFile(entry_point, type_template.replace("$udf", req).replace("$base_type", kind.split(":")[^1]))
 
 
   if "hook" in kind:
     generate_tmp_file(entry_point, kind)
     writeFile(tmp_file, tmp_content)
     run nim_c(tmp_file)
+
     #writeFile(source / "hook_type.txt", kind.split(":")[1])
 
 proc compile2pgx(input_file: string) =
@@ -131,6 +154,21 @@ template prepare_working_directory =
     var content = %*{"modules":{}}
     writeFile(pgxtool_init_dir / "config.json", $content)
 
+template validate_create_type_args(pc: int) =
+  var base_type {.inject.} = "not defined"
+  if pc == 4:
+    var option = paramStr(3)
+    if option != "--base-type":
+      cli_helper()
+      return
+    else:
+      base_type = paramStr(4)
+      if base_type notin available_base_types:
+        raise newException(Exception, base_type & " not supported.\nCheck supported base types:\n" & $available_base_types) 
+  else:
+    cli_helper()
+    return
+
 
 proc check_command(pc: int) =
   var
@@ -151,7 +189,11 @@ proc check_command(pc: int) =
   of "create-project":
     validate_second_arg(pc)
     req = paramStr(2)
-    build_project_template(req)
+    build_project_template(req, arg)
+  of "create-type":
+    validate_create_type_args(pc)
+    req = paramStr(2)
+    build_project_template(req, arg & ":" & base_type)
   of "build-extension":
     validate_second_arg(pc)
     req = paramStr(2)
@@ -182,9 +224,8 @@ proc check_command(pc: int) =
 
 proc main() =
   let pc = paramCount()
-
   case pc
-  of 1, 2: check_command(pc)
+  of 1, 2, 4: check_command(pc)
   else: cli_helper()
 
 
