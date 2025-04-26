@@ -22,6 +22,8 @@ const available_base_types = ["int", "int32", "int64", "uint", "uint32", "uint64
 const type_template = """
 import std/strutils
 
+#hint
+
 type $udf = $base_type
 
 proc $udf_input(a: cstring): $udf =
@@ -108,7 +110,7 @@ template build_project(req: string, kind: string) =
   if kind in "create-project":
     writeFile(entry_point, "")
   elif "create-type" in kind:
-    writeFile(entry_point, type_template.replace("$udf", req).replace("$base_type", kind.split(":")[^1]))
+    writeFile(entry_point, type_template.replace("$udf", req).replace("$base_type", kind.split(":")[^1]).replace("#hint", "# pgxtool create-type template"))
 
 
   if "hook" in kind:
