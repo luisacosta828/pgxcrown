@@ -164,7 +164,7 @@ template validate_create_type_args(pc: int) =
     else:
       base_type = paramStr(4)
       if base_type notin available_base_types:
-        raise newException(Exception, base_type & " not supported.\nCheck supported base types:\n" & $available_base_types) 
+        quit(base_type & " not supported.\nCheck supported base types:\n" & $available_base_types) 
   else:
     cli_helper()
     return
