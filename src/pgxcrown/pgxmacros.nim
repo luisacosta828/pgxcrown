@@ -32,7 +32,8 @@ template PgxToNim(dt: string): string =
   of "float64": "getFloat8"
   of "string": "TextDatumGetCString"
   of "cstring": "getCString" 
-  else: "unknown"
+  else:
+    "unknown"
 
 
 proc ReplyWithPgxTypes(dt: string): string =
@@ -149,8 +150,10 @@ proc analyze_node(code: NimNode): NimNode =
     result = check_for_section(code)
   of nnkProcDef, nnkFuncDef:
     result = check_proc_def(code)
+  of nnkPrefix:
+    result = code
   else:
-    raise newException(Exception, "Unsupported instruction: " & $code.kind)
+    raise newException(Exception, "Unsupported instruction: " & $code.treerepr)
 
 proc check_call_section(code: NimNode):NimNode =
   var 
