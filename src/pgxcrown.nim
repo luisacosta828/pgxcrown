@@ -2,6 +2,7 @@ import pgxcrown/compiler
 import pgxcrown/datatypes/basic
 #import pgxcrown/utils
 include pgxcrown/pgxmacros
+import pgxcrown/reports/reports
 
 template PG_MODULE_MAGIC*() =
   const DLL* = "PGDLLEXPORT $# $#$#"
@@ -29,3 +30,4 @@ template ActivateHooks*() =
 
 export compiler
 export basic
+export reports
