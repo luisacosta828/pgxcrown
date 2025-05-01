@@ -77,7 +77,7 @@ proc emit_pgx_c_extension(module: string): string {.inline.} =
 template generate_tmp_file(input_file: string, kind: string = "") =
   var
     pgxcrown_header = if "hook" in kind: "import pgxcrown/hooks/hook_builder\n\n" else: "import pgxcrown/pgx\n\n"
-    original_content = readFile(input_file)
+    original_content = if fileExists(input_file): readFile(input_file) else: ""
     tmp_content {.inject.} = pgxcrown_header & '\n' & original_content
     (dir, file, ext) = splitFile(input_file)
     tmp_file {.inject.} = (dir / ("tmp_" & file & ext))
