@@ -4,18 +4,25 @@ import std/[os, strutils, macros]
 const entrypoint {.strdefine.} = ""
 
 
-template remove_and_install_dependencies(file: string) =
+template remove_and_install_dependencies(file: string, kind: string) =
   var source = parseStmt(readFile(file))
   del(source)
 
+  var hook_module = 
+    case kind:
+    of "emit_log": "emit_hook"
+    of "post_parse_analyze": "post_parse_hook"
+    else: ""
+
   var res {.inject.} = newNimNode(nnkStmtList)
   res.add newNimNode(nnkImportStmt).add ident("pgxcrown")
+  res.add newNimNode(nnkImportStmt).add ident("pgxcrown/hooks/" & hook_module)
   res.add ident("PG_MODULE_MAGIC")
   res.add ident("ActivateHooks")
 
 
 template init_hook(file: string, kind: string, params: seq[NimNode]) =
-  remove_and_install_dependencies(file)
+  remove_and_install_dependencies(file, kind)
 
   var
     hook_type = kind & "_hook_type"
@@ -63,8 +70,8 @@ template init_hook(file: string, kind: string, params: seq[NimNode]) =
 
 macro build_hook*() =
   var (dir, _, _) = splitFile(entrypoint)
-  var selectedHook = dir.split("/")[0]
-
+  var selectedHook = dir.split("/")[^2]
+ 
   var params: seq[NimNode] = case selectedHook
     of "emit_log": @[newIdentDefs(ident("edata"), newNimNode(nnkPtrTy).add(ident("ErrorData")))]
     of "post_parse_analyze": @[
