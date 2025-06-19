@@ -8,6 +8,8 @@
 
 **pgxcrown** empowers developers to write PostgreSQL extensions using the Nim programming language. By combining Nim’s expressive syntax and compile-time safety with PostgreSQL’s extensibility, pgxcrown makes it easy, fast, and safe to build new database functionality.
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/luisacosta828/pgxcrown)
+
 ---
 
 ## Features
