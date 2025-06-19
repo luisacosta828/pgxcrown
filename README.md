@@ -1,90 +1,112 @@
 # Pgxcrown
 
-Build Postgres Extensions in Nim.
+**Build PostgreSQL Extensions in Nim**
 
-![](banner.jpg)
+![pgxcrown banner](banner.jpg)
 
+## Overview
 
-# Requisites
+**pgxcrown** empowers developers to write PostgreSQL extensions using the Nim programming language. By combining Nim’s expressive syntax and compile-time safety with PostgreSQL’s extensibility, pgxcrown makes it easy, fast, and safe to build new database functionality.
 
-- Postgres with CLI tools installed and running locally
-- Nim
+---
 
+## Features
 
-## Usage
+### 🚀 Nim-Powered PostgreSQL Extensions
+- Write PostgreSQL user-defined functions (UDFs) and extensions in Nim with ease.
+- Leverage Nim’s compile-time checks and modern language features for safer and more maintainable extensions.
 
+### 🛠️ CLI Tooling for Productivity
+- `pgxtool` command-line utility for:
+  - Project scaffolding (`create-project`)
+  - Extension building (`build-extension`)
+  - Type templates (`create-type`)
+  - Hook templates, testing, and more
 
-### Install
+### 🔄 Automatic Type Mapping & Boilerplate Generation
+- Maps Nim types (`int`, `float`, `string`, etc.) to PostgreSQL types.
+- Generates SQL and C glue code, so you focus only on your business logic.
+
+### 🛡️ Security & Safety by Design
+- Promotes use of Nim’s `func` for extension functions, ensuring purity:
+  - No side effects, heap allocation, or unsafe operations
+  - Compile-time guarantees against common sources of bugs or vulnerabilities
+- Declares functions as `trusted` and uses PostgreSQL’s `STRICT` mode by default.
+
+### 🌐 Cross-Platform Support
+- Works on Linux and Windows
+- Handles platform-specific details like `pg_config` path discovery and deployment instructions
+
+### 🔌 Seamless PostgreSQL Integration
+- Easily register and call your Nim functions from SQL.
+- SPI (Server Programming Interface) bindings let you run SQL inside your extensions.
+
+### 🧩 Custom Types & Hooks
+- Templates for custom PostgreSQL types and hooks (e.g., `emit_log`, `post_parse_analyze`).
+
+### 🤝 Open Source & Community-Friendly
+- MIT Licensed.
+- Welcomes contributions, pull requests, and issues.
+
+---
+
+## Quick Start
+
+### 1. Install dependencies
 
 ```bash
 nimble install
 ```
 
-
-### Create a pgxcrown project
-
-- This command will create your project structure:
+### 2. Create a new extension project
 
 ```bash
-pgxtool create-project test
+pgxtool create-project my_extension
 ```
 
+### 3. Write your extension code
 
-### Write your code into main.nim
+Edit `src/main.nim`:
 
 ```nim
 proc add_one*(a: int): int =
   a + 1
 ```
 
-
-### Build a dynamic library
-
-```bash
-pgxtool build-extension test
-```
-
-Linux:
+### 4. Build and deploy
 
 ```bash
+pgxtool build-extension my_extension
+# Linux:
 cp *.so $(pg_config --pkglibdir)
+# Windows:
+# Find pg_config.exe, then copy .dll as directed.
 ```
 
-Windows:
-
-- Windows may not add all Postgres CLI tools to PATH by default(?)
-- Locate `pg_config.exe` in the folders `"C:\Program Files\PostgreSQL\"`.
-- Run it in a terminal like so `pg_config.exe --pkglibdir` to get the pkglibdir path.
-- See `pgconfigFinder()` function source code as hint.
-- Check if you have development header files ("postgres.h", "spi.h", "analyze.h", "elog.h").
-- [See Windows CI builds for more.](https://github.com/luisacosta828/pgxcrown/blob/master/.github/workflows/build.yml#L22)
-
-
-### Call your library function from Postgresql
+### 5. Register and use in PostgreSQL
 
 ```sql
--- Enter into psql and create a function to wrap your library function
--- omit library extension.
-
-create function function_name(params) return data_type as
-'{libname}', '{function}'
-language c strict;
-
--- Example
-create function nim_add_one(integer) return integer as
+create function nim_add_one(integer) returns integer as
 'libadd_one', 'pgx_add_one'
 language c strict;
 
-select nim_add_one(10); # -> 11
+select nim_add_one(10); -- returns 11
 ```
 
+---
+
+## Security Features
+
+- **Safe Function Design:** By using Nim’s `func`, pgxcrown enforces compile-time purity—no heap allocation, no side effects, and no global state—helping to avoid memory errors or security flaws.
+- **Trusted and Strict:** Generated functions are marked as `trusted` and use PostgreSQL’s `STRICT` language mode, preventing unexpected NULL behavior.
+
+---
 
 ## Contributing
 
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+Pull requests are welcome! For major changes, please open an issue first to discuss what you would like to change. Make sure to update or add tests as appropriate.
 
-Please make sure to update tests as appropriate.
-
+---
 
 ## License
 
