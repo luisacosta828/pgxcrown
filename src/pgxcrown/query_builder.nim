@@ -76,9 +76,6 @@ converter stringToColumn(col:string):Column =
   else:
     single(col.strip)
 
-converter intToColumn(col: int): Column = $col
-converter floatToColumn(col: float): Column = $col
-
 converter SelectBuilderToColumn(col: SelectBuilder): Column =
   subquery(col)
 
@@ -122,12 +119,20 @@ proc Where*(stmt: FromBuilder | JoinBuilder): string = discard
 proc execute*(stmt: Builders) =
   discard
 
+proc myquery:auto =
+    Select("1 as r2") as "custom_name" # subquery with custom name 
+
 proc my_proc() =
   var 
+    extracted_subquery = Select("1 as r2") as "custom_name" # subquery with custom name
     result = Select(
-      1,
-      3.1415,
-      "'a'"
+      "j", # single column name
+      "a.b",# table alias  
+      "a    as    m", # custom name
+      Select("1 as r"), # subquery
+      Select("1 as r2") as "custom_name", # subquery with custom name
+      extracted_subquery,
+      myquery
     )
     
  #   Select(single("j.r"), single("m.m"), single("jara"))
