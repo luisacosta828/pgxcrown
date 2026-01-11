@@ -154,6 +154,8 @@ proc analyze_node(code: NimNode): NimNode =
     result = check_proc_def(code)
   of nnkPrefix:
     result = code
+  of nnkBracketExpr:
+    result = code
   else:
     raise newException(Exception, "Unsupported instruction: " & $code.treerepr)
 
