@@ -30,6 +30,20 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
   sql_scripts.add "'" & project(entrypoint) & "', 'pgx_" & fn.name.repr & "'\n"
   sql_scripts.add "language c strict;\n"
 
+
+proc buildEnumType(element: NimNode, sql_scripts: var string) =
+  var 
+    enum_template = "\nCREATE TYPE $ENUM_NAME AS ENUM ($ENUM_LIST);\n"
+    enum_name     = element[0][0].repr
+    enum_list: seq[string] = @[]
+
+  for el in element[0][2]:
+    if el.kind == nnkIdent:
+      enum_list.add "'" & el.repr & "'"
+  
+  sql_scripts.add enum_template.replace("$ENUM_NAME", enum_name).replace("$ENUM_LIST", enum_list.join(","))
+
+
 proc lift_base_datatypes(function: NimNode, custom_datatypes: Table[string, string]) =
   for idx in 0 ..< len(function.params):
     if idx == 0:
@@ -42,6 +56,14 @@ proc lift_base_datatypes(function: NimNode, custom_datatypes: Table[string, stri
 
 template triggered_by_create_type(source) =
   hints["create-type"] = "pgxtool create-type template" in file_content.repr
+
+template check_type_section(element):string =
+  case element[0][2].kind:
+  of nnkIdent:  "plain"
+  of nnkEnumTy: "enum"
+  of nnkObjectTy: "object"
+  else: element.treerepr
+  
   
 macro decorateMainFunctions*() =
   var file_content = readFile(entrypoint)
@@ -75,6 +97,11 @@ macro decorateMainFunctions*() =
         custom_dt = el[0][0].repr
         base_dt   = el[0][2].repr
       custom_datatypes[custom_dt] = base_dt
+    elif el.kind == nnkTypeSection:
+      var type_checked = check_type_section(el)
+      case type_checked:
+      of "enum": buildEnumType(el, sql_scripts)
+      else: discard
 
   writeFile(dir / project(entrypoint) & ".sql", sql_scripts)
 
