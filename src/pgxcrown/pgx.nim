@@ -100,7 +100,13 @@ macro decorateMainFunctions*() =
     elif el.kind == nnkTypeSection:
       var type_checked = check_type_section(el)
       case type_checked:
-      of "enum": buildEnumType(el, sql_scripts)
+      of "enum":
+        buildEnumType(el, sql_scripts)
+        var pragmaexpr = newNimNode(nnkPragmaExpr)
+        pragmaexpr.add(el[0][0])
+        pragmaexpr.add(pgx_pragma)
+        el[0][0] = pragmaexpr
+
       else: discard
 
   writeFile(dir / project(entrypoint) & ".sql", sql_scripts)
