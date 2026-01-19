@@ -3,6 +3,21 @@ import std/[macros, strutils, macrocache]
 const 
   pgxFunctions = CacheTable"pgxfn"
   pgxVarDecl   = CacheTable"pgxvar"
+  pgxEnums     = CacheTable"pgxenum"
+  currentPGXCustomType = CacheTable"pgxcustomtype"
+
+var cacheIteration {.compileTime.} = 0
+
+proc checkPgxTypeDef(dt: string): string =
+  result = "unknown"
+  if dt in pgxEnums:
+    currentPGXCustomType[$cacheIteration & "type"] = ident("enum")
+    result = "getOid"
+
+proc checkNimTypeDef(dt: string): string =
+  result = "unknown"
+  if dt in pgxEnums: 
+    result = "Oid"
 
 template NimTypes(dt: string): string =
   case dt
@@ -16,8 +31,8 @@ template NimTypes(dt: string): string =
   of "char": "cchar"
   of "string": "string"
   of "cstring": "cstring"
-  else: "unknown"
-
+  else: 
+    checkNimTypeDef(dt)
 
 template PgxToNim(dt: string): string =
   case dt
@@ -32,8 +47,8 @@ template PgxToNim(dt: string): string =
   of "float64": "getFloat8"
   of "string": "TextDatumGetCString"
   of "cstring": "getCString" 
-  else:
-    "unknown"
+  else: 
+    checkPgxTypeDef(dt) 
 
 
 proc ReplyWithPgxTypes(dt: string): string =
@@ -65,7 +80,22 @@ template move_nim_params_as_locals =
     else:
       getValue = newCall(ident("$"), [newCall(ident(f), [ newCall(ident("getDatum"), [newIntLitNode(i-1)]) ] )])
 
+    var ncall: NimNode
+    var ncallident: NimNode
+    var enumVisited = $cacheIteration & "type" in currentPGXCustomType and currentPGXCustomType[$cacheIteration & "type"].repr == "enum"
+    if enumVisited:
+      ncall = newCall(ident("DirectFunctionCall1"), [ident("enum_out"), newCall(ident("ObjectIdGetDatum"), [ident(pvar&"_oid")])])
+      var genericPart = nnkBracketExpr.newTree(ident("parseEnum"),ident(ptype))
+      var parseEnumCall = nnkCall.newTree(genericPart, ncall) 
+      varSection.add newIdentDefs(ident(pvar), ident(ptype))
+      asgnSection.add(ident(pvar), parseEnumCall)
+      pvar = pvar & "_oid"
+      
+
     varSection.add(newIdentDefs(ident(pvar), ident(NimTypes(ptype)), getValue))
+    cacheIteration += 1
+
+    #currentPGXCustomType["type"] = ident("none")
 
 template copy_fn_body =
   let body_lines = fn.body.len - 2
@@ -237,11 +267,14 @@ proc check_asgn_section(code: NimNode): NimNode =
 proc analyze_fn_body(fn: NimNode): NimNode =
   result = newTree(nnkStmtList)
   var varSection = newNimNode(nnkVarSection)
+  var asgnSection = newNimNode(nnkAsgn)
 
   var fnparams_len = fn.params.len - 1
   move_nim_params_as_locals
 
   result.add varSection
+  if asgnSection.len > 0:
+    result.add asgnSection
 
   for item in fn.body: 
     result.add analyze_node(item)
@@ -260,5 +293,16 @@ proc explainWrapper(fn: NimNode): NimNode =
   
   result = pgx_proc
 
+proc registerPGXEnum(obj: NimNode) = pgxEnums[obj[0][0].repr] = obj
 
-macro pgx*(fn: untyped): untyped = explainWrapper(fn)
+macro pgx*(fn: untyped): untyped = 
+  if fn.kind != nnkTypeDef:
+    return explainWrapper(fn) 
+  else:
+    case fn[2].kind:
+    of nnkEnumTy:
+      registerPGXEnum(fn)
+      return fn
+    else:
+      discard
+  
