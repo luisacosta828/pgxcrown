@@ -163,7 +163,7 @@ proc DirectFunctionCall7*(fn: PGType, arg1: Datum, arg2: Datum, arg3: Datum, arg
 proc DirectFunctionCall8*(fn: PGType, arg1: Datum, arg2: Datum, arg3: Datum, arg4: Datum, arg5: Datum, arg6: Datum, arg7: Datum, arg8: Datum): Datum {.importc.}
 proc DirectFunctionCall9*(fn: PGType, arg1: Datum, arg2: Datum, arg3: Datum, arg4: Datum, arg5: Datum, arg6: Datum, arg7: Datum, arg8: Datum, arg9: Datum): Datum {.importc.}
 
-
+proc enum_out*(): Datum {.importc: "enum_out", noconv, cdecl, noSideEffect, gcsafe.}
 {.pop.}
 
 converter DatumToObjectId*(x: Datum): Oid = DatumGetObjectId(x) 
@@ -179,6 +179,7 @@ converter DatumToBool*(x: Datum): cchar | bool = DatumGetBool(x)
 converter DatumToFloat4*(x: Datum): cfloat | float32 | float = DatumGetFloat4(x)
 converter DatumToPointer*(x: Datum): Pointer = DatumGetPointer(x)
 converter DatumToCString*(x: Datum): cstring = DatumGetCString(x)
+converter DatumToNimString*(x: Datum):string = $DatumGetCString(x)
 converter DatumToName*(x: Datum): Name = DatumGetName(x)
 
 converter ObjectIdToDatum*(value: Oid): Datum = ObjectIdGetDatum(value)
