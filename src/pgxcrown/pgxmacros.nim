@@ -68,6 +68,23 @@ proc ReplyLiteralsWithPgxTypes(dt: NimNode): string =
   of nnkFloat64Lit: "Float8"
   else: ""
 
+
+template map_enums_params =
+  var 
+    ncall: NimNode
+    ncallident: NimNode
+    enumVisited = $cacheIteration & "type" in currentPGXCustomType and currentPGXCustomType[$cacheIteration & "type"].repr == "enum"
+
+  if enumVisited:
+    ncall = newCall(ident("DirectFunctionCall1"), [ident("enum_out"), newCall(ident("ObjectIdGetDatum"), [ident(pvar&"_oid")])])
+    var 
+      genericPart = nnkBracketExpr.newTree(ident("parseEnum"),ident(ptype))
+      parseEnumCall = nnkCall.newTree(genericPart, ncall, ident("PgxUnknownValue"))
+
+    varSection.add newIdentDefs(ident(pvar), ident(ptype))
+    asgnSection.add(ident(pvar), parseEnumCall)
+    pvar = pvar & "_oid"
+  
 template move_nim_params_as_locals =
   for i in 1..fnparams_len:
     var param = fn.params[i].repr.split(":")
@@ -80,22 +97,10 @@ template move_nim_params_as_locals =
     else:
       getValue = newCall(ident("$"), [newCall(ident(f), [ newCall(ident("getDatum"), [newIntLitNode(i-1)]) ] )])
 
-    var ncall: NimNode
-    var ncallident: NimNode
-    var enumVisited = $cacheIteration & "type" in currentPGXCustomType and currentPGXCustomType[$cacheIteration & "type"].repr == "enum"
-    if enumVisited:
-      ncall = newCall(ident("DirectFunctionCall1"), [ident("enum_out"), newCall(ident("ObjectIdGetDatum"), [ident(pvar&"_oid")])])
-      var genericPart = nnkBracketExpr.newTree(ident("parseEnum"),ident(ptype))
-      var parseEnumCall = nnkCall.newTree(genericPart, ncall) 
-      varSection.add newIdentDefs(ident(pvar), ident(ptype))
-      asgnSection.add(ident(pvar), parseEnumCall)
-      pvar = pvar & "_oid"
-      
+    map_enums_params()  
 
     varSection.add(newIdentDefs(ident(pvar), ident(NimTypes(ptype)), getValue))
     cacheIteration += 1
-
-    #currentPGXCustomType["type"] = ident("none")
 
 template copy_fn_body =
   let body_lines = fn.body.len - 2
