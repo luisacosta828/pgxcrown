@@ -63,7 +63,9 @@ template check_type_section(element):string =
   of nnkEnumTy: "enum"
   of nnkObjectTy: "object"
   else: element.treerepr
-  
+
+template addDefaultCase(element) =
+  element[0][2].add ident("PgxUnknownValue")
   
 macro decorateMainFunctions*() =
   var file_content = readFile(entrypoint)
@@ -101,6 +103,7 @@ macro decorateMainFunctions*() =
       var type_checked = check_type_section(el)
       case type_checked:
       of "enum":
+        addDefaultCase(el)
         buildEnumType(el, sql_scripts)
         var pragmaexpr = newNimNode(nnkPragmaExpr)
         pragmaexpr.add(el[0][0])
