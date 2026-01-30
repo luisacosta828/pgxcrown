@@ -27,6 +27,6 @@ elif defined(linux):
   const server = " -I" & includeDir & "/" & pgVersion & "/server"
   const internals = " -I" & includeDir & "/" & pgVersion & "/internal"
 
-  {.passC: server & internals & " -I" & includeDir.}
+  {.passC: server & internals & " -I" & includeDir & " -include postgres.h -include fmgr.h".}
 else:
   quit "Unsupported operating system"
