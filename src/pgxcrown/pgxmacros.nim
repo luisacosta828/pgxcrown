@@ -5,10 +5,12 @@ const
   pgxVarDecl   = CacheTable"pgxvar"
   pgxEnums     = CacheTable"pgxenum"
   currentPGXCustomType = CacheTable"pgxcustomtype"
-  anonTuplConstr = CacheTable"anonTuplConstr"   
+  anonTuplConstr = CacheTable"anonTuplConstr"  
 
-var cacheIteration {.compileTime.} = 0
-var fnIdx {.compileTime.} = 0
+var 
+  cacheIteration {.compileTime.} = 0
+  fnIdx {.compileTime.} = 0
+
 
 proc checkPgxTypeDef(dt: string): string =
   result = "unknown"
@@ -92,22 +94,26 @@ template map_enums_params(pvar, ptype) =
   pvar = pvar & "_oid"
 
 template map_tuplec_params(pvar, ptype, param) =
-  var tupvar = ident("tupDesc" & $cacheIteration & "fn" & $fnIdx)
-  varSection.add newIdentDefs(ident("tupType"), ident("Oid"), newEmptyNode())
-  varSection.add newIdentDefs(ident("tupTypmod"), ident("cint"), newEmptyNode())
+  var 
+    tupvar = ident("tupDesc" & $cacheIteration & "fn" & $fnIdx)
+    tuptype = ident("tupType" & $cacheIteration & "fn" & $fnIdx)
+    tuptypmod = ident("tupTypmod" & $cacheIteration & "fn" & $fnIdx)
+
+  varSection.add newIdentDefs(tuptype, ident("Oid"), newEmptyNode())
+  varSection.add newIdentDefs(tuptypmod, ident("cint"), newEmptyNode())
   varSection.add newIdentDefs(tupvar, ident("TupleDesc"), newEmptyNode())
   varSection.add param
 
   anonTuplConstr[tupvar.repr] = newCall(ident("DecrTupleDescRefCount"), [tupvar])
-  
+ 
   var treestmt = newNimNode(nnkStmtList)
   var callTypeId = newCall(ident("getTypeId2"), [ident(pvar & "th")])
-  var asgn1 = newNimNode(nnkAsgn).add(ident("tupType"), callTypeId)
+  var asgn1 = newNimNode(nnkAsgn).add(tuptype, callTypeId)
 
   var callTypeMod = newCall(ident("getTypeMod2"), [ident(pvar & "th")]) 
-  var asgn2 = newNimNode(nnkAsgn).add(ident("tupTypmod"), callTypeMod)
+  var asgn2 = newNimNode(nnkAsgn).add(tuptypmod, callTypeMod)
 
-  var callTupDescLookup = newCall(ident("lookup_rowtype_tupdesc"), [ident("tupType"), ident("tupTypmod")])
+  var callTupDescLookup = newCall(ident("lookup_rowtype_tupdesc"), [tuptype, tuptypmod])
   var asgn3 = newNimNode(nnkAsgn).add(tupvar, callTupDescLookup)
 
   treestmt.add(asgn1)
@@ -123,7 +129,7 @@ template map_tuplec_params(pvar, ptype, param) =
         nnkBracketExpr.newTree(ident(pvar), nimIdx),
         nnkCall.newTree(
           nnkBracketExpr.newTree(ident("get_tuple_attr"), dtype),
-          ident("elth"),
+          ident(pvar & "th"),
           tupvar,
           pgIdx))
   
@@ -131,7 +137,7 @@ template map_tuplec_params(pvar, ptype, param) =
     i += 1
 
   pvar = pvar & "th"
-  asgnMultiple = treestmt
+  asgnMultiple.add treestmt
 
 template get_param_type(parameter): string =
   var validType = parameter[1].kind == nnkIdent
@@ -212,7 +218,7 @@ proc check_return_section(code: NimNode): NimNode =
   for key, value in anonTuplConstr:
     if "fn" & $fnIdx in key:
       #call tupdesc destructor
-      let tuple_destructor = anonTuplConstr["tupDesc" & $(cacheIteration - 1) & "fn" & $fnIdx]
+      let tuple_destructor = anonTuplConstr[key]
       result.add tuple_destructor
       
 
