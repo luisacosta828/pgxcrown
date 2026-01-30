@@ -5,19 +5,27 @@ const
   pgxVarDecl   = CacheTable"pgxvar"
   pgxEnums     = CacheTable"pgxenum"
   currentPGXCustomType = CacheTable"pgxcustomtype"
+  anonTuplConstr = CacheTable"anonTuplConstr"   
 
 var cacheIteration {.compileTime.} = 0
+var fnIdx {.compileTime.} = 0
 
 proc checkPgxTypeDef(dt: string): string =
   result = "unknown"
+  var idx: string = $cacheIteration & "type"
   if dt in pgxEnums:
-    currentPGXCustomType[$cacheIteration & "type"] = ident("enum")
+    currentPGXCustomType[idx] = ident("enum")
     result = "getOid"
+  elif dt == "nnkTupleConstr":
+    currentPGXCustomType[idx] = ident("tupleConstr")
+    result = "getHeapTupleHeader"
 
 proc checkNimTypeDef(dt: string): string =
   result = "unknown"
   if dt in pgxEnums: 
     result = "Oid"
+  if dt == "nnkTupleConstr":
+    result = "HeapTupleHeader"
 
 template NimTypes(dt: string): string =
   case dt
@@ -69,27 +77,81 @@ proc ReplyLiteralsWithPgxTypes(dt: NimNode): string =
   else: ""
 
 
-template map_enums_params =
+template map_enums_params(pvar, ptype) =
   var 
     ncall: NimNode
     ncallident: NimNode
-    enumVisited = $cacheIteration & "type" in currentPGXCustomType and currentPGXCustomType[$cacheIteration & "type"].repr == "enum"
 
-  if enumVisited:
-    ncall = newCall(ident("DirectFunctionCall1"), [ident("enum_out"), newCall(ident("ObjectIdGetDatum"), [ident(pvar&"_oid")])])
-    var 
-      genericPart = nnkBracketExpr.newTree(ident("parseEnum"),ident(ptype))
-      parseEnumCall = nnkCall.newTree(genericPart, ncall, ident("PgxUnknownValue"))
+  ncall = newCall(ident("DirectFunctionCall1"), [ident("enum_out"), newCall(ident("ObjectIdGetDatum"), [ident(pvar&"_oid")])])
+  var 
+    genericPart = nnkBracketExpr.newTree(ident("parseEnum"),ident(ptype))
+    parseEnumCall = nnkCall.newTree(genericPart, ncall, ident("PgxUnknownValue"))
 
-    varSection.add newIdentDefs(ident(pvar), ident(ptype))
-    asgnSection.add(ident(pvar), parseEnumCall)
-    pvar = pvar & "_oid"
+  varSection.add newIdentDefs(ident(pvar), ident(ptype))
+  asgnSection.add(ident(pvar), parseEnumCall)
+  pvar = pvar & "_oid"
+
+template map_tuplec_params(pvar, ptype, param) =
+  var tupvar = ident("tupDesc" & $cacheIteration & "fn" & $fnIdx)
+  varSection.add newIdentDefs(ident("tupType"), ident("Oid"), newEmptyNode())
+  varSection.add newIdentDefs(ident("tupTypmod"), ident("cint"), newEmptyNode())
+  varSection.add newIdentDefs(tupvar, ident("TupleDesc"), newEmptyNode())
+  varSection.add param
+
+  anonTuplConstr[tupvar.repr] = newCall(ident("DecrTupleDescRefCount"), [tupvar])
   
+  var treestmt = newNimNode(nnkStmtList)
+  var callTypeId = newCall(ident("getTypeId2"), [ident(pvar & "th")])
+  var asgn1 = newNimNode(nnkAsgn).add(ident("tupType"), callTypeId)
+
+  var callTypeMod = newCall(ident("getTypeMod2"), [ident(pvar & "th")]) 
+  var asgn2 = newNimNode(nnkAsgn).add(ident("tupTypmod"), callTypeMod)
+
+  var callTupDescLookup = newCall(ident("lookup_rowtype_tupdesc"), [ident("tupType"), ident("tupTypmod")])
+  var asgn3 = newNimNode(nnkAsgn).add(tupvar, callTupDescLookup)
+
+  treestmt.add(asgn1)
+  treestmt.add(asgn2)
+  treestmt.add(asgn3)
+  var i = 0
+  for dtype in param[1]:
+    let 
+      pgIdx = newLit((i + 1).int16)
+      nimIdx = newLit(i)
+      
+      call = nnkAsgn.newTree(
+        nnkBracketExpr.newTree(ident(pvar), nimIdx),
+        nnkCall.newTree(
+          nnkBracketExpr.newTree(ident("get_tuple_attr"), dtype),
+          ident("elth"),
+          tupvar,
+          pgIdx))
+  
+    treestmt.add(call)
+    i += 1
+
+  pvar = pvar & "th"
+  asgnMultiple = treestmt
+
+template get_param_type(parameter): string =
+  var validType = parameter[1].kind == nnkIdent
+  if validType:
+    parameter[1].repr
+  else:
+    parameter[1].kind.repr
+
+template enum_visited(idx): bool = idx in currentPGXCustomType and currentPGXCustomType[idx].repr == "enum"
+template tuplec_visited(idx): bool = idx in currentPGXCustomType and currentPGXCustomType[idx].repr == "tupleConstr"
+
 template move_nim_params_as_locals =
+  var param: seq[string]
+  var pvar: string
+  var ptype: string
+
   for i in 1..fnparams_len:
-    var param = fn.params[i].repr.split(":")
-    var pvar = param[0]
-    var ptype = param[1].split(" ")[1]
+    param = fn.params[i].repr.split(":")
+    pvar = param[0]
+    ptype = get_param_type(fn.params[i])
     var f = PgxToNim(ptype)
     var getValue: NimNode
     if ptype != "string":
@@ -97,7 +159,15 @@ template move_nim_params_as_locals =
     else:
       getValue = newCall(ident("$"), [newCall(ident(f), [ newCall(ident("getDatum"), [newIntLitNode(i-1)]) ] )])
 
-    map_enums_params()  
+
+    var idx = $cacheIteration & "type"
+    var enumVisited = enum_visited(idx)
+    var tupleConstrVisited = tuplec_visited(idx)
+
+    if enumVisited:
+      map_enums_params(pvar, ptype)
+    elif tupleConstrVisited:
+      map_tuplec_params(pvar, ptype, fn.params[i])
 
     varSection.add(newIdentDefs(ident(pvar), ident(NimTypes(ptype)), getValue))
     cacheIteration += 1
@@ -136,8 +206,18 @@ proc check_literal_values(code: NimNode): NimNode =
   call_return_macro(return_macro, code)
 
 proc check_return_section(code: NimNode): NimNode =
-  result = newNimNode(code.kind)
-  result.add analyze_node(code[0])
+  #result = newNimNode(code.kind)
+  result = newTree(nnkStmtList)
+  
+  for key, value in anonTuplConstr:
+    if "fn" & $fnIdx in key:
+      #call tupdesc destructor
+      let tuple_destructor = anonTuplConstr["tupDesc" & $(cacheIteration - 1) & "fn" & $fnIdx]
+      result.add tuple_destructor
+      
+
+  code[0] = analyze_node(code[0])
+  result.add code
 
 proc check_discard_section(code: NimNode): NimNode =
   result = check_return_section(code)
@@ -273,6 +353,7 @@ proc analyze_fn_body(fn: NimNode): NimNode =
   result = newTree(nnkStmtList)
   var varSection = newNimNode(nnkVarSection)
   var asgnSection = newNimNode(nnkAsgn)
+  var asgnMultiple = newNimNode(nnkStmtList)
 
   var fnparams_len = fn.params.len - 1
   move_nim_params_as_locals
@@ -280,6 +361,8 @@ proc analyze_fn_body(fn: NimNode): NimNode =
   result.add varSection
   if asgnSection.len > 0:
     result.add asgnSection
+  if asgnMultiple.len > 0:
+    result.add asgnMultiple
 
   for item in fn.body: 
     result.add analyze_node(item)
@@ -297,6 +380,7 @@ proc explainWrapper(fn: NimNode): NimNode =
   echo pgx_proc.repr
   
   result = pgx_proc
+  fnIdx += 1
 
 proc registerPGXEnum(obj: NimNode) = pgxEnums[obj[0][0].repr] = obj
 
