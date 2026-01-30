@@ -24,7 +24,10 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
 
   var param_list: seq[string]
   for e in fn.params[1 .. paramLen]:
-    param_list.add NimToSQLType e[1].repr
+    if e[1].kind == nnkIdent:
+      param_list.add NimToSQLType e[1].repr
+    elif e[1].kind == nnkTupleConstr:
+      param_list.add "record"
 
   sql_scripts.add "\nCREATE FUNCTION " & fn.name.repr & '(' & param_list.join(",") & ')' & returnType & " as\n"
   sql_scripts.add "'" & project(entrypoint) & "', 'pgx_" & fn.name.repr & "'\n"
