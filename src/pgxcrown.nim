@@ -1,5 +1,6 @@
 import pgxcrown/compiler
 import pgxcrown/datatypes/basic
+import pgxcrown/datatypes/heaptuples
 include pgxcrown/pgxmacros
 import pgxcrown/reports/reports
 
@@ -30,3 +31,4 @@ template ActivateHooks*() =
 export compiler
 export basic
 export reports
+export heaptuples
