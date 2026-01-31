@@ -78,6 +78,18 @@ proc ReplyLiteralsWithPgxTypes(dt: NimNode): string =
   of nnkFloat64Lit: "Float8"
   else: ""
 
+proc hasReturn(node: NimNode): bool =
+  # Si el nodo actual es un return, bingo.
+  if node.kind == nnkReturnStmt:
+    return true
+  
+  # Si no, buscamos en todos sus hijos recursivamente
+  for child in node:
+    if hasReturn(child):
+      return true
+      
+  return false
+
 
 template map_enums_params(pvar, ptype) =
   var 
@@ -362,6 +374,13 @@ proc analyze_fn_body(fn: NimNode): NimNode =
   for item in fn.body: 
     result.add analyze_node(item)
 
+template clean_tuple_desc = 
+  if not hasReturn(rbody):
+    for key, value in anonTuplConstr:
+      if "fn" & $fnIdx in key:
+        rbody.add anonTuplConstr[key]
+  
+
 proc explainWrapper(fn: NimNode): NimNode =
   let pgx_proc = newProc(ident("pgx_" & $fn.name), proc_type = nnkFuncDef)
   pgxFunctions[fn.name.repr] = fn.params
@@ -371,6 +390,10 @@ proc explainWrapper(fn: NimNode): NimNode =
   var rbody = newTree(nnkStmtList)
 
   rbody = analyze_fn_body(fn)
+
+  # calling destructor when there's no return value
+  clean_tuple_desc
+
   pgx_proc.body = rbody
   echo pgx_proc.repr
   
