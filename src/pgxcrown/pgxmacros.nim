@@ -94,31 +94,20 @@ template map_enums_params(pvar, ptype) =
   pvar = pvar & "_oid"
 
 template map_tuplec_params(pvar, ptype, param) =
-  var 
-    tupvar = ident("tupDesc" & $cacheIteration & "fn" & $fnIdx)
-    tuptype = ident("tupType" & $cacheIteration & "fn" & $fnIdx)
-    tuptypmod = ident("tupTypmod" & $cacheIteration & "fn" & $fnIdx)
+  var tupvar = ident("tupDesc" & $cacheIteration & "fn" & $fnIdx)
 
-  varSection.add newIdentDefs(tuptype, ident("Oid"), newEmptyNode())
-  varSection.add newIdentDefs(tuptypmod, ident("cint"), newEmptyNode())
   varSection.add newIdentDefs(tupvar, ident("TupleDesc"), newEmptyNode())
   varSection.add param
 
   anonTuplConstr[tupvar.repr] = newCall(ident("DecrTupleDescRefCount"), [tupvar])
  
   var treestmt = newNimNode(nnkStmtList)
-  var callTypeId = newCall(ident("getTypeId2"), [ident(pvar & "th")])
-  var asgn1 = newNimNode(nnkAsgn).add(tuptype, callTypeId)
 
-  var callTypeMod = newCall(ident("getTypeMod2"), [ident(pvar & "th")]) 
-  var asgn2 = newNimNode(nnkAsgn).add(tuptypmod, callTypeMod)
-
-  var callTupDescLookup = newCall(ident("lookup_rowtype_tupdesc"), [tuptype, tuptypmod])
-  var asgn3 = newNimNode(nnkAsgn).add(tupvar, callTupDescLookup)
+  var callTupDescLookup = newCall(ident("getTupleDesc"), [ident(pvar & "th")])
+  var asgn1 = newNimNode(nnkAsgn).add(tupvar, callTupDescLookup)
 
   treestmt.add(asgn1)
-  treestmt.add(asgn2)
-  treestmt.add(asgn3)
+
   var i = 0
   for dtype in param[1]:
     let 

@@ -32,7 +32,7 @@ proc DecrTupleDescRefCount*(tup: TupleDesc) {.importc.}
 {.pop.}
 
 {.push header: "utils/typcache.h".}
-proc lookup_rowtype_tupdesc*(type_id: Oid, typmod: cint): TupleDesc {.importc.}
+proc lookup_rowtype_tupdesc(type_id: Oid, typmod: cint): TupleDesc {.importc.}
 {.pop.}
 
 
@@ -53,12 +53,20 @@ proc get_tuple_attr*[T](element: HeapTupleHeader, row: TupleDesc, idx: cint): T 
     else:
       result = default(T)
 
-proc getTypeId2*(tup: HeapTupleHeader): Oid  =
+proc getTypeId(tup: HeapTupleHeader): Oid  =
   if not tup.isNil:
     return tup.t_choice.t_datum.datum_typeid
   return 0.Oid
 
-proc getTypeMod2*(tup: HeapTupleHeader): cint  =
+proc getTypeMod(tup: HeapTupleHeader): cint  =
   if not tup.isNil:
     return tup.t_choice.t_datum.datum_typmod
   return -1
+
+proc getTupleDesc*(heapTuple: HeapTupleHeader): TupleDesc {. inline .} =
+  var 
+    tupTypeId = getTypeId(heapTuple)
+    tupTypMod = getTypeMod(heapTuple)
+  
+  result = lookup_rowtype_tupdesc(tupTypeId, tupTypMod)
+  
