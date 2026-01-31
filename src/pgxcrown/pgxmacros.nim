@@ -79,11 +79,9 @@ proc ReplyLiteralsWithPgxTypes(dt: NimNode): string =
   else: ""
 
 proc hasReturn(node: NimNode): bool =
-  # Si el nodo actual es un return, bingo.
   if node.kind == nnkReturnStmt:
     return true
   
-  # Si no, buscamos en todos sus hijos recursivamente
   for child in node:
     if hasReturn(child):
       return true
