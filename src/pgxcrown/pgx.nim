@@ -2,7 +2,7 @@ import std/[macros, os, strutils, tables]
 
 
 const entrypoint {.strdefine.} = ""
-
+var recordType {.compileTime.}: seq[string] = @[]
 
 template NimToSQLType(dt: string): string =
   case dt
@@ -21,12 +21,12 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
   var
     returnType = " returns " & NimToSQLType fn.params[0].repr
     paramLen = fn.params.len - 1
-
+  
   var param_list: seq[string]
   for e in fn.params[1 .. paramLen]:
-    if e[1].kind == nnkIdent:
+    if e[1].kind == nnkIdent and e[1].repr notin recordType:
       param_list.add NimToSQLType e[1].repr
-    elif e[1].kind == nnkTupleConstr:
+    elif e[1].kind == nnkTupleConstr or e[1].repr in recordType:
       param_list.add "record"
 
   sql_scripts.add "\nCREATE FUNCTION " & fn.name.repr & '(' & param_list.join(",") & ')' & returnType & " as\n"
@@ -37,10 +37,10 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
 proc buildEnumType(element: NimNode, sql_scripts: var string) =
   var 
     enum_template = "\nCREATE TYPE $ENUM_NAME AS ENUM ($ENUM_LIST);\n"
-    enum_name     = element[0][0].repr
+    enum_name     = element[0].repr
     enum_list: seq[string] = @[]
 
-  for el in element[0][2]:
+  for el in element[2]:
     if el.kind == nnkIdent:
       enum_list.add "'" & el.repr & "'"
   
@@ -61,14 +61,15 @@ template triggered_by_create_type(source) =
   hints["create-type"] = "pgxtool create-type template" in file_content.repr
 
 template check_type_section(element):string =
-  case element[0][2].kind:
+  case element[2].kind:
   of nnkIdent:  "plain"
   of nnkEnumTy: "enum"
   of nnkObjectTy: "object"
+  of nnkTupleConstr: "tupleConstr"
   else: element.treerepr
 
-template addDefaultCase(element) =
-  element[0][2].add ident("PgxUnknownValue")
+template addEnumDefaultCase(element) =
+  element[2].add ident("PgxUnknownValue")
   
 macro decorateMainFunctions*() =
   var file_content = readFile(entrypoint)
@@ -103,17 +104,24 @@ macro decorateMainFunctions*() =
         base_dt   = el[0][2].repr
       custom_datatypes[custom_dt] = base_dt
     elif el.kind == nnkTypeSection:
-      var type_checked = check_type_section(el)
-      case type_checked:
-      of "enum":
-        addDefaultCase(el)
-        buildEnumType(el, sql_scripts)
+      for e in el:
         var pragmaexpr = newNimNode(nnkPragmaExpr)
-        pragmaexpr.add(el[0][0])
-        pragmaexpr.add(pgx_pragma)
-        el[0][0] = pragmaexpr
+        var type_checked = check_type_section(e)
+        case type_checked:
+        of "enum":
+          addEnumDefaultCase(e)
+          buildEnumType(e, sql_scripts)
+          pragmaexpr.add(e[0])
+          pragmaexpr.add(pgx_pragma)
+          e[0] = pragmaexpr
+        of "tupleConstr": 
+          recordType.add e[0].repr
+          pragmaexpr.add(e[0])
+          pragmaexpr.add(pgx_pragma)
+          e[0] = pragmaexpr
+        else:
+          discard
 
-      else: discard
 
   writeFile(dir / project(entrypoint) & ".sql", sql_scripts)
 

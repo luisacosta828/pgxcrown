@@ -4,6 +4,7 @@ const
   pgxFunctions = CacheTable"pgxfn"
   pgxVarDecl   = CacheTable"pgxvar"
   pgxEnums     = CacheTable"pgxenum"
+  pgxTupleConstr     = CacheTable"pgxTupleConstr"
   currentPGXCustomType = CacheTable"pgxcustomtype"
   anonTuplConstr = CacheTable"anonTuplConstr"  
 
@@ -18,7 +19,7 @@ proc checkPgxTypeDef(dt: string): string =
   if dt in pgxEnums:
     currentPGXCustomType[idx] = ident("enum")
     result = "getOid"
-  elif dt == "nnkTupleConstr":
+  elif dt == "nnkTupleConstr" or dt in pgxTupleConstr:
     currentPGXCustomType[idx] = ident("tupleConstr")
     result = "getHeapTupleHeader"
 
@@ -26,7 +27,7 @@ proc checkNimTypeDef(dt: string): string =
   result = "unknown"
   if dt in pgxEnums: 
     result = "Oid"
-  if dt == "nnkTupleConstr":
+  if dt == "nnkTupleConstr" or dt in pgxTupleConstr:
     result = "HeapTupleHeader"
 
 template NimTypes(dt: string): string =
@@ -119,7 +120,11 @@ template map_tuplec_params(pvar, ptype, param) =
   treestmt.add(asgn1)
 
   var i = 0
-  for dtype in param[1]:
+  var formalParam: NimNode = param[1]
+  if param[1].repr in pgxTupleConstr:
+    formalParam = pgxTupleConstr[param[1].repr][2] 
+    
+  for dtype in formalParam:
     let 
       pgIdx = newLit((i + 1).int16)
       nimIdx = newLit(i)
@@ -393,12 +398,13 @@ proc explainWrapper(fn: NimNode): NimNode =
   clean_tuple_desc
 
   pgx_proc.body = rbody
-  echo pgx_proc.repr
+  #echo pgx_proc.repr
   
   result = pgx_proc
   fnIdx += 1
 
 proc registerPGXEnum(obj: NimNode) = pgxEnums[obj[0][0].repr] = obj
+proc registerPGXTupleConstr(obj: NimNode) = pgxTupleConstr[obj[0][0].repr] = obj
 
 macro pgx*(fn: untyped): untyped = 
   if fn.kind != nnkTypeDef:
@@ -407,6 +413,9 @@ macro pgx*(fn: untyped): untyped =
     case fn[2].kind:
     of nnkEnumTy:
       registerPGXEnum(fn)
+      return fn
+    of nnkTupleConstr:
+      registerPGXTupleConstr(fn)
       return fn
     else:
       discard
