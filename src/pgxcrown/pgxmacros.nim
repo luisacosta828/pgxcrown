@@ -5,6 +5,7 @@ const
   pgxVarDecl   = CacheTable"pgxvar"
   pgxEnums     = CacheTable"pgxenum"
   pgxTupleConstr     = CacheTable"pgxTupleConstr"
+  pgxObjectTy        = CacheTable"pgxObjectTy"
   currentPGXCustomType = CacheTable"pgxcustomtype"
   anonTuplConstr = CacheTable"anonTuplConstr"  
 
@@ -22,12 +23,16 @@ proc checkPgxTypeDef(dt: string): string =
   elif dt == "nnkTupleConstr" or dt in pgxTupleConstr:
     currentPGXCustomType[idx] = ident("tupleConstr")
     result = "getHeapTupleHeader"
+  elif dt in pgxObjectTy:
+    currentPGXCustomType[idx] = ident("object")
+    result = "getHeapTupleHeader"
+
 
 proc checkNimTypeDef(dt: string): string =
   result = "unknown"
   if dt in pgxEnums: 
     result = "Oid"
-  if dt == "nnkTupleConstr" or dt in pgxTupleConstr:
+  if dt == "nnkTupleConstr" or dt in pgxTupleConstr or dt in pgxObjectTy:
     result = "HeapTupleHeader"
 
 template NimTypes(dt: string): string =
@@ -104,6 +109,7 @@ template map_enums_params(pvar, ptype) =
   asgnSection.add(ident(pvar), parseEnumCall)
   pvar = pvar & "_oid"
 
+
 template map_tuplec_params(pvar, ptype, param) =
   var tupvar = ident("tupDesc" & $cacheIteration & "fn" & $fnIdx)
 
@@ -123,25 +129,47 @@ template map_tuplec_params(pvar, ptype, param) =
   var formalParam: NimNode = param[1]
   if param[1].repr in pgxTupleConstr:
     formalParam = pgxTupleConstr[param[1].repr][2] 
-    
-  for dtype in formalParam:
-    let 
-      pgIdx = newLit((i + 1).int16)
-      nimIdx = newLit(i)
+  elif param[1].repr in pgxObjectTy:
+    formalParam = pgxObjectTy[param[1].repr][2]
+  
+  if formalParam.kind == nnkTupleConstr:
+    for dtype in formalParam:
+      let 
+        pgIdx = newLit((i + 1).int16)
+        nimIdx = newLit(i)
       
-      call = nnkAsgn.newTree(
-        nnkBracketExpr.newTree(ident(pvar), nimIdx),
-        nnkCall.newTree(
-          nnkBracketExpr.newTree(ident("get_tuple_attr"), dtype),
-          ident(pvar & "th"),
-          tupvar,
+        call = nnkAsgn.newTree(
+          nnkBracketExpr.newTree(ident(pvar), nimIdx),
+          nnkCall.newTree(
+            nnkBracketExpr.newTree(ident("get_tuple_attr"), dtype),
+            ident(pvar & "th"),
+            tupvar,
           pgIdx))
   
-    treestmt.add(call)
-    i += 1
+      treestmt.add(call)
+      i += 1
 
-  pvar = pvar & "th"
-  asgnMultiple.add treestmt
+    pvar = pvar & "th"
+    asgnMultiple.add treestmt
+
+  elif formalParam.kind == nnkObjectTy:
+    for dtype in formalParam[2]:
+      let pgIdx = newLit((i+1).int16)
+      let call = nnkAsgn.newTree(
+        nnkDotExpr.newTree(
+          ident(pvar),
+          dtype[0]
+        ),
+        nnkCall.newTree(
+        nnkBracketExpr.newTree(ident("get_tuple_attr"), dtype[1]),
+        ident(pvar & "th"),
+        tupvar, pgIdx
+      ))
+      treestmt.add(call)
+      i += 1
+
+    pvar = pvar & "th"
+    asgnMultiple.add treestmt
 
 template get_param_type(parameter): string =
   var validType = parameter[1].kind == nnkIdent
@@ -152,6 +180,7 @@ template get_param_type(parameter): string =
 
 template enum_visited(idx): bool = idx in currentPGXCustomType and currentPGXCustomType[idx].repr == "enum"
 template tuplec_visited(idx): bool = idx in currentPGXCustomType and currentPGXCustomType[idx].repr == "tupleConstr"
+template object_visited(idx): bool = idx in currentPGXCustomType and currentPGXCustomType[idx].repr == "object"
 
 template move_nim_params_as_locals =
   var param: seq[string]
@@ -173,12 +202,13 @@ template move_nim_params_as_locals =
     var idx = $cacheIteration & "type"
     var enumVisited = enum_visited(idx)
     var tupleConstrVisited = tuplec_visited(idx)
+    var objectVisited = object_visited(idx)
 
     if enumVisited:
       map_enums_params(pvar, ptype)
-    elif tupleConstrVisited:
+    elif tupleConstrVisited or objectVisited:
       map_tuplec_params(pvar, ptype, fn.params[i])
-
+      
     varSection.add(newIdentDefs(ident(pvar), ident(NimTypes(ptype)), getValue))
     cacheIteration += 1
 
@@ -280,6 +310,8 @@ proc analyze_node(code: NimNode): NimNode =
   of nnkPrefix:
     result = code
   of nnkBracketExpr:
+    result = code
+  of nnkDotExpr:
     result = code
   else:
     raise newException(Exception, "Unsupported instruction: " & $code.treerepr)
@@ -398,13 +430,14 @@ proc explainWrapper(fn: NimNode): NimNode =
   clean_tuple_desc
 
   pgx_proc.body = rbody
-  #echo pgx_proc.repr
+  echo pgx_proc.repr
   
   result = pgx_proc
   fnIdx += 1
 
 proc registerPGXEnum(obj: NimNode) = pgxEnums[obj[0][0].repr] = obj
 proc registerPGXTupleConstr(obj: NimNode) = pgxTupleConstr[obj[0][0].repr] = obj
+proc registerPGXObjectTy(obj: NimNode) = pgxObjectTy[obj[0][0].repr] = obj
 
 macro pgx*(fn: untyped): untyped = 
   if fn.kind != nnkTypeDef:
@@ -417,6 +450,9 @@ macro pgx*(fn: untyped): untyped =
     of nnkTupleConstr:
       registerPGXTupleConstr(fn)
       return fn
+    of nnkObjectTy:
+      registerPGXObjectTy(fn)
+      return fn 
     else:
       discard
   

@@ -119,6 +119,11 @@ macro decorateMainFunctions*() =
           pragmaexpr.add(e[0])
           pragmaexpr.add(pgx_pragma)
           e[0] = pragmaexpr
+        of "object":
+          recordType.add e[0].repr
+          pragmaexpr.add(e[0])
+          pragmaexpr.add(pgx_pragma)
+          e[0] = pragmaexpr
         else:
           discard
 
