@@ -313,6 +313,8 @@ proc analyze_node(code: NimNode): NimNode =
     result = code
   of nnkDotExpr:
     result = code
+  of nnkEmpty:
+    result = code
   else:
     raise newException(Exception, "Unsupported instruction: " & $code.treerepr)
 

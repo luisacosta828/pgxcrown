@@ -18,9 +18,14 @@ proc project(path: string): string {.inline.} =
   path.splitPath.head.splitPath.head.splitPath.tail
 
 proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
+  
   var
-    returnType = " returns " & NimToSQLType fn.params[0].repr
+    returnType = 
+      if fn.params[0].kind == nnkEmpty: ""
+      else: " returns " & NimToSQLType fn.params[0].repr
     paramLen = fn.params.len - 1
+    procTy = if returnType == "": "PROCEDURE " else: "FUNCTION "
+    strict = if returnType == "": "language c;\n" else: "language c strict;\n"
   
   var param_list: seq[string]
   for e in fn.params[1 .. paramLen]:
@@ -29,9 +34,9 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
     elif e[1].kind == nnkTupleConstr or e[1].repr in recordType:
       param_list.add "record"
 
-  sql_scripts.add "\nCREATE FUNCTION " & fn.name.repr & '(' & param_list.join(",") & ')' & returnType & " as\n"
+  sql_scripts.add "\nCREATE " & procTy & fn.name.repr & '(' & param_list.join(",") & ')' & returnType & " as\n"
   sql_scripts.add "'" & project(entrypoint) & "', 'pgx_" & fn.name.repr & "'\n"
-  sql_scripts.add "language c strict;\n"
+  sql_scripts.add strict
 
 
 proc buildEnumType(element: NimNode, sql_scripts: var string) =
