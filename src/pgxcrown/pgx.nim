@@ -34,7 +34,7 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
     elif e[1].kind == nnkTupleConstr or e[1].repr in recordType:
       param_list.add "record"
 
-  sql_scripts.add "\nCREATE " & procTy & fn.name.repr & '(' & param_list.join(",") & ')' & returnType & " as\n"
+  sql_scripts.add "\nCREATE OR REPLACE " & procTy & fn.name.repr & '(' & param_list.join(",") & ')' & returnType & " as\n"
   sql_scripts.add "'" & project(entrypoint) & "', 'pgx_" & fn.name.repr & "'\n"
   sql_scripts.add strict
 
