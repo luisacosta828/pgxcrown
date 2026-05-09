@@ -179,7 +179,7 @@ converter DatumToBool*(x: Datum): cchar | bool = DatumGetBool(x)
 converter DatumToFloat4*(x: Datum): cfloat | float32 | float = DatumGetFloat4(x)
 converter DatumToPointer*(x: Datum): Pointer = DatumGetPointer(x)
 converter DatumToCString*(x: Datum): cstring = DatumGetCString(x)
-converter DatumToNimString*(x: Datum):string = $DatumGetCString(x)
+converter DatumToNimString*(x: Datum):string = $TextDatumGetCString(x)
 converter DatumToName*(x: Datum): Name = DatumGetName(x)
 
 converter ObjectIdToDatum*(value: Oid): Datum = ObjectIdGetDatum(value)
