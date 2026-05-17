@@ -101,6 +101,10 @@ template map_enums_params(pvar, ptype) =
     ncallident: NimNode
 
   ncall = newCall(ident("DirectFunctionCall1"), [ident("enum_out"), newCall(ident("ObjectIdGetDatum"), [ident(pvar&"_oid")])])
+
+  ncall = newCall(ident("DatumToCString"), [ncall])
+  ncall = newCall(ident("$"),[ncall])
+
   var 
     genericPart = nnkBracketExpr.newTree(ident("parseEnum"),ident(ptype))
     parseEnumCall = nnkCall.newTree(genericPart, ncall, ident("PgxUnknownValue"))
