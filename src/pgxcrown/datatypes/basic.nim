@@ -80,11 +80,12 @@ proc CStringGetTextDatum*(x: cstring): Datum {.importc.}
 proc datumGetSize*(x: Datum, typByVal: bool, typLen: int): uint {.importc.} 
 {.pop.}
 
+{.push header: "utils/lsyscache.h"}
+proc getTypeOutputInfo*(t: Oid, tout: ptr Oid, isvarlena: ptr bool) {.importc.}
+{.pop.}
+
 
 # Basic Data Types definitions from fmgr.h
-type
-  PGType* = proc(): Datum {.cdecl, noSideEffect, gcsafe.}
-
 {.push header: "fmgr.h".}
 
 type
@@ -99,11 +100,14 @@ type
   #Standard parameter list for fmgr-compatible functions
   FunctionCallInfo* = ptr FunctionCallInfoBaseData
 
+  PGType* = proc(finfo: FunctionCallInfo): Datum {.cdecl, noSideEffect, gcsafe.}
 
 template getFnOid*(fcinfo: FunctionCallInfo): Oid = 
   fcinfo[].flinfo[].fn_oid
 
 # Get argument type value declaration
+
+proc getDatumType*(value: cuint): Oid {.importc: "PG_GET_ARG_TYPE".}
 
 proc getDatum*(value: cuint): Datum {.importc: "PG_GETARG_DATUM".}
 
@@ -163,7 +167,15 @@ proc DirectFunctionCall7*(fn: PGType, arg1: Datum, arg2: Datum, arg3: Datum, arg
 proc DirectFunctionCall8*(fn: PGType, arg1: Datum, arg2: Datum, arg3: Datum, arg4: Datum, arg5: Datum, arg6: Datum, arg7: Datum, arg8: Datum): Datum {.importc.}
 proc DirectFunctionCall9*(fn: PGType, arg1: Datum, arg2: Datum, arg3: Datum, arg4: Datum, arg5: Datum, arg6: Datum, arg7: Datum, arg8: Datum, arg9: Datum): Datum {.importc.}
 
-proc enum_out*(): Datum {.importc: "enum_out", noconv, cdecl, noSideEffect, gcsafe.}
+proc OidOutputFunctionCall*(functionId: Oid, value: Datum): cstring {. importc, noconv, cdecl, noSideEffect, gcsafe .}
+{.pop.}
+
+{.push header: "utils/fmgrprotos.h".}
+proc enum_out*(fcinfo: FunctionCallInfo): Datum {.importc: "enum_out", noconv, cdecl, noSideEffect, gcsafe.}
+{.pop.}
+
+{.push header: "common/fe_memutils.h".}
+proc pfree*(data: pointer) {.importc, noconv, cdecl, noSideEffect, gcsafe.}
 {.pop.}
 
 converter DatumToObjectId*(x: Datum): Oid = DatumGetObjectId(x) 
