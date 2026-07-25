@@ -1,4 +1,4 @@
-type ErrorCodes* = enum
+type ErrorCodes = enum
   LOG_CLIENT_ONLY = 15,
   LOG_SERVER_ONLY = 16,
   INFO = 17,
