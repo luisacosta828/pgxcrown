@@ -287,7 +287,11 @@ proc analyze_node(code: NimNode): NimNode =
     else:    
       result = check_call_section(code)
   of nnkCommand:
-    result = code
+    if code[0].repr == "echo":
+      result = newCall(ident("report"), [ident("notice"), code[1]]) 
+    else:
+      result = code
+    
   of nnkBlockStmt:
     result.add code[0]
     result.add check_block_section(code[1])
