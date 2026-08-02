@@ -205,10 +205,20 @@ proc check_command(pc: int) =
         compile2hook(entry_point)
       else:
         compile2pgx(entry_point)
+        echo "Build completed for extension: ", req
+        echo "To install into Postgres:"
+        echo "  cp ", req, ".so $(pg_config --pkglibdir)"
+        echo "  cp ", req, ".control $(pg_config --sharedir)/extension/"
+        echo "  cp ", req, "--0.0.1.sql $(pg_config --sharedir)/extension/"
+        echo "Then enable it in PostgreSQL:"
+        echo "  psql -c \"CREATE EXTENSION ", req, ";\""
+
   of "path-finders":
     echo "pg_config  = ", pgconfigFinder()
     echo "includedir = ", pgIncludeFinder()
     echo "libdir     = ", pgLibFinder()
+    echo "sharedir   = ", pgShareDirFinder()
+    echo "extension  = ", pgExtensionDirFinder()
   of "available-hooks":
     echo """
     * emit_log

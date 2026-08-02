@@ -55,3 +55,16 @@ proc pgIncludeFinder*(): string =
             break
           if semver == 25:
             echo "WARNING: Can not find Postgres includedir"
+
+
+proc pgShareDirFinder*(): string =
+  let (output, exitCode) = execCmdEx(pgconfigFinder() & " --sharedir")
+  if exitCode == 0:
+    result = output.strip
+
+
+proc pgExtensionDirFinder*(): string =
+  let sharedir = pgShareDirFinder()
+  if sharedir.len > 0:
+    result = sharedir / "extension"
+

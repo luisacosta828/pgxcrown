@@ -133,7 +133,11 @@ macro decorateMainFunctions*() =
           discard
 
 
-  writeFile(dir / project(entrypoint) & ".sql", sql_scripts)
+  let prjName = project(entrypoint)
+  let controlContent = "# " & prjName & " extension\ncomment = '" & prjName & " extension for PostgreSQL'\ndefault_version = '0.0.1'\nmodule_pathname = '$libdir/" & prjName & "'\nrelocatable = true\n"
+  writeFile(dir / prjName & ".control", controlContent)
+  writeFile(dir / prjName & ".sql", sql_scripts)
+  writeFile(dir / prjName & "--0.0.1.sql", sql_scripts)
 
   for el in v1fns:
     source.add quote do:
