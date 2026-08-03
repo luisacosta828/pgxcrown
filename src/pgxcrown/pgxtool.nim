@@ -50,7 +50,11 @@ Commands:
   build-extension: Compile a dynamic library that can be loaded into Postgres (.so in Linux, .dll in Windows)
      * pgxtool build-extension test
 
+  install: Automatically copy built extension files (.so, .control, .sql) to PostgreSQL directories
+     * pgxtool install test
+
   create-hook: Initialize a new project template for creating Postgres hooks
+
      * pgxtool create-hook emit_log
 
   available-hooks: List Postgres hooks supported for pgxcrown
@@ -136,6 +140,66 @@ proc compile2hook(input_file: string) =
   run emit_pgx_c_extension(input_file)
 
 
+proc generate_install_script*(req: string): string =
+  var prj_dir = pgxtool_init_dir / req / "src"
+  var pkglibdir = pgLibFinder()
+  var extdir = pgExtensionDirFinder()
+  var script_path = prj_dir / "install.sh"
+
+  var script_content = "#!/bin/bash\nset -e\n\n"
+  script_content.add "# Auto-generated install script by pgxtool for extension '" & req & "'\n"
+  script_content.add "PKGLIBDIR=\"" & pkglibdir & "\"\n"
+  script_content.add "EXTDIR=\"" & extdir & "\"\n"
+  script_content.add "PRJ_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n\n"
+  script_content.add "echo \"Installing extension '" & req & "' into PostgreSQL...\"\n"
+  script_content.add "cd \"$PRJ_DIR\"\n\n"
+  script_content.add "echo \"  Copying library to $PKGLIBDIR...\"\n"
+  script_content.add "if [ -f \"" & req & ".so\" ]; then\n"
+  script_content.add "  cp -f \"" & req & ".so\" \"$PKGLIBDIR/\"\n"
+  script_content.add "elif [ -f \"lib" & req & ".so\" ]; then\n"
+  script_content.add "  cp -f \"lib" & req & ".so\" \"$PKGLIBDIR/" & req & ".so\"\n"
+  script_content.add "elif [ -f \"" & req & "\" ]; then\n"
+  script_content.add "  cp -f \"" & req & "\" \"$PKGLIBDIR/" & req & ".so\"\n"
+  script_content.add "fi\n\n"
+  script_content.add "echo \"  Copying control and SQL files to $EXTDIR...\"\n"
+  script_content.add "if [ -f \"" & req & ".control\" ]; then\n"
+  script_content.add "  cp -f \"" & req & ".control\" \"$EXTDIR/\"\n"
+  script_content.add "fi\n"
+  script_content.add "if [ -f \"" & req & "--0.0.1.sql\" ]; then\n"
+  script_content.add "  cp -f \"" & req & "--0.0.1.sql\" \"$EXTDIR/\"\n"
+  script_content.add "fi\n"
+  script_content.add "if [ -f \"" & req & ".sql\" ]; then\n"
+  script_content.add "  cp -f \"" & req & ".sql\" \"$EXTDIR/\"\n"
+  script_content.add "fi\n\n"
+  script_content.add "echo \"Extension '" & req & "' installed successfully!\"\n"
+  script_content.add "echo \"To enable it in PostgreSQL, run:\"\n"
+  script_content.add "echo \"  psql -c \\\"CREATE EXTENSION " & req & ";\\\"\"\n"
+
+  writeFile(script_path, script_content)
+  when not defined(windows):
+    discard execShellCmd("chmod +x " & quoteShell(script_path))
+  result = script_path
+
+
+proc install_extension(req: string) =
+  var prj_dir = pgxtool_init_dir / req / "src"
+  var entry_point = prj_dir / "main.nim"
+  if not fileExists(prj_dir / (req & ".control")):
+    echo "Extension files for '", req, "' not found in ", prj_dir
+    echo "Building extension first..."
+    if fileExists(entry_point):
+      compile2pgx(entry_point)
+    else:
+      quit("Error: Main file not found at " & entry_point)
+
+  var script_path = generate_install_script(req)
+  echo "Generated install script: ", script_path
+  echo "To install into PostgreSQL with privileges, run:"
+  echo "  sudo ", script_path
+
+
+
+
 template build_project_template(req: string, kind: string = "") =
   if dirExists( pgxtool_init_dir / req):
     echo "Path in use, directory already exists, choose another name."
@@ -205,13 +269,17 @@ proc check_command(pc: int) =
         compile2hook(entry_point)
       else:
         compile2pgx(entry_point)
+        var script_path = generate_install_script(req)
         echo "Build completed for extension: ", req
-        echo "To install into Postgres:"
-        echo "  cp ", req, ".so $(pg_config --pkglibdir)"
-        echo "  cp ", req, ".control $(pg_config --sharedir)/extension/"
-        echo "  cp ", req, "--0.0.1.sql $(pg_config --sharedir)/extension/"
-        echo "Then enable it in PostgreSQL:"
-        echo "  psql -c \"CREATE EXTENSION ", req, ";\""
+        echo "Install script generated at: ", script_path
+        echo "To install into PostgreSQL, run:"
+        echo "  sudo ", script_path
+
+  of "install":
+    validate_second_arg(pc)
+    req = paramStr(2)
+    install_extension(req)
+
 
   of "path-finders":
     echo "pg_config  = ", pgconfigFinder()
