@@ -22,7 +22,7 @@ proc pgconfigFinder*(): string =
 
 
 proc pgLibFinder*(): string =
-  let (output, exitCode) = execCmdEx(pgconfigFinder() & " --libdir")
+  let (output, exitCode) = execCmdEx(pgconfigFinder() & " --pkglibdir")
   if exitCode == 0:
     result = output.strip
   when defined(windows):
