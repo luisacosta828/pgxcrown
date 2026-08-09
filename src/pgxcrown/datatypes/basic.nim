@@ -103,7 +103,10 @@ type
   PGType* = proc(finfo: FunctionCallInfo): Datum {.cdecl, noSideEffect, gcsafe.}
 
 template getFnOid*(fcinfo: FunctionCallInfo): Oid = 
-  fcinfo[].flinfo[].fn_oid
+  if fcinfo == nil or fcinfo[].flinfo == nil:
+    0.Oid
+  else:
+    fcinfo[].flinfo[].fn_oid
 
 # Get argument type value declaration
 
@@ -178,6 +181,10 @@ proc enum_out*(fcinfo: FunctionCallInfo): Datum {.importc: "enum_out", noconv, c
 proc pfree*(data: pointer) {.importc, noconv, cdecl, noSideEffect, gcsafe.}
 {.pop.}
 
+template safePfree*(data: pointer) =
+  if data != nil:
+    pfree(data)
+
 converter DatumToObjectId*(x: Datum): Oid = DatumGetObjectId(x) 
 converter DatumToInt64*(x: Datum): int64 =  DatumGetInt64(x)
 converter DatumToInt32*(x: Datum): int =  DatumGetInt32(x)
@@ -191,7 +198,9 @@ converter DatumToBool*(x: Datum): cchar | bool = DatumGetBool(x)
 converter DatumToFloat4*(x: Datum): cfloat | float32 | float = DatumGetFloat4(x)
 converter DatumToPointer*(x: Datum): Pointer = DatumGetPointer(x)
 converter DatumToCString*(x: Datum): cstring = DatumGetCString(x)
-converter DatumToNimString*(x: Datum):string = $TextDatumGetCString(x)
+converter DatumToNimString*(x: Datum): string =
+  let cs = TextDatumGetCString(x)
+  if cs == nil: "" else: $cs
 converter DatumToName*(x: Datum): Name = DatumGetName(x)
 
 converter ObjectIdToDatum*(value: Oid): Datum = ObjectIdGetDatum(value)
@@ -208,5 +217,6 @@ converter Float4GetDatum*(value: cfloat | float32 | float): Datum = Float4GetDat
 converter PointerToDatum*(value: Pointer): Datum = PointerGetDatum(value)
 converter CStringToDatum*(value: cstring): Datum = CStringGetDatum(value)
 converter NameToDatum*(value: Name): Datum = NameGetDatum(value)
-converter CstringToNimString*(value: cstring): string = $value
-converter StringToDatum*(value: string):Datum = CStringGetTextDatum(cstring(value))
+converter CstringToNimString*(value: cstring): string =
+  if value == nil: "" else: $value
+converter StringToDatum*(value: string): Datum = CStringGetTextDatum(cstring(value))
