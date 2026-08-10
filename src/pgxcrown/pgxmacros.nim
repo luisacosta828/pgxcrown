@@ -318,14 +318,11 @@ proc analyze_node(code: NimNode): NimNode =
     result = check_for_section(code)
   of nnkProcDef, nnkFuncDef:
     result = check_proc_def(code)
-  of nnkPrefix:
+  of nnkPrefix, nnkBracketExpr, nnkDotExpr, nnkEmpty, nnkTypeSection:
     result = code
-  of nnkBracketExpr:
-    result = code
-  of nnkDotExpr:
-    result = code
-  of nnkEmpty:
-    result = code
+  of nnkTryStmt, nnkExceptBranch, nnkConstSection, nnkLetSection, nnkConstDef, nnkIdentDefs, nnkCast:
+    for child in code:
+      result.add analyze_node(child)
   else:
     raise newException(Exception, "Unsupported instruction: " & $code.treerepr)
 
@@ -442,7 +439,48 @@ proc explainWrapper(fn: NimNode): NimNode =
   # calling destructor when there's no return value
   clean_tuple_desc
 
-  pgx_proc.body = rbody
+  if not hasReturn(rbody) and fn.params[0].kind != nnkEmpty and rbody.len > 0:
+    rbody[^1] = newTree(nnkReturnStmt, rbody[^1])
+
+  var shieldedBody = newTree(nnkTryStmt,
+    rbody,
+    newTree(nnkExceptBranch,
+      newTree(nnkInfix, ident("as"), ident("Defect"), ident("e")),
+      newTree(nnkStmtList,
+        newCall(ident("reportError"), 
+          newTree(nnkInfix, ident("&"), 
+            newTree(nnkInfix, ident("&"), 
+              newTree(nnkInfix, ident("&"), 
+                newLit("Extension Defect ["), 
+                newTree(nnkPrefix, ident("$"), newTree(nnkDotExpr, ident("e"), ident("name")))
+              ),
+              newLit("]: ")
+            ),
+            newTree(nnkDotExpr, ident("e"), ident("msg"))
+          )
+        )
+      )
+    ),
+    newTree(nnkExceptBranch,
+      newTree(nnkInfix, ident("as"), ident("CatchableError"), ident("e")),
+      newTree(nnkStmtList,
+        newCall(ident("reportError"), 
+          newTree(nnkInfix, ident("&"), 
+            newTree(nnkInfix, ident("&"), 
+              newTree(nnkInfix, ident("&"), 
+                newLit("Extension Error ["), 
+                newTree(nnkPrefix, ident("$"), newTree(nnkDotExpr, ident("e"), ident("name")))
+              ),
+              newLit("]: ")
+            ),
+            newTree(nnkDotExpr, ident("e"), ident("msg"))
+          )
+        )
+      )
+    )
+  )
+
+  pgx_proc.body = shieldedBody
   echo pgx_proc.repr
   
   result = pgx_proc

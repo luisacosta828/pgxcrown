@@ -10,9 +10,10 @@ template report*(log_strategy, msg: typed) =
     ].}
 
 template reportError*(msg: string) =
+  let cs = cstring(msg)
   {. emit: [
       """ereport(ERROR, (errmsg("%s", """,
-      msg,
+      cs,
       """)));"""
     ].}
 
