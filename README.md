@@ -12,9 +12,10 @@ Build Native, High-Performance Postgres Extensions in Nim.
 
 | Feature Area | Supported Capabilities | Details |
 | :--- | :--- | :--- |
+| **Automatic Panic Shield (v0.12.0)** | `try...except Defect/CatchableError` | Zero-overhead, compile-time exception wrapping. Intercepts panics (`OverflowDefect`, `IndexDefect`, etc.) and converts them to PostgreSQL `ereport(ERROR)` aborts without backend server crashes (`0 SIGABRTs`). |
 | **Extension Packaging** | `.control`, `--0.0.1.sql`, `install.sh` | Generates standard PostgreSQL extension control files and privileged installation scripts. |
 | **Extension Enablement** | `CREATE EXTENSION <name>` | Load extensions directly using PostgreSQL's standard extension mechanism. |
-| **Compile-Time Safety** | `{.trusted.}` pragma, Effect Tracking | Enforces IO-effect safety and controlled exception handling at compile time. |
+| **Compile-Time Safety** | Static Effect Analysis | Enforces strict compile-time safety, preventing unhandled I/O operations and unhandled exceptions. |
 | **Primitive Datatypes** | `int`, `int32`, `int64`, `float`, `string`, `cstring`, `bool` | Automatic bidirectional conversion between Nim native types and Postgres `Datum`. |
 | **Enum Types** | Consuming Postgres `ENUM` in Nim | Auto-generates `CREATE TYPE ... AS ENUM` and converts Postgres OIDs to Nim enums. |
 | **Composite Records** | Consuming Postgres `record` / `tuple` | Inspect and read PostgreSQL `HeapTupleHeader` attributes via Nim `tuple` and `object` types. |
@@ -23,21 +24,33 @@ Build Native, High-Performance Postgres Extensions in Nim.
 
 ---
 
-## 🛡️ Compile-Time Safety & the `trusted` Pragma
+## 🛡️ Automatic Panic Shield & Safety Guarantees
 
-Pgxcrown leverages Nim's static effect tracking system to guarantee extension safety at compile-time via the `trusted` pragma:
+Pgxcrown leverages Nim's static effect analysis and macro AST rewriting to guarantee extension safety at runtime and compile-time:
 
-```nim
-{.pragma: trusted, raises: [ValueError], forbids: [IOEffect], tags: [].}
+### 1. 🛡️ Automatic Panic Shield (`v0.12.0`)
+All functions exported via Pgxcrown's `proc myproc*(...)` are automatically wrapped inside a compile-time panic shield. Unhandled runtime defects (such as arithmetic overflow, array out-of-bounds, nil pointer access, or invalid parsing) are intercepted at runtime and safely converted into PostgreSQL `ereport(ERROR, ...)` transaction aborts.
+
+```sql
+-- Integer Overflow (2,147,483,647 + 1) -> Intercepted cleanly by Panic Shield
+SELECT proof_integer_overflow(2147483647, 1);
+-- Result: ERROR: Extension Defect [OverflowDefect]: over- or underflow
+
+-- Index Out-of-Bounds -> Intercepted cleanly by Panic Shield
+SELECT proof_index_out_of_bounds(5);
+-- Result: ERROR: Extension Defect [IndexDefect]: index 5 not in 0 .. 2
 ```
 
-### Key Safety Guarantees:
-1. **🚫 `forbids: [IOEffect]` (No Unchecked I/O Effects)**:
-   Nim statically analyzes functions compiled by Pgxcrown. Any function marked or wrapped by Pgxcrown **cannot perform unhandled I/O operations** (such as raw file access, socket connections, or unhandled disk operations). Attempts to invoke unhandled I/O trigger a **static compiler error** before the extension binary is ever built.
-2. **🏷️ `tags: []` (Pure / Effect-Free Execution)**:
-   Ensures extension code executes without untracked side-effects on PostgreSQL backend memory or process state.
-3. **⚠️ `raises: [ValueError]` (Controlled Exception Boundary)**:
-   Prevents unhandled Nim exceptions from escaping across the C/Nim FFI boundary, preventing backend server crashes or unexpected process aborts.
+> 📖 **Test Suite**: See [`tests/panic_shield/README.md`](tests/panic_shield/README.md) for full verification details and SQL test suite.
+
+### 2. 🚫 Strict I/O & Effect Prevention
+To guarantee that user-written extensions cannot compromise PostgreSQL process stability, Pgxcrown statically analyzes compiled functions. The compiler enforces that extension functions **cannot execute unchecked or unhandled I/O operations**:
+
+- 🚫 **Unhandled File System Access**: Prevents arbitrary disk reads/writes that could corrupt database files.
+- 🚫 **Unchecked Network Sockets**: Blocks unhandled TCP/UDP socket creation or HTTP requests inside engine loops.
+- 🚫 **Raw Process Spawning & Signals**: Forbids invoking external OS processes or sending uncontrolled system signals.
+- 🚫 **Untracked State Side-Effects**: Ensures code executes without untracked memory side-effects on PostgreSQL worker processes.
+- 🚫 **Escaping Exception Boundaries**: Eliminates uncaught C/Nim FFI panics, preventing backend worker crashes (`0 SIGABRTs`).
 
 ---
 

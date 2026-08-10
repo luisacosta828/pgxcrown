@@ -3,34 +3,37 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pgxcrown 👑 — High-Performance Native PostgreSQL Extension Framework for Nim</title>
-  <meta name="description" content="Build ultra-fast, lightweight, and compile-time safe PostgreSQL dynamic C extensions in Nim. Tiny ~500KB binaries, auto-generated SQL bindings, zero VM overhead, and deep kernel hooks.">
+  <title>Pgxcrown 👑 v0.12.0 — Native PostgreSQL Extension Framework for Nim</title>
+  <meta name="description" content="Build ultra-fast, lightweight, crash-proof PostgreSQL C extensions in Nim. Features v0.12.0 Automatic Panic Shield, zero VM overhead, sub-second codegen, and deep kernel engine hooks.">
   
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👑</text></svg>">
   <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/animejs@3.2.1/lib/anime.min.js"></script>
 </head>
 <body>
 
-  <!-- Sticky Header Nav -->
+  <!-- Sticky Glass Navbar -->
   <nav class="navbar">
-    <div class="container">
+    <div class="container nav-container">
       <a href="#" class="nav-brand">
-        <span>👑</span>
+        <span class="crown-icon">👑</span>
         <span class="gradient-text">Pgxcrown</span>
+        <span class="version-badge">v0.12.0</span>
       </a>
 
-      <ul class="nav-links">
-        <li><a href="#features">What It Can Do</a></li>
-        <li><a href="#workflow">How It Works</a></li>
+      <ul class="nav-links" id="navLinks">
+        <li><a href="#features">Capabilities</a></li>
+        <li><a href="#panic-shield">Panic Shield</a></li>
+        <li><a href="#types">Data Types</a></li>
+        <li><a href="#hooks">Engine Hooks</a></li>
         <li><a href="#cli">CLI Tooling</a></li>
-        <li><a href="#matrix">Capabilities</a></li>
         <li><a href="#quickstart">Quickstart</a></li>
       </ul>
 
-      <div>
-        <a href="https://github.com/luisacosta828/pgxcrown" target="_blank" rel="noopener" class="btn btn-primary">
+      <div class="nav-actions">
+        <a href="https://github.com/luisacosta828/pgxcrown" target="_blank" rel="noopener" class="btn btn-glass">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-          GitHub Repository
+          <span>GitHub</span>
         </a>
       </div>
     </div>
@@ -39,47 +42,47 @@
   <!-- Hero Section -->
   <section class="hero">
     <div class="container hero-grid">
-      <div>
+      <div class="hero-content">
         <div class="badge">
           <span class="badge-dot"></span>
-          High-Performance PostgreSQL Extension Framework
+          PostgreSQL Native Extension Framework for Nim
         </div>
 
         <h1 class="hero-title">
-          Build <span class="gradient-text">Native PostgreSQL</span> Extensions in Nim
+          Build <span class="gradient-text">Crash-Proof Native</span> PostgreSQL Extensions in Nim
         </h1>
 
         <p class="hero-desc">
-          Write ultra-fast PostgreSQL C shared libraries with <strong>zero VM overhead</strong>, sub-second compilation times, <strong>auto-generated SQL bindings</strong>, deep kernel hooks, and static compile-time IO safety.
+          Write lightning-fast PostgreSQL C dynamic libraries with <strong>zero VM overhead</strong>, sub-second compilation times, <strong>auto-generated SQL bindings</strong>, deep kernel hooks, and <strong>v0.12.0 Automatic Panic Shielding</strong>.
         </p>
 
         <div class="hero-cta">
           <a href="#quickstart" class="btn btn-primary">
             <span>⚡ Start Building (`nimble install pgxcrown`)</span>
           </a>
-          <a href="#features" class="btn btn-secondary">
+          <a href="#features" class="btn btn-glass">
             <span>🔍 Explore Features</span>
           </a>
         </div>
 
         <div class="hero-stats">
-          <div class="stat-item">
-            <span class="stat-num">~500 KB</span>
+          <div class="stat-card glass-card">
+            <span class="stat-num gradient-amber">~500 KB</span>
             <span class="stat-label">Tiny C Binary Size</span>
           </div>
-          <div class="stat-item">
-            <span class="stat-num">&lt; 1 sec</span>
-            <span class="stat-label">Fast C Codegen</span>
+          <div class="stat-card glass-card">
+            <span class="stat-num gradient-cyan">&lt; 1 sec</span>
+            <span class="stat-label">Fast Codegen</span>
           </div>
-          <div class="stat-item">
-            <span class="stat-num">0 VM</span>
-            <span class="stat-label">Direct C Execution</span>
+          <div class="stat-card glass-card">
+            <span class="stat-num gradient-green">0 Crash</span>
+            <span class="stat-label">Panic Shield Protection</span>
           </div>
         </div>
       </div>
 
       <!-- Interactive Code Snippet Card -->
-      <div class="code-card">
+      <div class="code-card glass-card">
         <div class="code-card-header">
           <div class="window-dots">
             <span class="dot dot-red"></span>
@@ -87,114 +90,152 @@
             <span class="dot dot-green"></span>
           </div>
           <div class="code-tabs">
-            <button class="tab-btn active" data-tab="nim">src/main.nim</button>
-            <button class="tab-btn" data-tab="sql">my_extension.sql</button>
-            <button class="tab-btn" data-tab="hook">emit_log_hook.nim</button>
+            <button class="tab-btn active" data-tab="nim">main.nim</button>
+            <button class="tab-btn" data-tab="shield">Panic Shield</button>
+            <button class="tab-btn" data-tab="enums">Enums & Tuples</button>
+            <button class="tab-btn" data-tab="hooks">Kernel Hooks</button>
           </div>
         </div>
 
-        <pre class="code-body"><code id="codeDisplay"><span class="syn-cmt"># 1. Write your Nim extension procedure</span>
-<span class="syn-kw">import</span> pgxcrown
-
-<span class="syn-kw">proc</span> <span class="syn-fn">add_numbers</span>*(a: <span class="syn-type">int32</span>, b: <span class="syn-type">int32</span>): <span class="syn-type">int32</span> =
-  <span class="syn-kw">return</span> a + b
-
-<span class="syn-cmt"># 2. Automatically compiled into native C & bound at build time!</span>
-<span class="syn-sql">CREATE OR REPLACE FUNCTION add_numbers(int4, int4) RETURNS int4 as</span>
-<span class="syn-sql">'$libdir/my_extension', 'pgx_add_numbers'</span>
-<span class="syn-sql">LANGUAGE c STRICT;</span></code></pre>
+        <pre class="code-body"><code id="codeDisplay"></code></pre>
       </div>
     </div>
   </section>
 
-  <!-- Features Grid Section: What Pgxcrown Can Do Right Now -->
+  <!-- Feature Showcase Grid -->
   <section id="features" class="features-section">
     <div class="container">
       <div class="section-header">
-        <span class="badge">Production Capabilities</span>
-        <h2 class="section-title">What <span class="gradient-text">Pgxcrown</span> Can Do Right Now</h2>
-        <p class="section-desc">Every feature built directly into the framework to supercharge your PostgreSQL extension development.</p>
+        <span class="badge">Comprehensive Capabilities</span>
+        <h2 class="section-title">Every Feature of <span class="gradient-text">Pgxcrown</span></h2>
+        <p class="section-desc">Designed from the ground up to bring modern language ergonomics and enterprise security to PostgreSQL C extensions.</p>
       </div>
 
       <div class="features-grid">
-        <div class="feature-card">
-          <div class="feature-icon">⚡</div>
-          <h3 class="feature-title">Native C Codegen (Zero VM)</h3>
-          <p class="feature-text">Compiles directly to native C dynamic shared libraries (<code>.so</code> on Linux, <code>.dll</code> on Windows). Zero virtual machine or interpreter overhead for maximum raw CPU speed.</p>
+        <!-- Feature 1: Panic Shield -->
+        <div class="feature-card glass-card">
+          <div class="feature-icon icon-shield">🛡️</div>
+          <span class="feature-tag tag-new">v0.12.0 Spotlight</span>
+          <h3 class="feature-title">Automatic Panic Shield</h3>
+          <p class="feature-text">Intercepts integer overflows, array out-of-bounds, nil dereferences, and defects at compile time, converting panics to safe <code>ereport(ERROR)</code> transaction aborts.</p>
         </div>
 
-        <div class="feature-card">
-          <div class="feature-icon">🪄</div>
-          <h3 class="feature-title">Auto-Generated SQL & Control Bindings</h3>
+        <!-- Feature 2: Native C Codegen -->
+        <div class="feature-card glass-card">
+          <div class="feature-icon icon-zap">⚡</div>
+          <h3 class="feature-title">Zero-VM Native C Codegen</h3>
+          <p class="feature-text">Compiles directly into dynamic C shared libraries (<code>.so</code> / <code>.dll</code>). Zero virtual machine or interpreter overhead for maximum raw CPU execution performance.</p>
+        </div>
+
+        <!-- Feature 3: Tiny Binaries -->
+        <div class="feature-card glass-card">
+          <div class="feature-icon icon-feather">🪶</div>
+          <h3 class="feature-title">~500KB Shared Libraries</h3>
+          <p class="feature-text">Produces ultra-compact binary footprints (~500 KB - 2 MB), avoiding language runtime bloat and accelerating cloud container image distribution.</p>
+        </div>
+
+        <!-- Feature 4: Auto-Generated SQL -->
+        <div class="feature-card glass-card">
+          <div class="feature-icon icon-magic">🪄</div>
+          <h3 class="feature-title">Auto-Generated SQL Bindings</h3>
           <p class="feature-text">Automatically inspects your Nim functions and datatypes to produce clean <code>CREATE FUNCTION</code> SQL scripts and <code>.control</code> manifests at build time.</p>
         </div>
 
-        <div class="feature-card">
-          <div class="feature-icon">⚓</div>
-          <h3 class="feature-title">PostgreSQL Engine Hook Interceptors</h3>
-          <p class="feature-text">First-class support to intercept PostgreSQL kernel event streams including <code>emit_log</code> (log filtering & audit logging) and <code>post_parse_analyze</code> (query analysis & rewriting).</p>
+        <!-- Feature 5: Kernel Hooks -->
+        <div class="feature-card glass-card">
+          <div class="feature-icon icon-anchor">⚓</div>
+          <h3 class="feature-title">PostgreSQL Kernel Engine Hooks</h3>
+          <p class="feature-text">First-class support to intercept PostgreSQL kernel event streams including <code>emit_log</code> (log filtering & audit logging) and <code>post_parse_analyze</code> (query analysis).</p>
         </div>
 
-        <div class="feature-card">
-          <div class="feature-icon">🪶</div>
-          <h3 class="feature-title">Ultra-Tiny ~500KB Shared Libraries</h3>
-          <p class="feature-text">Produces lightweight binary footprints (~500 KB - 2 MB), avoiding heavy language stdlib bloat and facilitating fast container image distribution.</p>
+        <!-- Feature 6: Primitive Datatypes -->
+        <div class="feature-card glass-card">
+          <div class="feature-icon icon-code">🔢</div>
+          <h3 class="feature-title">Bidirectional Primitive Conversion</h3>
+          <p class="feature-text">Seamless conversion between native Nim types (<code>int32</code>, <code>int64</code>, <code>float</code>, <code>string</code>, <code>cstring</code>, <code>bool</code>) and PostgreSQL engine <code>Datum</code>.</p>
         </div>
 
-        <div class="feature-card">
-          <div class="feature-icon">🛡️</div>
-          <h3 class="feature-title">Static Compile-Time IO Safety Guard</h3>
-          <p class="feature-text">Extension functions are statically analyzed during compilation to guarantee they operate strictly in-memory, disallowing unauthorized OS file or network socket operations by design.</p>
+        <!-- Feature 7: Enum Types -->
+        <div class="feature-card glass-card">
+          <div class="feature-icon icon-tag">🏷️</div>
+          <h3 class="feature-title">PostgreSQL Enum Mapping</h3>
+          <p class="feature-text">Automatically converts PostgreSQL <code>ENUM</code> OIDs into strongly-typed Nim enums and emits matching <code>CREATE TYPE ... AS ENUM</code> definitions.</p>
         </div>
 
-        <div class="feature-card">
-          <div class="feature-icon">🛠️</div>
+        <!-- Feature 8: Composite Records & Tuples -->
+        <div class="feature-card glass-card">
+          <div class="feature-icon icon-box">📦</div>
+          <h3 class="feature-title">Composite Record & Tuple Reader</h3>
+          <p class="feature-text">Inspect and extract PostgreSQL <code>HeapTupleHeader</code> fields directly into Nim <code>tuple</code> and <code>object</code> types with automatic ref counting.</p>
+        </div>
+
+        <!-- Feature 9: Automated CLI -->
+        <div class="feature-card glass-card">
+          <div class="feature-icon icon-tool">🛠️</div>
           <h3 class="feature-title">`pgxtool` Automated CLI Suite</h3>
-          <p class="feature-text">Complete CLI tool to initialize environments, scaffold UDFs, types, and hooks, build release binaries, auto-install into Postgres directories, and run Docker tests.</p>
+          <p class="feature-text">Complete CLI tool to initialize workspace environments, scaffold UDFs, types, and hooks, build release binaries, auto-install into Postgres, and run Docker tests.</p>
+        </div>
+
+        <!-- Feature 10: Compile-Time IO Guard -->
+        <div class="feature-card glass-card">
+          <div class="feature-icon icon-lock">🚫</div>
+          <h3 class="feature-title">Compile-Time IO Safety Guard</h3>
+          <p class="feature-text">Statically analyzes compiled functions to guarantee they operate in-memory, disallowing unauthorized OS file or network socket operations by design.</p>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- Interactive Workflow Section -->
-  <section id="workflow" class="workflow-section">
+  <!-- Panic Shield Spotlight Showcase (v0.12.0) -->
+  <section id="panic-shield" class="shield-section">
     <div class="container">
-      <div class="workflow-card">
-        <div class="section-header" style="margin-bottom:2rem;">
-          <span class="badge">Developer Experience</span>
-          <h2 class="section-title">From Nim Code to Postgres Extension in 4 Steps</h2>
+      <div class="section-header">
+        <span class="badge badge-accent">Security Milestone</span>
+        <h2 class="section-title">v0.12.0 Interactive <span class="gradient-text">Panic Shield</span> Showcase</h2>
+        <p class="section-desc">See how Pgxcrown prevents PostgreSQL backend worker crashes during integer overflows and array out-of-bounds defects.</p>
+      </div>
+
+      <div class="shield-demo-grid">
+        <!-- Unshielded Card -->
+        <div class="shield-card glass-card unshielded">
+          <div class="shield-header">
+            <span class="shield-badge badge-danger">Unshielded C/Nim Extension</span>
+            <h3>Standard Execution</h3>
+          </div>
+          <div class="shield-body">
+            <pre><code>SELECT proof_integer_overflow(2147483647, 1);</code></pre>
+            <div class="status-box status-danger">
+              <span class="status-icon">❌</span>
+              <div>
+                <strong>connection to server was lost</strong>
+                <p>SIGABRT panic crash terminated PostgreSQL backend worker process</p>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div class="steps-row">
-          <div class="wf-step">
-            <div class="wf-num">01</div>
-            <h4 class="wf-title">Scaffold Project</h4>
-            <p class="wf-desc">Run <code>pgxtool create-project my_ext</code> to create your entry point template.</p>
+        <!-- Shielded Card -->
+        <div class="shield-card glass-card shielded">
+          <div class="shield-header">
+            <span class="shield-badge badge-success">Pgxcrown v0.12.0 Panic Shield</span>
+            <h3>Crash-Proof Execution</h3>
           </div>
-
-          <div class="wf-step">
-            <div class="wf-num">02</div>
-            <h4 class="wf-title">Write Nim Logic</h4>
-            <p class="wf-desc">Define procedures in clean Nim syntax with automatic type conversion.</p>
-          </div>
-
-          <div class="wf-step">
-            <div class="wf-num">03</div>
-            <h4 class="wf-title">Build & Auto-Bind</h4>
-            <p class="wf-desc">Run <code>pgxtool build-extension</code> to generate <code>.so</code> binaries and <code>.sql</code> bindings.</p>
-          </div>
-
-          <div class="wf-step">
-            <div class="wf-num">04</div>
-            <h4 class="wf-title">Auto-Install & Enable</h4>
-            <p class="wf-desc">Run <code>pgxtool install</code> and execute <code>CREATE EXTENSION my_ext;</code> in <code>psql</code>!</p>
+          <div class="shield-body">
+            <pre><code>SELECT proof_integer_overflow(2147483647, 1);</code></pre>
+            <div class="status-box status-success">
+              <span class="status-icon">🛡️</span>
+              <div>
+                <strong>ERROR: Extension Defect [OverflowDefect]: over- or underflow</strong>
+                <p>Transaction aborted safely. PostgreSQL server remains 100% operational!</p>
+              </div>
+            </div>
           </div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- CLI Simulator Section -->
+  <!-- Interactive CLI Terminal Simulator -->
   <section id="cli" class="cli-section">
     <div class="container">
       <div class="section-header">
@@ -203,7 +244,7 @@
         <p class="section-desc">Click any command below to test live simulated execution output.</p>
       </div>
 
-      <div class="terminal-window">
+      <div class="terminal-window glass-card">
         <div class="terminal-header">
           <div class="window-dots">
             <span class="dot dot-red"></span>
@@ -214,7 +255,7 @@
         </div>
 
         <div class="cli-presets">
-          <button class="cli-btn" data-cmd="pgxtool init">pgxtool init</button>
+          <button class="cli-btn active" data-cmd="pgxtool init">pgxtool init</button>
           <button class="cli-btn" data-cmd="pgxtool create-project my_extension">pgxtool create-project</button>
           <button class="cli-btn" data-cmd="pgxtool create-hook emit_log">pgxtool create-hook</button>
           <button class="cli-btn" data-cmd="pgxtool build-extension my_extension">pgxtool build-extension</button>
@@ -222,74 +263,7 @@
           <button class="cli-btn" data-cmd="pgxtool test my_extension">pgxtool test</button>
         </div>
 
-        <div class="terminal-body" id="terminalBody">
-          <!-- Populated by script.js -->
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Supported Capabilities Matrix Section -->
-  <section id="matrix" class="matrix-section">
-    <div class="container">
-      <div class="section-header">
-        <span class="badge">Framework Summary</span>
-        <h2 class="section-title">Supported Features & Capabilities Matrix</h2>
-        <p class="section-desc">Comprehensive breakdown of all supported capability areas in Pgxcrown.</p>
-      </div>
-
-      <div class="matrix-card">
-        <table class="matrix-table">
-          <thead>
-            <tr>
-              <th>Feature Area</th>
-              <th>Supported Capabilities</th>
-              <th>Details</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><strong>Extension Packaging</strong></td>
-              <td><code>.control</code>, <code>--0.0.1.sql</code>, <code>install.sh</code></td>
-              <td>Generates standard PostgreSQL extension control files and privileged installation scripts.</td>
-            </tr>
-            <tr>
-              <td><strong>Extension Enablement</strong></td>
-              <td><code>CREATE EXTENSION &lt;name&gt;</code></td>
-              <td>Load extensions directly using PostgreSQL's standard extension mechanism.</td>
-            </tr>
-            <tr>
-              <td><strong>Compile-Time Safety</strong></td>
-              <td>Static IO Isolation Guard</td>
-              <td>Enforces compile-time IO safety and controlled exception handling before binary compilation.</td>
-            </tr>
-            <tr>
-              <td><strong>Primitive Datatypes</strong></td>
-              <td><code>int</code>, <code>int32</code>, <code>int64</code>, <code>float</code>, <code>string</code>, <code>cstring</code>, <code>bool</code></td>
-              <td>Automatic bidirectional conversion between Nim native types and Postgres <code>Datum</code>.</td>
-            </tr>
-            <tr>
-              <td><strong>Enum Types</strong></td>
-              <td>Consuming Postgres <code>ENUM</code> in Nim</td>
-              <td>Auto-generates <code>CREATE TYPE ... AS ENUM</code> and converts Postgres OIDs to Nim enums.</td>
-            </tr>
-            <tr>
-              <td><strong>Composite Records</strong></td>
-              <td>Consuming Postgres <code>record</code> / <code>tuple</code></td>
-              <td>Inspect and read PostgreSQL <code>HeapTupleHeader</code> attributes via Nim <code>tuple</code> and <code>object</code> types.</td>
-            </tr>
-            <tr>
-              <td><strong>Postgres Engine Hooks</strong></td>
-              <td><code>emit_log</code>, <code>post_parse_analyze</code></td>
-              <td>Intercept query parsing and log emission via built-in hook builders.</td>
-            </tr>
-            <tr>
-              <td><strong>CLI Tool (<code>pgxtool</code>)</strong></td>
-              <td><code>init</code>, <code>create-project</code>, <code>build-extension</code>, <code>install</code>, <code>path-finders</code>, <code>test</code></td>
-              <td>Scaffolding, path discovery, compilation, installation scripts, and Docker test harness.</td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="terminal-body" id="terminalBody"></div>
       </div>
     </div>
   </section>
@@ -297,35 +271,36 @@
   <!-- Quickstart Section -->
   <section id="quickstart" class="quickstart-section">
     <div class="container">
-      <div class="quick-card">
-        <div class="section-header" style="margin-bottom:2rem;">
-          <span class="badge">Quickstart</span>
-          <h2 class="section-title">Get Started in Seconds</h2>
-          <p class="section-desc">Install Pgxcrown via Nimble and start creating your first native extension.</p>
+      <div class="quickstart-card glass-card">
+        <div class="section-header" style="margin-bottom: 2rem;">
+          <span class="badge">Developer Onboarding</span>
+          <h2 class="section-title">Get Started in 60 Seconds</h2>
         </div>
 
-        <div style="display:flex; flex-direction:column; gap:1.25rem;">
-          <div>
-            <span style="font-weight:600; font-size:0.95rem;">1. Install Pgxcrown via Nimble:</span>
-            <div class="code-box">
-              <span>nimble install pgxcrown</span>
-              <button class="copy-btn" data-copy="nimble install pgxcrown">📋 Copy</button>
+        <div class="qs-steps">
+          <div class="qs-step">
+            <div class="step-num">1</div>
+            <div class="step-content">
+              <h4>Install Framework via Nimble</h4>
+              <pre><code>nimble install pgxcrown</code></pre>
             </div>
           </div>
 
-          <div>
-            <span style="font-weight:600; font-size:0.95rem;">2. Initialize environment & scaffold project:</span>
-            <div class="code-box">
-              <span>pgxtool init && pgxtool create-project my_extension</span>
-              <button class="copy-btn" data-copy="pgxtool init && pgxtool create-project my_extension">📋 Copy</button>
+          <div class="qs-step">
+            <div class="step-num">2</div>
+            <div class="step-content">
+              <h4>Scaffold & Build Extension</h4>
+              <pre><code>pgxtool init && pgxtool create-project my_ext
+pgxtool build-extension my_ext</code></pre>
             </div>
           </div>
 
-          <div>
-            <span style="font-weight:600; font-size:0.95rem;">3. Build, auto-generate SQL bindings, & install:</span>
-            <div class="code-box">
-              <span>pgxtool build-extension my_extension && pgxtool install my_extension</span>
-              <button class="copy-btn" data-copy="pgxtool build-extension my_extension && pgxtool install my_extension">📋 Copy</button>
+          <div class="qs-step">
+            <div class="step-num">3</div>
+            <div class="step-content">
+              <h4>Install & Enable in PostgreSQL</h4>
+              <pre><code>sudo ./my_ext/src/install.sh
+psql -U postgres -c "CREATE EXTENSION my_ext;"</code></pre>
             </div>
           </div>
         </div>
@@ -335,9 +310,18 @@
 
   <!-- Footer -->
   <footer class="footer">
-    <div class="container">
-      <p>👑 <strong>Pgxcrown</strong> — High-Performance Native PostgreSQL Extensions in Nim</p>
-      <p style="margin-top:0.5rem; color:var(--text-dim);">Built for maximum CPU execution speed, tiny binaries, and static compile-time IO safety.</p>
+    <div class="container footer-content">
+      <div class="footer-brand">
+        <span>👑</span>
+        <span class="gradient-text">Pgxcrown</span>
+        <p>Open-source PostgreSQL Extension Framework for Nim. Released under MIT License.</p>
+      </div>
+      <div class="footer-links">
+        <a href="https://github.com/luisacosta828/pgxcrown" target="_blank" rel="noopener">GitHub Repository</a>
+        <a href="https://github.com/luisacosta828/pgxcrown/blob/master/README.md" target="_blank" rel="noopener">Documentation</a>
+        <a href="https://nim-lang.org" target="_blank" rel="noopener">Nim Language</a>
+        <a href="https://www.postgresql.org" target="_blank" rel="noopener">PostgreSQL</a>
+      </div>
     </div>
   </footer>
 
