@@ -141,11 +141,19 @@ template map_tuplec_params(pvar, ptype, param) =
   treestmt.add(asgn1)
 
   var i = 0
-  var formalParam: NimNode = param[1]
-  if param[1].repr in pgxTupleConstr:
-    formalParam = pgxTupleConstr[param[1].repr][2] 
-  elif param[1].repr in pgxObjectTy:
-    formalParam = pgxObjectTy[param[1].repr][2]
+  var formalParam: NimNode
+  let paramTypeStr = param[1].repr
+  let objKey = if paramTypeStr in pgxObjectTy: paramTypeStr
+               elif (paramTypeStr & "*") in pgxObjectTy: (paramTypeStr & "*")
+               else: ""
+  let tupKey = if paramTypeStr in pgxTupleConstr: paramTypeStr
+               elif (paramTypeStr & "*") in pgxTupleConstr: (paramTypeStr & "*")
+               else: ""
+
+  if tupKey.len > 0:
+    formalParam = pgxTupleConstr[tupKey][2]
+  elif objKey.len > 0:
+    formalParam = pgxObjectTy[objKey][2]
   
   if formalParam.kind == nnkTupleConstr:
     for dtype in formalParam:
@@ -197,10 +205,17 @@ template map_seq_tuplec_params(pvar, elemTypeStr, param, argIdxNode) =
   var loopIdx = ident("seqIdx" & $cacheIteration)
 
   var formalParam: NimNode
-  if elemTypeStr in pgxTupleConstr:
-    formalParam = pgxTupleConstr[elemTypeStr][2]
-  elif elemTypeStr in pgxObjectTy:
-    formalParam = pgxObjectTy[elemTypeStr][2]
+  let objKey = if elemTypeStr in pgxObjectTy: elemTypeStr
+               elif (elemTypeStr & "*") in pgxObjectTy: (elemTypeStr & "*")
+               else: ""
+  let tupKey = if elemTypeStr in pgxTupleConstr: elemTypeStr
+               elif (elemTypeStr & "*") in pgxTupleConstr: (elemTypeStr & "*")
+               else: ""
+
+  if tupKey.len > 0:
+    formalParam = pgxTupleConstr[tupKey][2]
+  elif objKey.len > 0:
+    formalParam = pgxObjectTy[objKey][2]
 
   var loopBody = newNimNode(nnkStmtList)
   let itemTh = ident("itemTh")
@@ -231,7 +246,8 @@ template map_seq_tuplec_params(pvar, elemTypeStr, param, argIdxNode) =
   elif formalParam != nil and formalParam.kind == nnkObjectTy:
     let recordFields = formalParam[2]
     for identDefs in recordFields:
-      for fieldNameIdent in identDefs[0 .. ^3]:
+      for fieldNameNode in identDefs[0 .. ^3]:
+        let fieldNameIdent = if fieldNameNode.kind == nnkPostfix: fieldNameNode[1] else: fieldNameNode
         let fieldType = identDefs[^2]
         let ftypeStr = fieldType.repr
         let pgIdx = newLit((fieldIdx + 1).int16)
