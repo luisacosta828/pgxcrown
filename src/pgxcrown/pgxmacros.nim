@@ -66,8 +66,16 @@ template PgxToNim(dt: string): string =
   of "float64": "getFloat8"
   of "string": "TextDatumGetCString"
   of "cstring": "getCString" 
+  of "seq[int]", "seq[int32]": "getArrayInt32"
+  of "seq[int64]": "getArrayInt64"
+  of "seq[float]", "seq[float32]", "seq[float64]": "getArrayFloat64"
+  of "seq[bool]": "getArrayBool"
+  of "seq[string]": "getArrayString"
   else: 
-    checkPgxTypeDef(dt) 
+    if dt.startsWith("seq["):
+      "getArrayHeapTuples"
+    else:
+      checkPgxTypeDef(dt) 
 
 
 proc ReplyWithPgxTypes(dt: string): string =
@@ -178,6 +186,75 @@ template map_tuplec_params(pvar, ptype, param) =
     pvar = pvar & "th"
     asgnMultiple.add treestmt
 
+template map_seq_tuplec_params(pvar, elemTypeStr, param, argIdxNode) =
+  var thSeqVar = ident(pvar & "ThSeq")
+  var tupvar = ident("tupDesc" & $cacheIteration & "fn" & $fnIdx)
+  
+  varSection.add newIdentDefs(thSeqVar, newTree(nnkBracketExpr, ident("seq"), ident("HeapTupleHeader")), newCall(ident("getArrayHeapTuples"), newCall(ident("getDatum"), argIdxNode)))
+  varSection.add newIdentDefs(ident(pvar), param[^2], newCall(newTree(nnkBracketExpr, ident("newSeq"), ident(elemTypeStr)), newDotExpr(thSeqVar, ident("len"))))
+
+  var treestmt = newNimNode(nnkStmtList)
+  var loopIdx = ident("seqIdx" & $cacheIteration)
+
+  var formalParam: NimNode
+  if elemTypeStr in pgxTupleConstr:
+    formalParam = pgxTupleConstr[elemTypeStr][2]
+  elif elemTypeStr in pgxObjectTy:
+    formalParam = pgxObjectTy[elemTypeStr][2]
+
+  var loopBody = newNimNode(nnkStmtList)
+  let itemTh = ident("itemTh")
+  loopBody.add newTree(nnkLetSection, newIdentDefs(itemTh, ident("HeapTupleHeader"), newTree(nnkBracketExpr, thSeqVar, loopIdx)))
+
+  var ifStmt = newNimNode(nnkIfExpr)
+  var ifBody = newNimNode(nnkStmtList)
+
+  let tupDescCall = newCall(ident("getTupleDesc"), itemTh)
+  ifBody.add newTree(nnkLetSection, newIdentDefs(tupvar, ident("TupleDesc"), tupDescCall))
+
+  var fieldIdx = 0
+  if formalParam != nil and formalParam.kind == nnkTupleConstr:
+    for dtype in formalParam:
+      let pgIdx = newLit((fieldIdx + 1).int16)
+      let nimIdx = newLit(fieldIdx)
+      let rawDatum = newCall(newTree(nnkBracketExpr, ident("get_tuple_attr"), ident("Datum")), itemTh, tupvar, pgIdx)
+      let ftypeStr = dtype.repr
+      let typedVal = case ftypeStr
+        of "int", "int32", "cint": newCall(ident("DatumGetInt32"), rawDatum)
+        of "int64": newCall(ident("DatumGetInt64"), rawDatum)
+        of "float", "float64": newCall(ident("DatumGetFloat8"), rawDatum)
+        of "bool": newTree(nnkInfix, ident("!="), rawDatum, newIntLitNode(0))
+        of "string": newCall(ident("$"), newCall(ident("TextDatumGetCString"), rawDatum))
+        else: rawDatum
+      ifBody.add newTree(nnkAsgn, newTree(nnkBracketExpr, newTree(nnkBracketExpr, ident(pvar), loopIdx), nimIdx), typedVal)
+      fieldIdx += 1
+  elif formalParam != nil and formalParam.kind == nnkObjectTy:
+    let recordFields = formalParam[2]
+    for identDefs in recordFields:
+      for fieldNameIdent in identDefs[0 .. ^3]:
+        let fieldType = identDefs[^2]
+        let ftypeStr = fieldType.repr
+        let pgIdx = newLit((fieldIdx + 1).int16)
+        let rawDatum = newCall(newTree(nnkBracketExpr, ident("get_tuple_attr"), ident("Datum")), itemTh, tupvar, pgIdx)
+        let typedVal = case ftypeStr
+          of "int", "int32", "cint": newCall(ident("DatumGetInt32"), rawDatum)
+          of "int64": newCall(ident("DatumGetInt64"), rawDatum)
+          of "float", "float64": newCall(ident("DatumGetFloat8"), rawDatum)
+          of "bool": newTree(nnkInfix, ident("!="), rawDatum, newIntLitNode(0))
+          of "string": newCall(ident("$"), newCall(ident("TextDatumGetCString"), rawDatum))
+          else: rawDatum
+        ifBody.add newTree(nnkAsgn, newDotExpr(newTree(nnkBracketExpr, ident(pvar), loopIdx), fieldNameIdent), typedVal)
+        fieldIdx += 1
+
+  ifBody.add newCall(ident("DecrTupleDescRefCount"), tupvar)
+
+  ifStmt.add newTree(nnkElifBranch, newTree(nnkInfix, ident("!="), itemTh, newNilLit()), ifBody)
+  loopBody.add ifStmt
+
+  let forLoop = newTree(nnkForStmt, loopIdx, newTree(nnkInfix, ident("..<"), newLit(0), newDotExpr(thSeqVar, ident("len"))), loopBody)
+  treestmt.add forLoop
+  asgnMultiple.add treestmt
+
 template get_param_type(parameter): string =
   var validType = parameter[1].kind == nnkIdent
   if validType:
@@ -217,7 +294,9 @@ template move_nim_params_as_locals =
     var argIdxNode = newIntLitNode(i - 1)
     var rawFetch: NimNode
 
-    if ptype != "string":
+    if ptype.startsWith("seq["):
+      rawFetch = newCall(ident(f), [newCall(ident("getDatum"), [argIdxNode])])
+    elif ptype != "string":
       if isOptionParam:
         rawFetch = newCall(innerTypeNode, [newCall(ident(f), [argIdxNode])])
       else:
@@ -254,16 +333,25 @@ template move_nim_params_as_locals =
     var tupleConstrVisited = tuplec_visited(idx)
     var objectVisited = object_visited(idx)
 
-    if enumVisited:
+    var isSeqComposite = ptype.startsWith("seq[") and f == "getArrayHeapTuples"
+    var innerElemType = if isSeqComposite: typeNode[1].repr else: ""
+
+    if isSeqComposite:
+      map_seq_tuplec_params(pvar, innerElemType, fn.params[i], argIdxNode)
+    elif enumVisited:
       map_enums_params(pvar, ptype)
+      varSection.add(newIdentDefs(ident(pvar), ident(NimTypes(ptype)), getValue))
     elif tupleConstrVisited or objectVisited:
+      varSection.add(newIdentDefs(ident(pvar & "th"), ident("HeapTupleHeader"), getValue))
       map_tuplec_params(pvar, ptype, fn.params[i])
-      
-    if isOptionParam:
+    elif isOptionParam or ptype.startsWith("seq["):
       varSection.add(newIdentDefs(ident(pvar), typeNode, getValue))
     else:
       varSection.add(newIdentDefs(ident(pvar), ident(NimTypes(ptype)), getValue))
     cacheIteration += 1
+
+  if fn.params[0].kind != nnkEmpty:
+    varSection.add(newIdentDefs(nnkPragmaExpr.newTree(ident("userResult"), newTree(nnkPragma, ident("used"))), fn.params[0], newEmptyNode()))
 
 template copy_fn_body =
   let body_lines = fn.body.len - 2
@@ -347,7 +435,16 @@ proc analyze_node(code: NimNode): NimNode =
   of nnkLiterals:
     result = code
   of nnkIdent:
-    result = code
+    if code.repr == "result":
+      result = ident("userResult")
+    else:
+      result = code
+  of nnkBracketExpr:
+    result = newNimNode(nnkBracketExpr)
+    for child in code:
+      result.add analyze_node(child)
+  of nnkForStmt:
+    result = check_for_section(code)
   of nnkInfix:
     result = check_infix_section(code)
   of nnkStmtList:
@@ -363,11 +460,9 @@ proc analyze_node(code: NimNode): NimNode =
     result = check_discard_section(code)
   of nnkWhileStmt:
     result = check_while_section(code)
-  of nnkForStmt:
-    result = check_for_section(code)
   of nnkProcDef, nnkFuncDef:
     result = check_proc_def(code)
-  of nnkPrefix, nnkBracketExpr, nnkDotExpr, nnkEmpty, nnkTypeSection, nnkBracket, nnkCurly, nnkPar, nnkSym:
+  of nnkPrefix, nnkDotExpr, nnkEmpty, nnkTypeSection, nnkBracket, nnkCurly, nnkPar, nnkSym:
     result = code
   of nnkTryStmt, nnkExceptBranch, nnkConstSection, nnkLetSection, nnkConstDef, nnkIdentDefs, nnkCast:
     for child in code:
@@ -453,6 +548,7 @@ proc check_for_section(code: NimNode): NimNode =
 
 proc check_asgn_section(code: NimNode): NimNode =
   result = code
+  result[0] = analyze_node(code[0])
   result[1] = analyze_node(code[1])
 
 proc analyze_fn_body(fn: NimNode): NimNode =
@@ -499,6 +595,81 @@ proc wrapOptionReturn(code: NimNode): NimNode =
     for child in code:
       result.add wrapOptionReturn(child)
 
+proc wrapSeqReturn(code: NimNode, retTypeStr: string): NimNode =
+  let seqReturnCall = case retTypeStr:
+    of "seq[int]", "seq[int32]": "returnArrayInt32"
+    of "seq[int64]": "returnArrayInt64"
+    of "seq[float]", "seq[float64]", "seq[float32]": "returnArrayFloat64"
+    of "seq[bool]": "returnArrayBool"
+    of "seq[string]": "returnArrayString"
+    else: ""
+
+  if seqReturnCall.len == 0:
+    return code
+
+  proc transformReturn(n: NimNode): NimNode =
+    if n.kind == nnkReturnStmt:
+      if n[0].kind == nnkEmpty:
+        return newTree(nnkReturnStmt, newCall(ident(seqReturnCall), ident("userResult")))
+      else:
+        return newTree(nnkReturnStmt, newCall(ident(seqReturnCall), n[0]))
+    elif n.len == 0:
+      return n
+    else:
+      result = newNimNode(n.kind)
+      for child in n:
+        result.add transformReturn(child)
+
+  let transformed = transformReturn(code)
+  if not hasReturn(transformed):
+    result = transformed
+    result.add newTree(nnkReturnStmt, newCall(ident(seqReturnCall), ident("userResult")))
+  else:
+    result = transformed
+
+proc wrapScalarReturn(code: NimNode, retTypeStr: string): NimNode =
+  let datumConverter = case retTypeStr:
+    of "int", "int32", "cint": "Int32GetDatum"
+    of "int64", "clonglong": "Int64GetDatum"
+    of "int16", "cshort": "Int16GetDatum"
+    of "float", "float32", "cfloat": "Float4GetDatum"
+    of "float64", "cdouble": "Float8GetDatum"
+    of "bool": "BoolGetDatum"
+    of "string": "CStringGetTextDatum"
+    else: ""
+
+  if datumConverter.len == 0:
+    return code
+
+  proc transformReturn(n: NimNode): NimNode =
+    if n.kind == nnkReturnStmt:
+      let retExpr = if n[0].kind == nnkEmpty: ident("userResult") else: n[0]
+      if retExpr.kind == nnkCall and retExpr[0].repr.endsWith("GetDatum"):
+        return n
+      elif retTypeStr == "string":
+        if retExpr.kind == nnkCall and retExpr[0].repr == "CStringGetTextDatum":
+          return n
+        else:
+          return newTree(nnkReturnStmt, newCall(ident("CStringGetTextDatum"), newCall(ident("cstring"), retExpr)))
+      else:
+        return newTree(nnkReturnStmt, newCall(ident(datumConverter), retExpr))
+    elif n.len == 0:
+      return n
+    else:
+      result = newNimNode(n.kind)
+      for child in n:
+        result.add transformReturn(child)
+
+  let transformed = transformReturn(code)
+  if not hasReturn(transformed):
+    result = transformed
+    if retTypeStr == "string":
+      result.add newTree(nnkReturnStmt, newCall(ident("CStringGetTextDatum"), newCall(ident("cstring"), ident("userResult"))))
+    else:
+      result.add newTree(nnkReturnStmt, newCall(ident(datumConverter), ident("userResult")))
+  else:
+    result = transformed
+
 proc explainWrapper(fn: NimNode): NimNode =
   let pgx_proc = newProc(ident("pgx_" & $fn.name), proc_type = nnkFuncDef)
   pgxFunctions[fn.name.repr] = fn.params
@@ -509,15 +680,20 @@ proc explainWrapper(fn: NimNode): NimNode =
 
   rbody = analyze_fn_body(fn)
 
-  # calling destructor when there's no return value
-  clean_tuple_desc
-
-  if not hasReturn(rbody) and fn.params[0].kind != nnkEmpty and rbody.len > 0:
-    rbody[^1] = newTree(nnkReturnStmt, rbody[^1])
-
+  let retTypeStr = if fn.params[0].kind != nnkEmpty: fn.params[0].repr else: ""
   let isOptionReturn = fn.params[0].kind == nnkBracketExpr and fn.params[0][0].repr == "Option"
-  if isOptionReturn:
+  let isSeqReturn = retTypeStr.startsWith("seq[")
+
+  if isSeqReturn:
+    rbody = wrapSeqReturn(rbody, retTypeStr)
+  elif isOptionReturn:
+    if not hasReturn(rbody) and fn.params[0].kind != nnkEmpty and rbody.len > 0:
+      rbody[^1] = newTree(nnkReturnStmt, rbody[^1])
     rbody = wrapOptionReturn(rbody)
+  else:
+    if not hasReturn(rbody) and fn.params[0].kind != nnkEmpty and rbody.len > 0:
+      rbody[^1] = newTree(nnkReturnStmt, rbody[^1])
+    rbody = wrapScalarReturn(rbody, retTypeStr)
 
   var shieldedBody = newTree(nnkTryStmt,
     rbody,

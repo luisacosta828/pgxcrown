@@ -1,6 +1,7 @@
 import pgxcrown/compiler
 import pgxcrown/datatypes/basic
 import pgxcrown/datatypes/heaptuples
+import pgxcrown/datatypes/arrays
 include pgxcrown/pgxmacros
 import pgxcrown/reports/reports
 
@@ -32,3 +33,4 @@ export compiler
 export basic
 export reports
 export heaptuples
+export arrays

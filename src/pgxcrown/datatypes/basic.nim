@@ -49,6 +49,7 @@ proc DatumGetUInt8*(x: Datum): uint8 {.importc.}
 proc DatumGetChar*(x: Datum): cchar {.importc.}
 proc DatumGetBool*(x: Datum): cchar | bool {.importc.}
 proc DatumGetFloat4*(x: Datum): cfloat | float32 | float {.importc.}
+proc DatumGetFloat8*(x: Datum): float64 {.importc.}
 proc DatumGetPointer*(x: Datum): Pointer {.importc.}
 proc DatumGetCString*(x: Datum): cstring {.importc.}
 proc DatumGetName*(x: Datum): Name {.importc.}

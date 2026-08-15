@@ -13,8 +13,18 @@ template NimToSQLType(dt: string): string =
   of "float64": "float8"
   of "string": "Text"
   of "cstring": "cstring"
-  of "bool": "boolean"
-  else: dt
+  of "bool", "boolean": "boolean"
+  of "seq[int]", "seq[int32]": "int4[]"
+  of "seq[int64]": "int8[]"
+  of "seq[float]", "seq[float32]": "float4[]"
+  of "seq[float64]": "float8[]"
+  of "seq[string]": "text[]"
+  of "seq[bool]": "bool[]"
+  else:
+    if dt.startsWith("seq["):
+      "record[]"
+    else:
+      dt
 
 proc project(path: string): string {.inline.} =
   var p = path.parentDir
@@ -45,10 +55,13 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
     let defaultNode = identDef[^1]
     
     let isOptionParam = paramTypeNode.kind == nnkBracketExpr and paramTypeNode[0].repr == "Option"
+    let isSeqParam = paramTypeNode.kind == nnkBracketExpr and paramTypeNode[0].repr == "seq"
     var baseTypeStr = ""
     if isOptionParam:
       baseTypeStr = NimToSQLType(paramTypeNode[1].repr)
       hasOptionOrDefault = true
+    elif isSeqParam:
+      baseTypeStr = NimToSQLType(paramTypeNode.repr)
     elif paramTypeNode.kind == nnkIdent and paramTypeNode.repr notin recordType:
       baseTypeStr = NimToSQLType(paramTypeNode.repr)
     elif paramTypeNode.kind == nnkTupleConstr or paramTypeNode.repr in recordType:
