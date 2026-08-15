@@ -1,3 +1,6 @@
+import std/options
+export options
+
 # Basic Data Types definitions from postgres.h
 {.push header: "postgres.h".}
 
@@ -62,6 +65,7 @@ proc UInt8GetDatum*(x: uint8): Datum {.importc.}
 proc CharGetDatum*(x: cchar): Datum {.importc.}
 proc BoolGetDatum*(x: cchar | bool): Datum {.importc.}
 proc Float4GetDatum*(x: cfloat | float32 | float): Datum {.importc.}
+proc Float8GetDatum*(x: cdouble | float64): Datum {.importc.}
 proc PointerGetDatum*(x: Pointer): Datum {.importc.}
 proc CStringGetDatum*(x: cstring): Datum {.importc.}
 proc NameGetDatum*(x: Name): Datum {.importc.}
@@ -126,7 +130,7 @@ proc getUInt16*(value: cuint): cushort {.importc: "PG_GETARG_UINT16".}
 
 proc getCString*(value: cuint): cstring {.importc: "PG_GETARG_CSTRING".}
 
-proc getBool*(value: cuint): cchar {.importc: "PG_GETARG_BOOL".}
+proc getBool*(value: cuint): bool {.importc: "PG_GETARG_BOOL".}
 
 proc getFloat4*(value: cuint): cfloat {.importc: "PG_GETARG_FLOAT4".}
 
@@ -138,7 +142,11 @@ proc getOid*(value: cuint): Oid {.importc: "PG_GETARG_OID".}
 
 proc getChar*(value: cuint): cchar {.importc:  "PG_GETARG_CHAR".}
 
+proc isArgNull*(value: cuint): bool {.importc: "PG_ARGISNULL".}
+
 # Return types declaration
+
+template returnNull*() = {.emit: ["""PG_RETURN_NULL();"""].}
 
 
 template returnInt32*(value: typed) = {.emit: ["""PG_RETURN_INT32(""", value, ");"].}
@@ -214,9 +222,11 @@ converter UInt8ToDatum*(value: uint8): Datum = UInt8GetDatum(value)
 converter CharToDatum*(value: cchar): Datum =  CharGetDatum(value) 
 converter BoolToDatum*(value: cchar | bool): Datum = BoolGetDatum(value) 
 converter Float4GetDatum*(value: cfloat | float32 | float): Datum = Float4GetDatum(value)
+converter Float8ToDatum*(value: cdouble | float64): Datum = Float8GetDatum(value)
 converter PointerToDatum*(value: Pointer): Datum = PointerGetDatum(value)
 converter CStringToDatum*(value: cstring): Datum = CStringGetDatum(value)
 converter NameToDatum*(value: Name): Datum = NameGetDatum(value)
 converter CstringToNimString*(value: cstring): string =
   if value == nil: "" else: $value
 converter StringToDatum*(value: string): Datum = CStringGetTextDatum(cstring(value))
+

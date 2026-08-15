@@ -3,3 +3,9 @@
 *.dll
 emit_log/
 test/
+src/bin/
+src/pgxcrown.out
+src/pgxcrown/pgxtool
+v013_demo/
+tmp_*
+

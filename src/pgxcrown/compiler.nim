@@ -1,10 +1,23 @@
-from std/strutils import split
+from std/strutils import split, strip, contains
 
+proc safePgConfig(cmd: string, defaultVal: string): string =
+  let raw = staticExec(cmd).strip
+  if raw.len == 0 or "not found" in raw:
+    return defaultVal
+  return raw
+
+proc discoverPgVersion(): string =
+  let raw = safePgConfig("pg_config --version", "PostgreSQL 14")
+  let parts = raw.split(" ")
+  if parts.len >= 2:
+    return parts[1].split(".")[0]
+  else:
+    return "14"
 
 const
-  includeDir {.strdefine.} = staticExec("pg_config --includedir").split("\n")[0]
-  libDir {.strdefine.} = staticExec("pg_config --libdir").split("\n")[0]
-  pgVersion {.strdefine.} = staticExec("""pg_config --version""").split(" ")[1].split(".")[0]
+  includeDir {.strdefine.} = safePgConfig("pg_config --includedir", "/usr/include/postgresql").split("\n")[0]
+  libDir {.strdefine.} = safePgConfig("pg_config --libdir", "/usr/lib/postgresql").split("\n")[0]
+  pgVersion {.strdefine.} = discoverPgVersion()
 
 
 if includeDir.len == 0:

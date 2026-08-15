@@ -8,33 +8,95 @@ template NimToSQLType(dt: string): string =
   case dt
   of "int", "int32": "int4"
   of "int64": "int8"
+  of "int16": "int2"
   of "float", "float32": "float4"
   of "float64": "float8"
   of "string": "Text"
   of "cstring": "cstring"
+  of "bool": "boolean"
   else: dt
 
 proc project(path: string): string {.inline.} =
-  path.splitPath.head.splitPath.head.splitPath.tail
+  var p = path.parentDir
+  if p.lastPathPart == "src":
+    p = p.parentDir
+  return p.lastPathPart
 
 proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
-  
   var
-    returnType = 
-      if fn.params[0].kind == nnkEmpty: ""
-      else: " returns " & NimToSQLType fn.params[0].repr
-    paramLen = fn.params.len - 1
-    procTy = if returnType == "": "PROCEDURE " else: "FUNCTION "
-    strict = if returnType == "": "language c;\n" else: "language c strict;\n"
+    returnTypeStr = ""
+    hasOptionOrDefault = false
+
+  if fn.params[0].kind != nnkEmpty:
+    let retTypeNode = fn.params[0]
+    if retTypeNode.kind == nnkBracketExpr and retTypeNode[0].repr == "Option":
+      returnTypeStr = " returns " & NimToSQLType(retTypeNode[1].repr)
+      hasOptionOrDefault = true
+    else:
+      returnTypeStr = " returns " & NimToSQLType(retTypeNode.repr)
+
+  var paramLen = fn.params.len - 1
+  var procTy = if returnTypeStr == "": "PROCEDURE " else: "FUNCTION "
   
   var param_list: seq[string]
-  for e in fn.params[1 .. paramLen]:
-    if e[1].kind == nnkIdent and e[1].repr notin recordType:
-      param_list.add NimToSQLType e[1].repr
-    elif e[1].kind == nnkTupleConstr or e[1].repr in recordType:
-      param_list.add "record"
+  for i in 1 .. paramLen:
+    let identDef = fn.params[i]
+    let paramTypeNode = identDef[^2]
+    let defaultNode = identDef[^1]
+    
+    let isOptionParam = paramTypeNode.kind == nnkBracketExpr and paramTypeNode[0].repr == "Option"
+    var baseTypeStr = ""
+    if isOptionParam:
+      baseTypeStr = NimToSQLType(paramTypeNode[1].repr)
+      hasOptionOrDefault = true
+    elif paramTypeNode.kind == nnkIdent and paramTypeNode.repr notin recordType:
+      baseTypeStr = NimToSQLType(paramTypeNode.repr)
+    elif paramTypeNode.kind == nnkTupleConstr or paramTypeNode.repr in recordType:
+      baseTypeStr = "record"
+    else:
+      baseTypeStr = paramTypeNode.repr
 
-  sql_scripts.add "\nCREATE OR REPLACE " & procTy & fn.name.repr & '(' & param_list.join(",") & ')' & returnType & " as\n"
+    if defaultNode.kind != nnkEmpty:
+      hasOptionOrDefault = true
+
+    let nameCount = identDef.len - 2
+    for j in 0 ..< nameCount:
+      var entry = baseTypeStr
+      if defaultNode.kind != nnkEmpty:
+        entry.add " DEFAULT "
+        case defaultNode.kind
+        of nnkStrLit, nnkTripleStrLit:
+          entry.add "'" & defaultNode.strVal & "'"
+        of nnkIntLit, nnkInt32Lit, nnkInt64Lit, nnkFloatLit, nnkFloat64Lit:
+          entry.add defaultNode.repr
+        of nnkIdent:
+          if defaultNode.repr in ["true", "false"]:
+            entry.add defaultNode.repr
+          elif defaultNode.repr in ["nil", "none"]:
+            entry.add "NULL"
+          else:
+            entry.add defaultNode.repr
+        of nnkCall:
+          if defaultNode[0].repr == "none":
+            entry.add "NULL"
+          elif defaultNode[0].repr == "some":
+            if defaultNode[1].kind in {nnkStrLit, nnkTripleStrLit}:
+              entry.add "'" & defaultNode[1].strVal & "'"
+            else:
+              entry.add defaultNode[1].repr
+          else:
+            entry.add defaultNode.repr
+        else:
+          entry.add defaultNode.repr
+      elif isOptionParam:
+        entry.add " DEFAULT NULL"
+      param_list.add entry
+
+  var strict = if returnTypeStr == "": "language c;\n" 
+               elif hasOptionOrDefault: "language c;\n" 
+               else: "language c strict;\n"
+
+  sql_scripts.add "\nCREATE OR REPLACE " & procTy & fn.name.repr & '(' & param_list.join(", ") & ')' & returnTypeStr & " as\n"
   sql_scripts.add "'" & project(entrypoint) & "', 'pgx_" & fn.name.repr & "'\n"
   sql_scripts.add strict
 
@@ -79,7 +141,8 @@ template addEnumDefaultCase(element) =
 macro decorateMainFunctions*() =
   var file_content = readFile(entrypoint)
   var source = parseStmt(file_content)
-  del(source)
+  if source.len > 0 and source[0].kind in {nnkImportStmt, nnkImportExceptStmt}:
+    source.del(0)
 
   var res = newNimNode(nnkStmtList)
   res.add newNimNode(nnkImportStmt).add ident("pgxcrown")

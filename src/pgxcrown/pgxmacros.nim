@@ -38,6 +38,8 @@ proc checkNimTypeDef(dt: string): string =
 template NimTypes(dt: string): string =
   case dt
   of "int", "int32": "cint"
+  of "int16": "cshort"
+  of "int8": "int8"
   of "uint", "uint32": "culong"
   of "float", "float32": "cfloat"
   of "float64": "cdouble"
@@ -45,6 +47,7 @@ template NimTypes(dt: string): string =
   of "uint64": "culonglong"
   of "uint16": "cushort"
   of "char": "cchar"
+  of "bool": "bool"
   of "string": "string"
   of "cstring": "cstring"
   else: 
@@ -187,21 +190,64 @@ template tuplec_visited(idx): bool = idx in currentPGXCustomType and currentPGXC
 template object_visited(idx): bool = idx in currentPGXCustomType and currentPGXCustomType[idx].repr == "object"
 
 template move_nim_params_as_locals =
-  var param: seq[string]
   var pvar: string
   var ptype: string
 
   for i in 1..fnparams_len:
-    param = fn.params[i].repr.split(":")
-    pvar = param[0]
-    ptype = get_param_type(fn.params[i])
-    var f = PgxToNim(ptype)
-    var getValue: NimNode
-    if ptype != "string":
-      getValue = newCall(ident(f), [newIntLitNode(i-1)])
-    else:
-      getValue = newCall(ident("$"), [newCall(ident(f), [ newCall(ident("getDatum"), [newIntLitNode(i-1)]) ] )])
+    let identDef = fn.params[i]
+    pvar = identDef[0].repr
+    let typeNode = identDef[^2]
+    let defaultNode = identDef[^1]
 
+    var isOptionParam = false
+    var innerTypeStr = ""
+    var innerTypeNode: NimNode
+
+    if typeNode.kind == nnkBracketExpr and typeNode[0].repr == "Option":
+      isOptionParam = true
+      innerTypeStr = typeNode[1].repr
+      innerTypeNode = typeNode[1]
+    else:
+      innerTypeStr = typeNode.repr
+      innerTypeNode = typeNode
+
+    ptype = innerTypeStr
+    var f = PgxToNim(ptype)
+    let argIdxVal = cuint(i - 1)
+    var argIdxNode = newIntLitNode(i - 1)
+    var rawFetch: NimNode
+
+    if ptype != "string":
+      if isOptionParam:
+        rawFetch = newCall(innerTypeNode, [newCall(ident(f), [argIdxNode])])
+      else:
+        rawFetch = newCall(ident(f), [argIdxNode])
+    else:
+      rawFetch = newCall(ident("$"), [newCall(ident(f), [newCall(ident("getDatum"), [argIdxNode])])])
+
+    var getValue: NimNode
+    if isOptionParam:
+      getValue = newTree(nnkIfExpr,
+        newTree(nnkElifBranch,
+          newCall(ident("isArgNull"), newLit(argIdxVal)),
+          newCall(ident("none"), innerTypeNode)
+        ),
+        newTree(nnkElse,
+          newCall(ident("some"), rawFetch)
+        )
+      )
+    elif defaultNode.kind != nnkEmpty:
+      getValue = newTree(nnkIfExpr,
+        newTree(nnkElifBranch,
+          newCall(ident("isArgNull"), newLit(argIdxVal)),
+          defaultNode
+        ),
+        newTree(nnkElse,
+          rawFetch
+        )
+      )
+    else:
+      getValue = rawFetch
 
     var idx = $cacheIteration & "type"
     var enumVisited = enum_visited(idx)
@@ -213,7 +259,10 @@ template move_nim_params_as_locals =
     elif tupleConstrVisited or objectVisited:
       map_tuplec_params(pvar, ptype, fn.params[i])
       
-    varSection.add(newIdentDefs(ident(pvar), ident(NimTypes(ptype)), getValue))
+    if isOptionParam:
+      varSection.add(newIdentDefs(ident(pvar), typeNode, getValue))
+    else:
+      varSection.add(newIdentDefs(ident(pvar), ident(NimTypes(ptype)), getValue))
     cacheIteration += 1
 
 template copy_fn_body =
@@ -366,9 +415,14 @@ proc check_if_section(code: NimNode): NimNode =
   var branchSection = newNimNode(code.kind)
   for stmt in code:
     var new_node = newNimNode(stmt.kind)
-    if stmt[0].kind == nnkInfix:
+    if stmt.kind == nnkElifBranch:
       new_node.add analyze_node(stmt[0])
-    new_node.add analyze_node(stmt[^1])
+      new_node.add analyze_node(stmt[1])
+    elif stmt.kind == nnkElse:
+      new_node.add analyze_node(stmt[0])
+    else:
+      for child in stmt:
+        new_node.add analyze_node(child)
     branchSection.add new_node
   return branchSection
 
@@ -426,6 +480,25 @@ template clean_tuple_desc =
         rbody.add anonTuplConstr[key]
   
 
+proc wrapOptionReturn(code: NimNode): NimNode =
+  if code.kind == nnkReturnStmt:
+    let optVal = ident("optValTemp")
+    let retExpr = code[0]
+    result = quote do:
+      block:
+        let `optVal` = `retExpr`
+        if `optVal`.isNone:
+          returnNull()
+          return Datum(0)
+        else:
+          return `optVal`.get
+  elif code.len == 0:
+    result = code
+  else:
+    result = newNimNode(code.kind)
+    for child in code:
+      result.add wrapOptionReturn(child)
+
 proc explainWrapper(fn: NimNode): NimNode =
   let pgx_proc = newProc(ident("pgx_" & $fn.name), proc_type = nnkFuncDef)
   pgxFunctions[fn.name.repr] = fn.params
@@ -441,6 +514,10 @@ proc explainWrapper(fn: NimNode): NimNode =
 
   if not hasReturn(rbody) and fn.params[0].kind != nnkEmpty and rbody.len > 0:
     rbody[^1] = newTree(nnkReturnStmt, rbody[^1])
+
+  let isOptionReturn = fn.params[0].kind == nnkBracketExpr and fn.params[0][0].repr == "Option"
+  if isOptionReturn:
+    rbody = wrapOptionReturn(rbody)
 
   var shieldedBody = newTree(nnkTryStmt,
     rbody,
