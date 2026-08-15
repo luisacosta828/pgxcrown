@@ -136,51 +136,95 @@ proc auditBinarySymbols*(soPath: string): bool =
   if not fileExists(soPath):
     return true
 
-  let unsafeSymbols = [
-    "system", "execve", "execv", "execl", "execlp", "execvp", "popen",
-    "unlink", "remove", "rmdir", "chmod", "fchmod", "chown", "fchown"
+  # 🚫 STRICTLY BLOCKED OS System Calls (Shell execution, process spawning & file destruction)
+  let blockedSymbols = [
+    "system", "execve", "execv", "execl", "execlp", "execvp", "execvpe", "fexecve", "popen", "pclose", "fork", "vfork", "clone",
+    "unlink", "unlinkat", "remove", "rmdir",
+    "chmod", "fchmod", "fchmodat", "chown", "fchown", "lchown", "fchownat", "setuid", "setgid", "seteuid", "setegid"
+  ]
+
+  # ℹ️ ALLOWED Dynamic Library Loader Symbols (Used by language handlers like plnim)
+  let allowedLoaderSymbols = [
+    "dlopen", "dlsym", "dlclose", "dlerror"
   ]
 
   let (output, exitCode) = osproc.execCmdEx("nm -D " & quoteShell(soPath))
   if exitCode == 0:
-    var flagged: seq[string]
+    var blockedFlagged: seq[string]
+    var loaderFlagged: seq[string]
     for line in output.splitLines():
       if " U " in line:
         let parts = line.splitWhitespace()
         if parts.len > 0:
-          let sym = parts[^1]
-          if sym in unsafeSymbols:
-            flagged.add(sym)
+          let symRaw = parts[^1]
+          let symName = symRaw.split('@')[0]
+          if symName in blockedSymbols:
+            blockedFlagged.add(symRaw)
+          elif symName in allowedLoaderSymbols:
+            loaderFlagged.add(symRaw)
 
-    if flagged.len > 0:
-      echo "⚠️  [SECURITY WARNING] Dangerous C System Calls Detected in ", soPath, ":"
-      for s in flagged:
-        echo "   • Restricted Symbol: ", s
-      echo "   Exposing these symbols via FFI may compromise PostgreSQL process security."
+    if blockedFlagged.len > 0:
+      echo "❌ [SECURITY VIOLATION] Restricted OS System Calls Detected in ", soPath, ":"
+      for s in blockedFlagged:
+        echo "   • Blocked Symbol: '", s, "' (Forbidden by Pgxcrown Security Policy)"
+      echo "   Exposing raw shell/OS execution calls compromises PostgreSQL server security."
       return false
+    elif loaderFlagged.len > 0:
+      echo "ℹ️  [SECURITY AUDIT] Dynamic Library Loader Symbols Detected in ", soPath, ":"
+      for s in loaderFlagged:
+        echo "   • Extension Loader Symbol: '", s, "'"
+      return true
     else:
       echo "🛡️  [SECURITY AUDIT PASSED] No blacklisted OS system calls detected in ", soPath
+      return true
+
+proc cleanupGeneratedFiles*(dir: string, prjName: string, tmpFile: string) =
+  let filesToDelete = [
+    tmpFile,
+    dir / "tmp_main",
+    dir / prjName,
+    dir / prjName & ".so",
+    dir / "lib" & prjName & ".so",
+    dir / prjName & ".control",
+    dir / prjName & ".sql",
+    dir / prjName & "--0.0.1.sql",
+    dir / "install.sh"
+  ]
+  for f in filesToDelete:
+    if fileExists(f):
+      removeFile(f)
 
 proc compile2pgx(input_file: string) =
-  generate_tmp_file input_file
-  writeFile(tmp_file, tmp_content)
-  run nim_c(tmp_file)
-  run emit_pgx_c_extension(tmp_file)
-
   var (dir, file, _) = splitFile(input_file)
   let projectDir = dir.parentDir()
   let prjName = projectDir.splitFile().name
+
+  generate_tmp_file input_file
+  writeFile(tmp_file, tmp_content)
+
+  if execShellCmd(nim_c(tmp_file)) != 0:
+    cleanupGeneratedFiles(dir, prjName, tmp_file)
+    quit "Error executing: nim_c"
+
+  if execShellCmd(emit_pgx_c_extension(tmp_file)) != 0:
+    cleanupGeneratedFiles(dir, prjName, tmp_file)
+    quit "Error executing: emit_pgx_c_extension"
+
   let soFile = dir / prjName & ".so"
   let plainFile = dir / prjName
-  if fileExists(soFile):
-    discard auditBinarySymbols(soFile)
-  elif fileExists(plainFile):
-    discard auditBinarySymbols(plainFile)
+  var targetLib = if fileExists(soFile): soFile elif fileExists(plainFile): plainFile else: ""
+  
+  if targetLib.len > 0:
+    if not auditBinarySymbols(targetLib):
+      cleanupGeneratedFiles(dir, prjName, tmp_file)
+      quit("❌ [SECURITY VIOLATION] Compilation aborted for extension '" & prjName & "' due to restricted C system calls.")
 
-  #clean up project folder
-  removeFile(tmp_file)
+  # clean up temporary wrapper file
+  if fileExists(tmp_file):
+    removeFile(tmp_file)
   var exe = tmp_file.splitFile()
-  removeFile(exe.dir / exe.name)
+  if fileExists(exe.dir / exe.name):
+    removeFile(exe.dir / exe.name)
 
 
 proc compile2hook(input_file: string) =

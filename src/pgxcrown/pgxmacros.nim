@@ -367,7 +367,7 @@ proc analyze_node(code: NimNode): NimNode =
     result = check_for_section(code)
   of nnkProcDef, nnkFuncDef:
     result = check_proc_def(code)
-  of nnkPrefix, nnkBracketExpr, nnkDotExpr, nnkEmpty, nnkTypeSection:
+  of nnkPrefix, nnkBracketExpr, nnkDotExpr, nnkEmpty, nnkTypeSection, nnkBracket, nnkCurly, nnkPar, nnkSym:
     result = code
   of nnkTryStmt, nnkExceptBranch, nnkConstSection, nnkLetSection, nnkConstDef, nnkIdentDefs, nnkCast:
     for child in code:
