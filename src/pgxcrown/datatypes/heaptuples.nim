@@ -69,4 +69,13 @@ proc getTupleDesc*(heapTuple: HeapTupleHeader): TupleDesc {. inline .} =
     tupTypMod = getTypeMod(heapTuple)
   
   result = lookup_rowtype_tupdesc(tupTypeId, tupTypMod)
+
+{.emit: """
+static inline Oid get_attr_type_id(TupleDesc tupdesc, int idx) {
+    if (!tupdesc || idx < 1 || idx > tupdesc->natts) return 0;
+    return TupleDescAttr(tupdesc, idx - 1)->atttypid;
+}
+""".}
+
+proc getAttrTypeId*(tupDesc: TupleDesc, colIdx: cint): Oid {.importc: "get_attr_type_id".}
   
