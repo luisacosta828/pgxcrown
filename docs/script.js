@@ -25,6 +25,19 @@ const codeSnippets = {
 <span class="syn-sql">CREATE OR REPLACE FUNCTION add_numbers(int4, int4) RETURNS int4 as</span>
 <span class="syn-sql">'$libdir/my_extension', 'pgx_add_numbers' LANGUAGE c STRICT;</span>`,
 
+  options: `<span class="syn-cmt"># v0.13.0 Default Parameters & Option[T] NULL Defense</span>
+<span class="syn-kw">import</span> pgxcrown, std/options
+
+<span class="syn-kw">proc</span> <span class="syn-fn">greet</span>*(name: <span class="syn-type">string</span> = <span class="syn-str">"World"</span>, count: <span class="syn-type">int</span> = 1): <span class="syn-type">string</span> =
+  <span class="syn-str">"Hello "</span> & name & <span class="syn-str">" x"</span> & $count
+
+<span class="syn-kw">proc</span> <span class="syn-fn">add_opt</span>*(a: <span class="syn-type">int</span>, b: <span class="syn-type">Option[int]</span>): <span class="syn-type">Option[int]</span> =
+  <span class="syn-kw">if</span> b.isNone: <span class="syn-fn">none</span>(<span class="syn-type">int</span>) <span class="syn-kw">else</span>: <span class="syn-fn">some</span>(a + b.get)
+
+<span class="syn-cmt"># Auto-Generated PostgreSQL DDL:</span>
+<span class="syn-sql">CREATE FUNCTION greet(Text DEFAULT 'World', int4 DEFAULT 1) RETURNS Text;</span>
+<span class="syn-sql">CREATE FUNCTION add_opt(int4, int4 DEFAULT NULL) RETURNS int4;</span>`,
+
   shield: `<span class="syn-cmt"># v0.12.0 Automatic Panic & Exception Shield</span>
 <span class="syn-kw">func</span> <span class="syn-fn">pgx_proof_integer_overflow</span>(): <span class="syn-type">Datum</span> <span class="syn-pragma">{.pgv1, trusted.}</span> =
   <span class="syn-kw">try</span>:

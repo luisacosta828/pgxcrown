@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pgxcrown 👑 v0.12.0 — Native PostgreSQL Extension Framework for Nim</title>
-  <meta name="description" content="Build ultra-fast, lightweight, crash-proof PostgreSQL C extensions in Nim. Features v0.12.0 Automatic Panic Shield, zero VM overhead, sub-second codegen, and deep kernel engine hooks.">
+  <title>Pgxcrown 👑 v0.13.0 — Native PostgreSQL Extension Framework for Nim</title>
+  <meta name="description" content="Build ultra-fast, lightweight, crash-proof PostgreSQL C extensions in Nim. Features v0.13.0 Default Parameters & Option[T] NULL Defense, Automatic Panic Shield, zero VM overhead, and deep kernel engine hooks.">
   
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👑</text></svg>">
   <link rel="stylesheet" href="styles.css">
@@ -18,7 +18,7 @@
       <a href="#" class="nav-brand">
         <span class="crown-icon">👑</span>
         <span class="gradient-text">Pgxcrown</span>
-        <span class="version-badge">v0.12.0</span>
+        <span class="version-badge">v0.13.0</span>
       </a>
 
       <ul class="nav-links" id="navLinks">
@@ -91,6 +91,7 @@
           </div>
           <div class="code-tabs">
             <button class="tab-btn active" data-tab="nim">main.nim</button>
+            <button class="tab-btn" data-tab="options">Default & Options</button>
             <button class="tab-btn" data-tab="shield">Panic Shield</button>
             <button class="tab-btn" data-tab="enums">Enums & Tuples</button>
             <button class="tab-btn" data-tab="hooks">Kernel Hooks</button>
@@ -112,6 +113,14 @@
       </div>
 
       <div class="features-grid">
+        <!-- Feature 0: Default & Option[T] Defense -->
+        <div class="feature-card glass-card">
+          <div class="feature-icon icon-shield">💡</div>
+          <span class="feature-tag tag-new">v0.13.0 Spotlight</span>
+          <h3 class="feature-title">Default & Option[T] NULL Defense</h3>
+          <p class="feature-text">Maps Nim default parameters to SQL <code>DEFAULT</code> DDL, extracts SQL NULLs into <code>Option[T]</code> via <code>isArgNull</code>, and returns SQL <code>NULL</code> cleanly on <code>none(T)</code>.</p>
+        </div>
+
         <!-- Feature 1: Panic Shield -->
         <div class="feature-card glass-card">
           <div class="feature-icon icon-shield">🛡️</div>

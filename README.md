@@ -12,6 +12,7 @@ Build Native, High-Performance Postgres Extensions in Nim.
 
 | Feature Area | Supported Capabilities | Details |
 | :--- | :--- | :--- |
+| **Default Parameters & NULL Defense (v0.13.0)** | `Option[T]`, Default arguments, `isArgNull` | Automatic SQL `DEFAULT` DDL generation, null-safe argument extraction (`isArgNull`), `Option[T]` return handling (`none(T)` $\rightarrow$ SQL `NULL`), and `CALLED ON NULL INPUT` execution. |
 | **Automatic Panic Shield (v0.12.0)** | `try...except Defect/CatchableError` | Zero-overhead, compile-time exception wrapping. Intercepts panics (`OverflowDefect`, `IndexDefect`, etc.) and converts them to PostgreSQL `ereport(ERROR)` aborts without backend server crashes (`0 SIGABRTs`). |
 | **Extension Packaging** | `.control`, `--0.0.1.sql`, `install.sh` | Generates standard PostgreSQL extension control files and privileged installation scripts. |
 | **Extension Enablement** | `CREATE EXTENSION <name>` | Load extensions directly using PostgreSQL's standard extension mechanism. |
@@ -28,7 +29,31 @@ Build Native, High-Performance Postgres Extensions in Nim.
 
 Pgxcrown leverages Nim's static effect analysis and macro AST rewriting to guarantee extension safety at runtime and compile-time:
 
-### 1. 🛡️ Automatic Panic Shield (`v0.12.0`)
+### 1. 💡 Default Parameters & `Option[T]` NULL Defense (`v0.13.0`)
+Functions can define default arguments and optional parameters using Nim's `std/options`:
+
+```nim
+proc greet*(name: string = "World", count: int = 1): string =
+  "Hello " & name & " x" & $count
+
+proc test_option_param*(a: int, b: Option[int]): int =
+  if b.isNone: a else: a + b.get
+```
+
+Generated SQL (`v0.13.0` DDL):
+```sql
+CREATE OR REPLACE FUNCTION greet(Text DEFAULT 'World', int4 DEFAULT 1) RETURNS Text AS
+'myextension', 'pgx_greet'
+LANGUAGE c;
+
+CREATE OR REPLACE FUNCTION test_option_param(int4, int4 DEFAULT NULL) RETURNS int4 AS
+'myextension', 'pgx_test_option_param'
+LANGUAGE c;
+```
+
+> 📖 **Test Suite**: See [`tests/defaults_and_nulls/README.md`](tests/defaults_and_nulls/README.md) for full verification details and SQL test suite.
+
+### 2. 🛡️ Automatic Panic Shield (`v0.12.0`)
 All functions exported via Pgxcrown's `proc myproc*(...)` are automatically wrapped inside a compile-time panic shield. Unhandled runtime defects (such as arithmetic overflow, array out-of-bounds, nil pointer access, or invalid parsing) are intercepted at runtime and safely converted into PostgreSQL `ereport(ERROR, ...)` transaction aborts.
 
 ```sql
