@@ -54,7 +54,32 @@ LANGUAGE c;
 
 > 📖 **Test Suite**: See [`tests/defaults_and_nulls/README.md`](tests/defaults_and_nulls/README.md) for full verification details and SQL test suite.
 
-### 2. 🛡️ Automatic Panic Shield (`v0.12.0`)
+### 2. 🧩 PostgreSQL C Header FFI & Plugin Extensibility (`v0.13.1`)
+Pgxcrown allows developers to import low-level PostgreSQL C engine header files (`parser/parser.h`, `nodes/print.h`, `executor/executor.h`, `utils/builtins.h`) using Nim's `importc` pragma. Private FFI bindings are kept internal while UDF wrappers remain fully protected by Pgxcrown's Panic Shield and NULL defense.
+
+This provides an elegant way to build custom plugins, extend Pgxcrown's core capabilities, or leverage deep PostgreSQL internal features not yet exposed in the framework:
+
+```nim
+# Importing PostgreSQL internal C parser headers
+{.push header: "parser/parser.h".}
+proc raw_parser(str: cstring, mode: cint): pointer {.importc: "raw_parser".}
+{.pop.}
+
+{.push header: "nodes/print.h".}
+proc nodeToString(obj: pointer): cstring {.importc: "nodeToString".}
+{.pop.}
+
+# Exported UDF wrapping internal PostgreSQL parser
+proc pg_ast_to_raw*(sql_text: Option[string]): Option[string] =
+  if sql_text.isNone: return none(string)
+  let listPtr = raw_parser(cstring(sql_text.get), 0)
+  if listPtr == nil: return none(string)
+  return some($nodeToString(listPtr))
+```
+
+> 📖 **Case Study**: See [`tests/pg_ast_lens/README.md`](tests/pg_ast_lens/README.md) for a complete developer tool example using C header FFI bindings.
+
+### 3. 🛡️ Automatic Panic Shield (`v0.12.0`)
 All functions exported via Pgxcrown's `proc myproc*(...)` are automatically wrapped inside a compile-time panic shield. Unhandled runtime defects (such as arithmetic overflow, array out-of-bounds, nil pointer access, or invalid parsing) are intercepted at runtime and safely converted into PostgreSQL `ereport(ERROR, ...)` transaction aborts.
 
 ```sql
