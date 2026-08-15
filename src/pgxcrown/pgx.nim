@@ -96,8 +96,9 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
                elif hasOptionOrDefault: "language c;\n" 
                else: "language c strict;\n"
 
-  sql_scripts.add "\nCREATE OR REPLACE " & procTy & fn.name.repr & '(' & param_list.join(", ") & ')' & returnTypeStr & " as\n"
-  sql_scripts.add "'" & project(entrypoint) & "', 'pgx_" & fn.name.repr & "'\n"
+  var fnNameStr = fn.name.repr.strip(chars = {'*'})
+  sql_scripts.add "\nCREATE OR REPLACE " & procTy & fnNameStr & '(' & param_list.join(", ") & ')' & returnTypeStr & " as\n"
+  sql_scripts.add "'" & project(entrypoint) & "', 'pgx_" & fnNameStr & "'\n"
   sql_scripts.add strict
 
 
@@ -125,7 +126,7 @@ proc lift_base_datatypes(function: NimNode, custom_datatypes: Table[string, stri
 
 
 template triggered_by_create_type(source) =
-  hints["create-type"] = "pgxtool create-type template" in file_content.repr
+  hints["create-type"] = "pgxtool create-type template" in source.repr
 
 template check_type_section(element):string =
   case element[2].kind:
@@ -138,6 +139,15 @@ template check_type_section(element):string =
 template addEnumDefaultCase(element) =
   element[2].add ident("PgxUnknownValue")
   
+proc isImportc(fn: NimNode): bool =
+  if fn.pragma.kind != nnkEmpty:
+    for p in fn.pragma:
+      if p.kind == nnkIdent and p.repr == "importc":
+        return true
+      elif p.kind == nnkExprColonExpr and p[0].repr == "importc":
+        return true
+  return false
+
 macro decorateMainFunctions*() =
   var file_content = readFile(entrypoint)
   var source = parseStmt(file_content)
@@ -146,6 +156,7 @@ macro decorateMainFunctions*() =
 
   var res = newNimNode(nnkStmtList)
   res.add newNimNode(nnkImportStmt).add ident("pgxcrown")
+
   res.add ident("PG_MODULE_MAGIC")
 
   var custom_datatypes: Table[string, string]
@@ -159,13 +170,14 @@ macro decorateMainFunctions*() =
   let pgx_pragma = newNimNode(nnkPragma)
   pgx_pragma.add(ident("pgx"))
   for el in source:
-    if el.kind == nnkProcDef:
-      el.pragma = pgx_pragma
-      v1fns.add ident("pgx_" & el.name.repr)
-      buildSQLFunction(el, sql_scripts)
-      # Must be one custom datatype per file
-      if custom_datatypes.len == 1:
-        lift_base_datatypes(el, custom_datatypes)
+    if el.kind in {nnkProcDef, nnkFuncDef}:
+      if not isImportc(el):
+        var fnNameStr = el.name.repr.strip(chars = {'*'})
+        el.pragma = pgx_pragma
+        v1fns.add ident("pgx_" & fnNameStr)
+        buildSQLFunction(el, sql_scripts)
+        if custom_datatypes.len == 1:
+          lift_base_datatypes(el, custom_datatypes)
     elif el.kind == nnkTypeSection and hints["create-type"]:
       var 
         custom_dt = el[0][0].repr

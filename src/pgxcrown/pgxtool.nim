@@ -1,4 +1,4 @@
-import std/[os, strutils, json]
+import std/[os, strutils, json, osproc]
 import pathfinders
 import test_suite
 
@@ -131,11 +131,51 @@ template build_project(req: string, kind: string) =
 
     #writeFile(source / "hook_type.txt", kind.split(":")[1])
 
+proc auditBinarySymbols*(soPath: string): bool =
+  result = true
+  if not fileExists(soPath):
+    return true
+
+  let unsafeSymbols = [
+    "system", "execve", "execv", "execl", "execlp", "execvp", "popen",
+    "unlink", "remove", "rmdir", "chmod", "fchmod", "chown", "fchown"
+  ]
+
+  let (output, exitCode) = osproc.execCmdEx("nm -D " & quoteShell(soPath))
+  if exitCode == 0:
+    var flagged: seq[string]
+    for line in output.splitLines():
+      if " U " in line:
+        let parts = line.splitWhitespace()
+        if parts.len > 0:
+          let sym = parts[^1]
+          if sym in unsafeSymbols:
+            flagged.add(sym)
+
+    if flagged.len > 0:
+      echo "⚠️  [SECURITY WARNING] Dangerous C System Calls Detected in ", soPath, ":"
+      for s in flagged:
+        echo "   • Restricted Symbol: ", s
+      echo "   Exposing these symbols via FFI may compromise PostgreSQL process security."
+      return false
+    else:
+      echo "🛡️  [SECURITY AUDIT PASSED] No blacklisted OS system calls detected in ", soPath
+
 proc compile2pgx(input_file: string) =
   generate_tmp_file input_file
   writeFile(tmp_file, tmp_content)
   run nim_c(tmp_file)
   run emit_pgx_c_extension(tmp_file)
+
+  var (dir, file, _) = splitFile(input_file)
+  let projectDir = dir.parentDir()
+  let prjName = projectDir.splitFile().name
+  let soFile = dir / prjName & ".so"
+  let plainFile = dir / prjName
+  if fileExists(soFile):
+    discard auditBinarySymbols(soFile)
+  elif fileExists(plainFile):
+    discard auditBinarySymbols(plainFile)
 
   #clean up project folder
   removeFile(tmp_file)
