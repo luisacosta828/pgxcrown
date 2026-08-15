@@ -12,6 +12,7 @@ Build Native, High-Performance Postgres Extensions in Nim.
 
 | Feature Area | Supported Capabilities | Details |
 | :--- | :--- | :--- |
+| **Binary Symbol Security Auditor (v0.13.1)** | `auditBinarySymbols`, `isImportc` filter | Dynamic ELF symbol table inspection (`nm -D`). Strictly blocks blacklisted OS system calls (`system`, `execve`, `popen`, `unlink`) and deletes output `.so` binaries on security violations while keeping FFI imports clean. |
 | **Default Parameters & NULL Defense (v0.13.0)** | `Option[T]`, Default arguments, `isArgNull` | Automatic SQL `DEFAULT` DDL generation, null-safe argument extraction (`isArgNull`), `Option[T]` return handling (`none(T)` $\rightarrow$ SQL `NULL`), and `CALLED ON NULL INPUT` execution. |
 | **Automatic Panic Shield (v0.12.0)** | `try...except Defect/CatchableError` | Zero-overhead, compile-time exception wrapping. Intercepts panics (`OverflowDefect`, `IndexDefect`, etc.) and converts them to PostgreSQL `ereport(ERROR)` aborts without backend server crashes (`0 SIGABRTs`). |
 | **Extension Packaging** | `.control`, `--0.0.1.sql`, `install.sh` | Generates standard PostgreSQL extension control files and privileged installation scripts. |
