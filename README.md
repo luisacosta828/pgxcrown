@@ -55,7 +55,42 @@ LANGUAGE c;
 
 > 📖 **Test Suite**: See [`tests/defaults_and_nulls/README.md`](tests/defaults_and_nulls/README.md) for full verification details and SQL test suite.
 
-### 2. 🔌 Raw PostgreSQL Engine FFI & Unlimited Extensibility (`v0.13.1`)
+### 2. 🔢 PostgreSQL Dynamic & Composite Record Array Mapping (`v0.13.2`)
+Pgxcrown provides zero-copy, bidirectional mapping between Nim sequences (`seq[T]`) and PostgreSQL dynamic arrays:
+
+```nim
+# Primitive Dynamic Array Mapping (seq[int32] <-> int4[])
+proc double_int_array*(numbers: seq[int32]): seq[int32] =
+  userResult = newSeq[int32](numbers.len)
+  for i in 0 ..< numbers.len:
+    userResult[i] = numbers[i] * 2
+
+# Composite Record Array Mapping (seq[Person] <-> record[])
+type Person* = object
+  age*: int32
+  name*: string
+
+proc count_adults*(people: seq[Person]): int32 =
+  var count: int32 = 0
+  for p in people:
+    if p.age >= 18: count += 1
+  return count
+```
+
+Generated SQL (`v0.13.2` DDL):
+```sql
+CREATE OR REPLACE FUNCTION double_int_array(int4[]) RETURNS int4[] AS
+'myextension', 'pgx_double_int_array'
+LANGUAGE c STRICT;
+
+CREATE OR REPLACE FUNCTION count_adults(record[]) RETURNS int4 AS
+'myextension', 'pgx_count_adults'
+LANGUAGE c STRICT;
+```
+
+> 📖 **Test Suite**: See [`tests/arrays_suite/README.md`](tests/arrays_suite/README.md) for full interactive `psql` test queries.
+
+### 3. 🔌 Raw PostgreSQL Engine FFI & Unlimited Extensibility (`v0.13.1`)
 Don't wait for Pgxcrown to wrap every internal PostgreSQL C function! You can directly access **hundreds of low-level PostgreSQL engine APIs** (`parser/parser.h`, `executor/executor.h`, `utils/builtins.h`, `nodes/print.h`) using Nim's native `{.importc.}` pragma.
 
 #### 💡 Why Developers Love This:

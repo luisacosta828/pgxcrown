@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pgxcrown 👑 v0.13.1 — Native PostgreSQL Extension Framework for Nim</title>
-  <meta name="description" content="Build ultra-fast, lightweight, crash-proof PostgreSQL C extensions in Nim. Features v0.13.1 Binary Symbol Security Auditor, v0.13.0 Default Parameters & Option[T] NULL Defense, and Automatic Panic Shield.">
+  <title>Pgxcrown 👑 v0.13.2 — Native PostgreSQL Extension Framework for Nim</title>
+  <meta name="description" content="Build ultra-fast, lightweight, crash-proof PostgreSQL C extensions in Nim. Features v0.13.2 PostgreSQL Dynamic & Composite Array (seq[T]) Mapping, v0.13.1 Binary Symbol Security Auditor, v0.13.0 Default Parameters & Option[T] NULL Defense, and Automatic Panic Shield.">
   
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👑</text></svg>">
   <link rel="stylesheet" href="styles.css">
@@ -18,7 +18,7 @@
       <a href="#" class="nav-brand">
         <span class="crown-icon">👑</span>
         <span class="gradient-text">Pgxcrown</span>
-        <span class="version-badge">v0.13.1</span>
+        <span class="version-badge">v0.13.2</span>
       </a>
 
       <ul class="nav-links" id="navLinks">
@@ -113,6 +113,14 @@
       </div>
 
       <div class="features-grid">
+        <!-- Feature 00: v0.13.2 Array Mapping Spotlight -->
+        <div class="feature-card glass-card">
+          <div class="feature-icon icon-code">🔢</div>
+          <span class="feature-tag tag-new">v0.13.2 Spotlight</span>
+          <h3 class="feature-title">Dynamic & Composite Array Mapping</h3>
+          <p class="feature-text">Bidirectional zero-copy mapping between Nim sequences (<code>seq[T]</code>) and PostgreSQL dynamic arrays (<code>int4[]</code>, <code>text[]</code>, <code>bool[]</code>, <code>record[]</code>), including custom object & tuple record arrays.</p>
+        </div>
+
         <!-- Feature 0: Default & Option[T] Defense -->
         <div class="feature-card glass-card">
           <div class="feature-icon icon-shield">💡</div>
