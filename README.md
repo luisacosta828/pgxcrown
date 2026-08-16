@@ -276,7 +276,36 @@ CREATE OR REPLACE FUNCTION process_user(record) returns Text as
 language c strict;
 ```
 
-*Note: Currently composite objects and tuples can be consumed as input parameters. Returning composite types is planned for a future release.*
+*Note: Composite objects and tuples can be consumed as input parameters or dynamic array items.*
+
+---
+
+### 4. Set Returning Functions (`SETOF` / Table Functions) (`v0.15.0`)
+
+Returning a native Nim sequence (`seq[T]`) automatically generates `RETURNS SETOF <type>` in DDL and executes via PostgreSQL's `FuncCallContext` state machine:
+
+```nim
+# Returns SETOF int4 in PostgreSQL
+proc generate_series_nim*(startVal: int32, endVal: int32): seq[int32] =
+  result = @[]
+  for i in startVal .. endVal:
+    result.add(i)
+
+# Returns SETOF text in PostgreSQL
+proc list_fruits*(): seq[string] =
+  return @["Apple", "Banana", "Cherry", "Dragonfruit"]
+```
+
+Generated SQL output:
+```sql
+CREATE OR REPLACE FUNCTION generate_series_nim(int4, int4) RETURNS SETOF int4 AS
+'myextension', 'pgx_generate_series_nim'
+LANGUAGE c STRICT;
+
+CREATE OR REPLACE FUNCTION list_fruits() RETURNS SETOF text AS
+'myextension', 'pgx_list_fruits'
+LANGUAGE c STRICT;
+```
 
 ---
 

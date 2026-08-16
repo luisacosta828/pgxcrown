@@ -500,7 +500,7 @@ proc analyze_node(code: NimNode): NimNode =
     result = check_while_section(code)
   of nnkProcDef, nnkFuncDef:
     result = check_proc_def(code)
-  of nnkPrefix, nnkDotExpr, nnkEmpty, nnkTypeSection, nnkBracket, nnkCurly, nnkPar, nnkSym:
+  of nnkPrefix, nnkDotExpr, nnkEmpty, nnkTypeSection, nnkTypeDef, nnkBracket, nnkCurly, nnkPar, nnkSym:
     if code.len == 0:
       result = code
     else:
@@ -680,33 +680,42 @@ proc wrapSeqReturn(code: NimNode, retTypeStr: string): NimNode =
   let elemTypeNode = ident(elemTypeStr)
   let typeNode = newTree(nnkBracketExpr, ident("seq"), elemTypeNode)
 
-  result = quote do:
-    type SrfState = ref object
-      items: `typeNode`
-    var funcctx {.importc: "funcctx", nodecl.}: FuncCallContextPtr
-    if SRF_IS_FIRSTCALL():
-      var oldcontext {.importc: "oldcontext", nodecl.}: pointer
-      funcctx = SRF_FIRSTCALL_INIT()
-      oldcontext = MemoryContextSwitchTo(funcctx.multi_call_memory_ctx)
-      `transformedCode`
-      var stateObj = SrfState(items: userResult)
-      GC_ref(stateObj)
-      funcctx.user_fctx = cast[pointer](stateObj)
-      funcctx.max_calls = cast[uint64](userResult.len)
-      discard MemoryContextSwitchTo(oldcontext)
+  let srfStateIdent = ident("SrfState")
+  let funcctxIdent = ident("funcctx")
+  let oldcontextIdent = ident("oldcontext")
+  let stateObjIdent = ident("stateObj")
+  let callCntrIdent = ident("callCntr")
+  let maxCallsIdent = ident("maxCalls")
+  let itemValIdent = ident("itemVal")
+  let itemDatumIdent = ident("itemDatum")
 
-    funcctx = SRF_PERCALL_SETUP()
-    let callCntr = funcctx.call_cntr
-    let maxCalls = funcctx.max_calls
-    let stateObj = cast[SrfState](funcctx.user_fctx)
-    if callCntr < maxCalls and stateObj != nil:
-      let itemVal = stateObj.items[callCntr]
-      let itemDatum = `convIdent`(itemVal)
-      SRF_RETURN_NEXT(funcctx, itemDatum)
+  result = quote do:
+    type `srfStateIdent` = ref object
+      items: `typeNode`
+    var `funcctxIdent` {.importc: "funcctx", nodecl.}: FuncCallContextPtr
+    if SRF_IS_FIRSTCALL():
+      var `oldcontextIdent` {.importc: "oldcontext", nodecl.}: pointer
+      `funcctxIdent` = SRF_FIRSTCALL_INIT()
+      `oldcontextIdent` = MemoryContextSwitchTo(`funcctxIdent`.multi_call_memory_ctx)
+      `transformedCode`
+      var `stateObjIdent` = `srfStateIdent`(items: userResult)
+      GC_ref(`stateObjIdent`)
+      `funcctxIdent`.user_fctx = cast[pointer](`stateObjIdent`)
+      `funcctxIdent`.max_calls = cast[uint64](userResult.len)
+      discard MemoryContextSwitchTo(`oldcontextIdent`)
+
+    `funcctxIdent` = SRF_PERCALL_SETUP()
+    let `callCntrIdent` = `funcctxIdent`.call_cntr
+    let `maxCallsIdent` = `funcctxIdent`.max_calls
+    let `stateObjIdent` = cast[`srfStateIdent`](`funcctxIdent`.user_fctx)
+    if `callCntrIdent` < `maxCallsIdent` and `stateObjIdent` != nil:
+      let `itemValIdent` = `stateObjIdent`.items[`callCntrIdent`]
+      let `itemDatumIdent` = `convIdent`(`itemValIdent`)
+      SRF_RETURN_NEXT(`funcctxIdent`, `itemDatumIdent`)
     else:
-      if stateObj != nil:
-        GC_unref(stateObj)
-      SRF_RETURN_DONE(funcctx)
+      if `stateObjIdent` != nil:
+        GC_unref(`stateObjIdent`)
+      SRF_RETURN_DONE(`funcctxIdent`)
 
 proc wrapScalarReturn(code: NimNode, retTypeStr: string): NimNode =
   let datumConverter = case retTypeStr:
