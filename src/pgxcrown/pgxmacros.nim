@@ -501,7 +501,12 @@ proc analyze_node(code: NimNode): NimNode =
   of nnkProcDef, nnkFuncDef:
     result = check_proc_def(code)
   of nnkPrefix, nnkDotExpr, nnkEmpty, nnkTypeSection, nnkBracket, nnkCurly, nnkPar, nnkSym:
-    result = code
+    if code.len == 0:
+      result = code
+    else:
+      result = newNimNode(code.kind)
+      for child in code:
+        result.add analyze_node(child)
   of nnkTryStmt, nnkExceptBranch, nnkConstSection, nnkLetSection, nnkConstDef, nnkIdentDefs, nnkCast:
     for child in code:
       result.add analyze_node(child)
@@ -634,36 +639,74 @@ proc wrapOptionReturn(code: NimNode): NimNode =
       result.add wrapOptionReturn(child)
 
 proc wrapSeqReturn(code: NimNode, retTypeStr: string): NimNode =
-  let seqReturnCall = case retTypeStr:
-    of "seq[int]", "seq[int32]": "returnArrayInt32"
-    of "seq[int64]": "returnArrayInt64"
-    of "seq[float]", "seq[float64]", "seq[float32]": "returnArrayFloat64"
-    of "seq[bool]": "returnArrayBool"
-    of "seq[string]": "returnArrayString"
+  let elemTypeStr = retTypeStr[4 .. ^2]
+  let datumConverter = case elemTypeStr:
+    of "int", "int32", "cint": "Int32GetDatum"
+    of "int64", "clonglong": "Int64GetDatum"
+    of "int16", "cshort": "Int16GetDatum"
+    of "float", "float32", "cfloat": "Float4GetDatum"
+    of "float64", "cdouble": "Float8GetDatum"
+    of "bool": "BoolGetDatum"
+    of "string": "CStringGetTextDatum"
     else: ""
 
-  if seqReturnCall.len == 0:
+  if datumConverter.len == 0:
     return code
 
-  proc transformReturn(n: NimNode): NimNode =
-    if n.kind == nnkReturnStmt:
-      if n[0].kind == nnkEmpty:
-        return newTree(nnkReturnStmt, newCall(ident(seqReturnCall), ident("userResult")))
-      else:
-        return newTree(nnkReturnStmt, newCall(ident(seqReturnCall), n[0]))
+  proc replaceResult(n: NimNode): NimNode =
+    if n.kind == nnkIdent and n.repr == "result":
+      return ident("userResult")
     elif n.len == 0:
       return n
     else:
       result = newNimNode(n.kind)
       for child in n:
+        result.add replaceResult(child)
+
+  proc transformReturn(n: NimNode): NimNode =
+    if n.kind == nnkReturnStmt:
+      let retExpr = if n[0].kind == nnkEmpty: ident("userResult") else: n[0]
+      return newTree(nnkAsgn, ident("userResult"), replaceResult(retExpr))
+    elif n.len == 0:
+      return replaceResult(n)
+    else:
+      result = newNimNode(n.kind)
+      for child in n:
         result.add transformReturn(child)
 
-  let transformed = transformReturn(code)
-  if not hasReturn(transformed):
-    result = transformed
-    result.add newTree(nnkReturnStmt, newCall(ident(seqReturnCall), ident("userResult")))
-  else:
-    result = transformed
+  let transformedCode = transformReturn(code)
+
+  let convIdent = ident(datumConverter)
+  let elemTypeNode = ident(elemTypeStr)
+  let typeNode = newTree(nnkBracketExpr, ident("seq"), elemTypeNode)
+
+  result = quote do:
+    type SrfState = ref object
+      items: `typeNode`
+    var funcctx {.importc: "funcctx", nodecl.}: FuncCallContextPtr
+    if SRF_IS_FIRSTCALL():
+      var oldcontext {.importc: "oldcontext", nodecl.}: pointer
+      funcctx = SRF_FIRSTCALL_INIT()
+      oldcontext = MemoryContextSwitchTo(funcctx.multi_call_memory_ctx)
+      `transformedCode`
+      var stateObj = SrfState(items: userResult)
+      GC_ref(stateObj)
+      funcctx.user_fctx = cast[pointer](stateObj)
+      funcctx.max_calls = cast[uint64](userResult.len)
+      discard MemoryContextSwitchTo(oldcontext)
+
+    funcctx = SRF_PERCALL_SETUP()
+    let callCntr = funcctx.call_cntr
+    let maxCalls = funcctx.max_calls
+    let stateObj = cast[SrfState](funcctx.user_fctx)
+    if callCntr < maxCalls and stateObj != nil:
+      let itemVal = stateObj.items[callCntr]
+      let itemDatum = `convIdent`(itemVal)
+      SRF_RETURN_NEXT(funcctx, itemDatum)
+    else:
+      if stateObj != nil:
+        GC_unref(stateObj)
+      SRF_RETURN_DONE(funcctx)
 
 proc wrapScalarReturn(code: NimNode, retTypeStr: string): NimNode =
   let datumConverter = case retTypeStr:

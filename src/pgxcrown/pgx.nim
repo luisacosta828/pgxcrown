@@ -42,6 +42,10 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
     if retTypeNode.kind == nnkBracketExpr and retTypeNode[0].repr == "Option":
       returnTypeStr = " returns " & NimToSQLType(retTypeNode[1].repr)
       hasOptionOrDefault = true
+    elif retTypeNode.kind == nnkBracketExpr and retTypeNode[0].repr == "seq":
+      let innerType = retTypeNode[1].repr
+      let sqlInner = if innerType in recordType or innerType.endsWith("*"): "record" else: NimToSQLType(innerType)
+      returnTypeStr = " returns SETOF " & sqlInner
     else:
       returnTypeStr = " returns " & NimToSQLType(retTypeNode.repr)
 

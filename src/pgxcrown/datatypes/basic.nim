@@ -186,6 +186,28 @@ proc OidOutputFunctionCall*(functionId: Oid, value: Datum): cstring {. importc, 
 proc enum_out*(fcinfo: FunctionCallInfo): Datum {.importc: "enum_out", noconv, cdecl, noSideEffect, gcsafe.}
 {.pop.}
 
+{.push header: "funcapi.h".}
+type
+  FuncCallContextObj* {.importc: "FuncCallContext".} = object
+    call_cntr*: uint64
+    max_calls*: uint64
+    user_fctx*: pointer
+    multi_call_memory_ctx*: pointer
+    tuple_desc*: pointer
+  FuncCallContextPtr* = ptr FuncCallContextObj
+
+proc SRF_IS_FIRSTCALL*(): bool {.importc: "SRF_IS_FIRSTCALL".}
+proc SRF_FIRSTCALL_INIT*(): FuncCallContextPtr {.importc: "SRF_FIRSTCALL_INIT".}
+proc SRF_PERCALL_SETUP*(): FuncCallContextPtr {.importc: "SRF_PERCALL_SETUP".}
+proc MemoryContextSwitchTo*(context: pointer): pointer {.importc: "MemoryContextSwitchTo".}
+{.pop.}
+
+template SRF_RETURN_NEXT*(funcctx: typed, resultDatum: typed) =
+  {.emit: ["SRF_RETURN_NEXT(", funcctx, ", ", resultDatum, ");"].}
+
+template SRF_RETURN_DONE*(funcctx: typed) =
+  {.emit: ["SRF_RETURN_DONE(", funcctx, ");"].}
+
 {.push header: "common/fe_memutils.h".}
 proc pfree*(data: pointer) {.importc, noconv, cdecl, noSideEffect, gcsafe.}
 {.pop.}

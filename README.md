@@ -12,6 +12,7 @@ Build Native, High-Performance Postgres Extensions in Nim.
 
 | Feature Area | Supported Capabilities | Details |
 | :--- | :--- | :--- |
+| **Set Returning Functions (v0.15.0)** | `RETURNS SETOF <type>`, `FuncCallContext` | Returning native Nim sequences (`seq[T]`) automatically generates `RETURNS SETOF <type>` DDL manifests and executes via PostgreSQL's `FuncCallContext` state machine with ORC memory safety (`GC_ref`/`GC_unref`). |
 | **Non-STRICT Null-Datum Defense (v0.14.0)** | `isArgNull`, `CALLED ON NULL INPUT` | Intercepts `isArgNull(n)` on non-strict functions, safely substituting zero-values (`""`, `0`, `@[]`) to prevent null pointer dereferences and SEGV crashes when SQL `NULL` arguments are passed. |
 | **PostgreSQL Array Mapping (v0.13.2)** | `seq[T]`, `int4[]`, `text[]`, `bool[]`, `record[]` | Bidirectional zero-copy mapping between Nim sequences (`seq[T]`) and PostgreSQL dynamic arrays. Supports primitive types (`seq[int32]` $\rightarrow$ `int4[]`, `seq[string]` $\rightarrow$ `text[]`, `seq[bool]` $\rightarrow$ `bool[]`) and composite record arrays (`seq[Object]` / `seq[Tuple]` $\rightarrow$ `record[]`). |
 | **Binary Symbol Security Auditor (v0.13.1)** | `auditBinarySymbols`, `isImportc` filter | Dynamic ELF symbol table inspection (`nm -D`). Strictly blocks blacklisted OS system calls (`system`, `execve`, `popen`, `unlink`) and deletes output `.so` binaries on security violations while keeping FFI imports clean. |

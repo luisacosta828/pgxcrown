@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pgxcrown 👑 v0.14.0 — Native PostgreSQL Extension Framework for Nim</title>
-  <meta name="description" content="Build ultra-fast, lightweight, crash-proof PostgreSQL C extensions in Nim. Features v0.14.0 Non-STRICT Null-Datum Defense, v0.13.2 PostgreSQL Dynamic & Composite Array Mapping, v0.13.1 Binary Symbol Security Auditor, and Automatic Panic Shield.">
+  <title>Pgxcrown 👑 v0.15.0 — Native PostgreSQL Extension Framework for Nim</title>
+  <meta name="description" content="Build ultra-fast, lightweight, crash-proof PostgreSQL C extensions in Nim. Features v0.15.0 Set Returning Functions (SETOF / Table Functions), v0.14.0 Non-STRICT Null-Datum Defense, and Automatic Panic Shield.">
   
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👑</text></svg>">
   <link rel="stylesheet" href="styles.css">
@@ -18,7 +18,7 @@
       <a href="#" class="nav-brand">
         <span class="crown-icon">👑</span>
         <span class="gradient-text">Pgxcrown</span>
-        <span class="version-badge">v0.14.0</span>
+        <span class="version-badge">v0.15.0</span>
       </a>
 
       <ul class="nav-links" id="navLinks">
@@ -113,6 +113,14 @@
       </div>
 
       <div class="features-grid">
+        <!-- Feature 0000: v0.15.0 SETOF Spotlight -->
+        <div class="feature-card glass-card">
+          <div class="feature-icon icon-table">📊</div>
+          <span class="feature-tag tag-new">v0.15.0 Spotlight</span>
+          <h3 class="feature-title">Set Returning Functions (SETOF)</h3>
+          <p class="feature-text">Returning native Nim sequences (<code>seq[T]</code>) automatically generates <code>RETURNS SETOF &lt;type&gt;</code> in DDL and executes via PostgreSQL's <code>FuncCallContext</code> state machine.</p>
+        </div>
+
         <!-- Feature 000: v0.14.0 Null-Datum Defense Spotlight -->
         <div class="feature-card glass-card">
           <div class="feature-icon icon-shield">🛡️</div>
