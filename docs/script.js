@@ -25,6 +25,21 @@ const codeSnippets = {
 <span class="syn-sql">CREATE OR REPLACE FUNCTION add_numbers(int4, int4) RETURNS int4 as</span>
 <span class="syn-sql">'$libdir/my_extension', 'pgx_add_numbers' LANGUAGE c STRICT;</span>`,
 
+  srf: `<span class="syn-cmt"># v0.15.0 Set Returning Functions (SETOF / Table Functions)</span>
+<span class="syn-kw">import</span> pgxcrown
+
+<span class="syn-kw">proc</span> <span class="syn-fn">generate_series_nim</span>*(startVal: <span class="syn-type">int32</span>, endVal: <span class="syn-type">int32</span>): <span class="syn-type">seq[int32]</span> =
+  result = @[]
+  <span class="syn-kw">for</span> i <span class="syn-kw">in</span> startVal .. endVal:
+    result.add(i)
+
+<span class="syn-kw">proc</span> <span class="syn-fn">list_fruits</span>*(): <span class="syn-type">seq[string]</span> =
+  <span class="syn-kw">return</span> @[<span class="syn-str">"Apple"</span>, <span class="syn-str">"Banana"</span>, <span class="syn-str">"Cherry"</span>, <span class="syn-str">"Dragonfruit"</span>]
+
+<span class="syn-cmt"># Auto-Generated PostgreSQL DDL:</span>
+<span class="syn-sql">CREATE FUNCTION generate_series_nim(int4, int4) RETURNS SETOF int4;</span>
+<span class="syn-sql">CREATE FUNCTION list_fruits() RETURNS SETOF text;</span>`,
+
   options: `<span class="syn-cmt"># v0.13.0 Default Parameters & Option[T] NULL Defense</span>
 <span class="syn-kw">import</span> pgxcrown, std/options
 
