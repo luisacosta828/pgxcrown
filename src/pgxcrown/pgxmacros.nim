@@ -239,7 +239,7 @@ template map_seq_tuplec_params(pvar, elemTypeStr, param, argIdxNode) =
         of "int64": newCall(ident("DatumGetInt64"), rawDatum)
         of "float", "float64": newCall(ident("DatumGetFloat8"), rawDatum)
         of "bool": newTree(nnkInfix, ident("!="), rawDatum, newIntLitNode(0))
-        of "string": newCall(ident("$"), newCall(ident("OidOutputFunctionCall"), newCall(ident("getAttrTypeId"), tupvar, pgIdx), rawDatum))
+        of "string": newCall(ident("$"), newCall(ident("getTupleStringAttr"), itemTh, tupvar, pgIdx))
         else: rawDatum
       ifBody.add newTree(nnkAsgn, newTree(nnkBracketExpr, newTree(nnkBracketExpr, ident(pvar), loopIdx), nimIdx), typedVal)
       fieldIdx += 1
@@ -257,7 +257,7 @@ template map_seq_tuplec_params(pvar, elemTypeStr, param, argIdxNode) =
           of "int64": newCall(ident("DatumGetInt64"), rawDatum)
           of "float", "float64": newCall(ident("DatumGetFloat8"), rawDatum)
           of "bool": newTree(nnkInfix, ident("!="), rawDatum, newIntLitNode(0))
-          of "string": newCall(ident("$"), newCall(ident("OidOutputFunctionCall"), newCall(ident("getAttrTypeId"), tupvar, pgIdx), rawDatum))
+          of "string": newCall(ident("$"), newCall(ident("getTupleStringAttr"), itemTh, tupvar, pgIdx))
           else: rawDatum
         ifBody.add newTree(nnkAsgn, newDotExpr(newTree(nnkBracketExpr, ident(pvar), loopIdx), fieldNameIdent), typedVal)
         fieldIdx += 1

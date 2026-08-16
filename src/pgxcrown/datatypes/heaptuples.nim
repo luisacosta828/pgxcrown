@@ -1,4 +1,4 @@
-from basic import Oid,Datum
+from basic import Oid, Datum, OidOutputFunctionCall
 
 {.push header: "access/htup_details.h" .}
 type
@@ -24,8 +24,7 @@ type
 
 {.push header: "access/tupdesc.h".}
 type
-  TupleDesc* {.importc: "TupleDesc".} = ref object
-    natts*: int
+  TupleDesc* {.importc: "TupleDesc".} = pointer
 
 proc DecrTupleDescRefCount*(tup: TupleDesc) {.importc.}
 
@@ -63,6 +62,20 @@ proc getTypeMod(tup: HeapTupleHeader): cint  =
     return tup.t_choice.t_datum.datum_typmod
   return -1
 
+{.push header: "catalog/pg_attribute.h".}
+type
+  FormData_pg_attribute* {.importc: "FormData_pg_attribute".} = object
+    atttypid*: Oid
+{.pop.}
+
+{.push header: "access/tupdesc.h".}
+proc TupleDescAttr*(tupdesc: TupleDesc, i: cint): ptr FormData_pg_attribute {.importc: "TupleDescAttr".}
+{.pop.}
+
+{.push header: "utils/lsyscache.h".}
+proc getTypeOutputInfo*(typeId: Oid, typOutput: var Oid, typIsVarlena: var bool) {.importc: "getTypeOutputInfo".}
+{.pop.}
+
 proc getTupleDesc*(heapTuple: HeapTupleHeader): TupleDesc {. inline .} =
   var 
     tupTypeId = getTypeId(heapTuple)
@@ -70,12 +83,17 @@ proc getTupleDesc*(heapTuple: HeapTupleHeader): TupleDesc {. inline .} =
   
   result = lookup_rowtype_tupdesc(tupTypeId, tupTypMod)
 
-{.emit: """
-static inline Oid get_attr_type_id(TupleDesc tupdesc, int idx) {
-    if (!tupdesc || idx < 1 || idx > tupdesc->natts) return 0;
-    return TupleDescAttr(tupdesc, idx - 1)->atttypid;
-}
-""".}
-
-proc getAttrTypeId*(tupDesc: TupleDesc, colIdx: cint): Oid {.importc: "get_attr_type_id".}
+proc getTupleStringAttr*(element: HeapTupleHeader, row: TupleDesc, idx: cint): cstring =
+  var isNull: bool
+  if not row.isNil and not element.isNil:
+    let d = GetAttributeByNum(element, idx, isNull)
+    if not isNull and d != 0:
+      let attr = TupleDescAttr(row, idx - 1)
+      if attr != nil:
+        var outputProc: Oid
+        var isVarlena: bool
+        getTypeOutputInfo(attr.atttypid, outputProc, isVarlena)
+        if outputProc != 0:
+          return OidOutputFunctionCall(outputProc, d)
+  return ""
   
