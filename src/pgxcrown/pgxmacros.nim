@@ -342,7 +342,29 @@ template move_nim_params_as_locals =
         )
       )
     else:
-      getValue = rawFetch
+      let zeroVal = case ptype
+        of "string": newLit("")
+        of "bool": newLit(false)
+        of "int", "int32", "cint": newLit(int32(0))
+        of "int64": newLit(int64(0))
+        of "float", "float64": newLit(float64(0.0))
+        else:
+          if ptype.startsWith("seq["):
+            newTree(nnkPrefix, ident("@"), newTree(nnkBracket, newSeq[NimNode]()))
+          else:
+            rawFetch
+      if zeroVal != rawFetch:
+        getValue = newTree(nnkIfExpr,
+          newTree(nnkElifBranch,
+            newCall(ident("isArgNull"), newLit(argIdxVal)),
+            zeroVal
+          ),
+          newTree(nnkElse,
+            rawFetch
+          )
+        )
+      else:
+        getValue = rawFetch
 
     var idx = $cacheIteration & "type"
     var enumVisited = enum_visited(idx)
