@@ -1,206 +1,77 @@
-# Pgxcrown
+<div align="center">
 
-Build Native, High-Performance Postgres Extensions in Nim.
+# 👑 Pgxcrown
 
-![](banner.jpg)
+### Build Native, Crash-Proof, High-Performance PostgreSQL Extensions in Nim
 
-**Pgxcrown** is an open-source framework and toolchain for building native [PostgreSQL](https://www.postgresql.org/) extensions in [Nim](https://nim-lang.org/). It combines Nim's expressive syntax and zero-overhead performance with PostgreSQL's C extension architecture (`postgres.h`, `fmgr.h`).
+[![Nim Version](https://img.shields.io/badge/Nim-2.0%2B-FFE953?logo=nim&logoColor=white)](https://nim-lang.org/)
+[![PostgreSQL Support](https://img.shields.io/badge/PostgreSQL-12%20--%2017-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Release](https://img.shields.io/badge/Release-v0.16.0-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Security Sandbox](https://img.shields.io/badge/Security-Symbol%20Audited-success)](#-binary-symbol-security-auditor)
 
----
+<br/>
 
-## 📊 Summary of Features
+<img src="banner.jpg" alt="Pgxcrown Banner" width="100%" />
 
-| Feature Area | Supported Capabilities | Details |
-| :--- | :--- | :--- |
-| **Type-Safe Query Builder & SPI Engine (v0.16.0)** | `query_builder`, `spi`, `table()`, `createTableFrom`, `fetch[T]`, `fetchScalar[T]` | Fluent compile-time SQL AST with zero-string table proxies, compile-time schema introspection & DDL generation (`createTableFrom`), strongly typed row mapping (`fetch[T]`), CTEs, window functions, PostgreSQL UPSERT (`ON CONFLICT`), lateral joins, set operations, and hardened SPI runtime with stream reducers (`any`, `all`, `firstOption`). |
-| **Set Returning Functions (v0.15.0)** | `RETURNS SETOF <type>`, `FuncCallContext` | Returning native Nim sequences (`seq[T]`) automatically generates `RETURNS SETOF <type>` DDL manifests and executes via PostgreSQL's `FuncCallContext` state machine with ORC memory safety (`GC_ref`/`GC_unref`). |
-| **Non-STRICT Null-Datum Defense (v0.14.0)** | `isArgNull`, `CALLED ON NULL INPUT` | Intercepts `isArgNull(n)` on non-strict functions, safely substituting zero-values (`""`, `0`, `@[]`) to prevent null pointer dereferences and SEGV crashes when SQL `NULL` arguments are passed. |
-| **PostgreSQL Array Mapping (v0.13.2)** | `seq[T]`, `int4[]`, `text[]`, `bool[]`, `record[]` | Bidirectional zero-copy mapping between Nim sequences (`seq[T]`) and PostgreSQL dynamic arrays. Supports primitive types (`seq[int32]` $\rightarrow$ `int4[]`, `seq[string]` $\rightarrow$ `text[]`, `seq[bool]` $\rightarrow$ `bool[]`) and composite record arrays (`seq[Object]` / `seq[Tuple]` $\rightarrow$ `record[]`). |
-| **Binary Symbol Security Auditor (v0.13.1)** | `auditBinarySymbols`, `isImportc` filter | Dynamic ELF symbol table inspection (`nm -D`). Strictly blocks blacklisted OS system calls (`system`, `execve`, `popen`, `unlink`) and deletes output `.so` binaries on security violations while keeping FFI imports clean. |
-| **Default Parameters & NULL Defense (v0.13.0)** | `Option[T]`, Default arguments, `isArgNull` | Automatic SQL `DEFAULT` DDL generation, null-safe argument extraction (`isArgNull`), `Option[T]` return handling (`none(T)` $\rightarrow$ SQL `NULL`), and `CALLED ON NULL INPUT` execution. |
-| **Automatic Panic Shield (v0.12.0)** | `try...except Defect/CatchableError` | Zero-overhead, compile-time exception wrapping. Intercepts panics (`OverflowDefect`, `IndexDefect`, etc.) and converts them to PostgreSQL `ereport(ERROR)` aborts without backend server crashes (`0 SIGABRTs`). |
-| **Extension Packaging** | `.control`, `--0.0.1.sql`, `install.sh` | Generates standard PostgreSQL extension control files and privileged installation scripts. |
-| **Extension Enablement** | `CREATE EXTENSION <name>` | Load extensions directly using PostgreSQL's standard extension mechanism. |
-| **Compile-Time Safety** | Static Effect Analysis | Enforces strict compile-time safety, preventing unhandled I/O operations and unhandled exceptions. |
-| **Primitive Datatypes** | `int`, `int32`, `int64`, `float`, `string`, `cstring`, `bool` | Automatic bidirectional conversion between Nim native types and Postgres `Datum`. |
-| **Enum Types** | Consuming Postgres `ENUM` in Nim | Auto-generates `CREATE TYPE ... AS ENUM` and converts Postgres OIDs to Nim enums. |
-| **Composite Records** | Consuming Postgres `record` / `tuple` | Inspect and read PostgreSQL `HeapTupleHeader` attributes via Nim `tuple` and `object` types. |
-| **Postgres Engine Hooks** | `emit_log`, `post_parse_analyze` | Intercept query parsing and log emission via built-in hook builders. |
-| **CLI Tool (`pgxtool`)** | `init`, `create-project`, `build-extension`, `install`, `path-finders`, `test` | Scaffolding, path discovery, compilation, installation scripts, and Docker test harness. |
+<br/>
+<br/>
+
+**Pgxcrown** is a modern framework and toolchain for building compiled, native [PostgreSQL](https://www.postgresql.org/) C extensions using [Nim](https://nim-lang.org/). It combines Nim's clean Python-like ergonomics, deterministic ARC/ORC memory management, and zero-overhead C transpilation with PostgreSQL's low-level engine architecture (`postgres.h`, `fmgr.h`, `executor/spi.h`).
+
+</div>
 
 ---
 
-## 🛡️ Automatic Panic Shield & Safety Guarantees
+## ⚡ Why Pgxcrown?
 
-Pgxcrown leverages Nim's static effect analysis and macro AST rewriting to guarantee extension safety at runtime and compile-time:
-
-### 1. 💡 Default Parameters & `Option[T]` NULL Defense (`v0.13.0`)
-Functions can define default arguments and optional parameters using Nim's `std/options`:
-
-```nim
-proc greet*(name: string = "World", count: int = 1): string =
-  "Hello " & name & " x" & $count
-
-proc test_option_param*(a: int, b: Option[int]): int =
-  if b.isNone: a else: a + b.get
-```
-
-Generated SQL (`v0.13.0` DDL):
-```sql
-CREATE OR REPLACE FUNCTION greet(Text DEFAULT 'World', int4 DEFAULT 1) RETURNS Text AS
-'myextension', 'pgx_greet'
-LANGUAGE c;
-
-CREATE OR REPLACE FUNCTION test_option_param(int4, int4 DEFAULT NULL) RETURNS int4 AS
-'myextension', 'pgx_test_option_param'
-LANGUAGE c;
-```
-
-> 📖 **Test Suite**: See [`tests/defaults_and_nulls/README.md`](tests/defaults_and_nulls/README.md) for full verification details and SQL test suite.
-
-### 2. 🔢 PostgreSQL Dynamic & Composite Record Array Mapping (`v0.13.2`)
-Pgxcrown provides zero-copy, bidirectional mapping between Nim sequences (`seq[T]`) and PostgreSQL dynamic arrays:
-
-```nim
-# Primitive Dynamic Array Mapping (seq[int32] <-> int4[])
-proc double_int_array*(numbers: seq[int32]): seq[int32] =
-  userResult = newSeq[int32](numbers.len)
-  for i in 0 ..< numbers.len:
-    userResult[i] = numbers[i] * 2
-
-# Composite Record Array Mapping (seq[Person] <-> record[])
-type Person* = object
-  age*: int32
-  name*: string
-
-proc count_adults*(people: seq[Person]): int32 =
-  var count: int32 = 0
-  for p in people:
-    if p.age >= 18: count += 1
-  return count
-```
-
-Generated SQL (`v0.13.2` DDL):
-```sql
-CREATE OR REPLACE FUNCTION double_int_array(int4[]) RETURNS int4[] AS
-'myextension', 'pgx_double_int_array'
-LANGUAGE c STRICT;
-
-CREATE OR REPLACE FUNCTION count_adults(record[]) RETURNS int4 AS
-'myextension', 'pgx_count_adults'
-LANGUAGE c STRICT;
-```
-
-> 📖 **Test Suite**: See [`tests/arrays_suite/README.md`](tests/arrays_suite/README.md) for full interactive `psql` test queries.
-
-### 3. 🔌 Raw PostgreSQL Engine FFI & Unlimited Extensibility (`v0.13.1`)
-Don't wait for Pgxcrown to wrap every internal PostgreSQL C function! You can directly access **hundreds of low-level PostgreSQL engine APIs** (`parser/parser.h`, `executor/executor.h`, `utils/builtins.h`, `nodes/print.h`) using Nim's native `{.importc.}` pragma.
-
-#### 💡 Why Developers Love This:
-- ⚡ **Zero Waiting**: Bind any raw C function from `postgres.h` in 2 lines of code.
-- 🧹 **Macro Cleanliness**: Pgxcrown's `isImportc` macro automatically keeps low-level C declarations private while generating clean SQL `CREATE FUNCTION` DDL for your exported Nim procs (`proc my_udf*`).
-- 🛡️ **Full Security & Panic Shield**: Raw C bindings wrapped inside Nim UDFs automatically inherit Pgxcrown's compile-time Panic Shield (`try...except Defect`) and `Option[T]` NULL defense.
-
-#### 📖 Quick Example: Building a C Query Parser AST Introspector
-```nim
-import pgxcrown
-import std/options
-
-# 1. Bind raw C functions directly from PostgreSQL engine headers
-{.push header: "parser/parser.h".}
-proc raw_parser(str: cstring, mode: cint): pointer {.importc: "raw_parser".}
-{.pop.}
-
-{.push header: "nodes/print.h".}
-proc nodeToString(obj: pointer): cstring {.importc: "nodeToString".}
-{.pop.}
-
-# 2. Export a high-level, safe SQL function wrapping the raw C parser
-proc pg_ast_to_raw*(sql_text: Option[string]): Option[string] =
-  if sql_text.isNone: return none(string)
-  
-  let listPtr = raw_parser(cstring(sql_text.get), 0)
-  if listPtr == nil: return none(string)
-  
-  return some($nodeToString(listPtr))
-```
-
-> 📖 **Case Study & Cookbook**: See [`tests/pg_ast_lens/README.md`](tests/pg_ast_lens/README.md) for a complete developer tool parsing SQL queries into PostgreSQL C parser ASTs.
-
-### 3. 🛡️ Automatic Panic Shield (`v0.12.0`)
-All functions exported via Pgxcrown's `proc myproc*(...)` are automatically wrapped inside a compile-time panic shield. Unhandled runtime defects (such as arithmetic overflow, array out-of-bounds, nil pointer access, or invalid parsing) are intercepted at runtime and safely converted into PostgreSQL `ereport(ERROR, ...)` transaction aborts.
-
-```sql
--- Integer Overflow (2,147,483,647 + 1) -> Intercepted cleanly by Panic Shield
-SELECT proof_integer_overflow(2147483647, 1);
--- Result: ERROR: Extension Defect [OverflowDefect]: over- or underflow
-
--- Index Out-of-Bounds -> Intercepted cleanly by Panic Shield
-SELECT proof_index_out_of_bounds(5);
--- Result: ERROR: Extension Defect [IndexDefect]: index 5 not in 0 .. 2
-```
-
-> 📖 **Test Suite**: See [`tests/panic_shield/README.md`](tests/panic_shield/README.md) for full verification details and SQL test suite.
-
-### 2. 🚫 Strict I/O & Effect Prevention
-To guarantee that user-written extensions cannot compromise PostgreSQL process stability, Pgxcrown statically analyzes compiled functions. The compiler enforces that extension functions **cannot execute unchecked or unhandled I/O operations**:
-
-- 🚫 **Unhandled File System Access**: Prevents arbitrary disk reads/writes that could corrupt database files.
-- 🚫 **Unchecked Network Sockets**: Blocks unhandled TCP/UDP socket creation or HTTP requests inside engine loops.
-- 🚫 **Raw Process Spawning & Signals**: Forbids invoking external OS processes or sending uncontrolled system signals.
-- 🚫 **Untracked State Side-Effects**: Ensures code executes without untracked memory side-effects on PostgreSQL worker processes.
-- 🚫 **Escaping Exception Boundaries**: Eliminates uncaught C/Nim FFI panics, preventing backend worker crashes (`0 SIGABRTs`).
+* 🚀 **Zero-VM C Performance**: Transpiles to native C shared libraries (`.so` / `.dll`) called directly by PostgreSQL with **0 runtime overhead**.
+* 🛡️ **Automatic Panic Shield (`0 SIGABRTs`)**: Compiles automatic exception boundaries into every UDF—intercepting panics, overflows, and defects and safely aborting transactions without crashing the PostgreSQL server.
+* 👑 **Type-Safe SQL Query Builder**: Write complex SQL queries with compile-time AST verification, zero-string table proxies (`u.name`), CTEs, window functions, and UPSERT.
+* 📦 **Compile-Time Schema Introspection**: Generate production-ready PostgreSQL DDL and insert entities directly from pure Nim `object` types (`createTableFrom`, `insertFrom`).
+* ⚡ **Hardened SPI Execution**: Execute in-database queries via PostgreSQL's Server Programming Interface with zero network socket latency, scalar fetchers, and functional stream reducers (`any`, `all`, `firstOption`).
+* 🔒 **Binary Security Sandbox (`pgxtool`)**: Automatically audits compiled binaries with ELF symbol inspection (`auditBinarySymbols`) to block forbidden OS system calls (`execve`, `system`, `fork`).
+* 📊 **Rich Type System**: Bidirectional zero-copy mapping for `seq[T] <-> array[]`, `Option[T] <-> NULL`, `enum <-> ENUM`, `tuple <-> record`, and `SETOF` Table Functions.
 
 ---
 
-## 🛠️ Prerequisites
+## 🚀 30-Second Quickstart
 
-- **PostgreSQL** (with CLI tools `pg_config` and header files `postgres.h`)
-- **Nim Compiler** (`nim >= 2.0.0`)
-
----
-
-## 🚀 Quickstart
-
-### 1. Install Pgxcrown
-
+### 1. Install via Nimble
 ```bash
 nimble install pgxcrown
 ```
 
-### 2. Initialize & Scaffold a Project
-
+### 2. Scaffold a New Extension
 ```bash
 pgxtool init
-pgxtool create-project myextension
+pgxtool create-project my_extension
 ```
 
-### 3. Write Nim Extension Logic (`src/main.nim`)
-
-Edit `src/main.nim` inside your initialized project directory:
-
+### 3. Write Your Nim Logic (`src/main.nim`)
 ```nim
-proc add_numbers*(a: int, b: int): int =
-  a + b
+import pgxcrown
 
-proc greet*(name: string): string =
-  "Hello from Nim, " & name & "!"
+# Exported functions are automatically bound to PostgreSQL C calling convention
+proc add_numbers*(a: int32, b: int32): int32 =
+  return a + b
+
+proc greet*(name: string = "World"): string =
+  return "Hello from Nim, " & name & "!"
 ```
 
-### 4. Build & Install Extension
-
+### 4. Build & Install
 ```bash
-# Build the dynamic library, control file, and install script
-pgxtool build-extension myextension
+# Compiles binary, audits symbols, and generates .control and .sql files
+pgxtool build-extension my_extension
 
-# Install files into PostgreSQL directories using the generated install script
-sudo /path/to/myextension/src/install.sh
+# Install into PostgreSQL's pkglibdir and extension directories
+sudo /home/xbytes/xbytes_pgxtool/my_extension/src/install.sh
 ```
 
-### 5. Enable in PostgreSQL (`psql`)
-
+### 5. Run in PostgreSQL (`psql`)
 ```sql
-CREATE EXTENSION myextension;
+CREATE EXTENSION my_extension;
 
 SELECT add_numbers(10, 32);  -- Returns: 42
 SELECT greet('PostgreSQL');   -- Returns: "Hello from Nim, PostgreSQL!"
@@ -208,113 +79,24 @@ SELECT greet('PostgreSQL');   -- Returns: "Hello from Nim, PostgreSQL!"
 
 ---
 
-## 💡 Code Examples & Data Type Usage
+## 👑 Core Capabilities Showcase
 
-### 1. Basic Functions & Scalar Types
-
-Scalar arguments and return values map cleanly to PostgreSQL SQL types:
-
-```nim
-proc multiply_float*(a: float, b: float): float =
-  a * b
-
-proc is_even*(val: int): bool =
-  val mod 2 == 0
-```
-
-Generated SQL output:
-```sql
-CREATE OR REPLACE FUNCTION multiply_float(float4,float4) returns float4 as
-'myextension', 'pgx_multiply_float'
-language c strict;
+```mermaid
+graph LR
+    A[Nim Code Definition] --> B[Compile-Time Macro Engine]
+    B --> C[Automatic Panic Shield]
+    B --> D[Type-Safe SQL AST & DDL]
+    B --> E[pgxtool Security Auditor]
+    E --> F[Native .so Library]
+    F --> G[PostgreSQL Engine Runtime]
 ```
 
 ---
 
-### 2. Consuming Custom Enum Types
+### 1. 🏗️ Type-Safe Query Builder AST (`v0.16.0`)
 
-Define a Nim `enum` to consume custom PostgreSQL enum parameters:
+Write fluent, type-safe SQL with zero-string table proxies, compile-time AST validation, and **complete SQL injection immunity**:
 
-```nim
-type Status* = enum
-  Active, Inactive, Pending
-
-proc status_code*(s: Status): int =
-  case s
-  of Active: 1
-  of Inactive: 2
-  of Pending: 3
-```
-
-Generated SQL output:
-```sql
-CREATE TYPE Status AS ENUM ('Active','Inactive','Pending','PgxUnknownValue');
-
-CREATE OR REPLACE FUNCTION status_code(Status) returns int4 as
-'myextension', 'pgx_status_code'
-language c strict;
-```
-
----
-
-### 3. Consuming Records & Composite Types
-
-Nim `tuple` and `object` definitions can accept PostgreSQL `record` parameters:
-
-```nim
-type UserRecord* = object
-  id: int
-  name: string
-
-proc process_user*(u: UserRecord): string =
-  "Processed user ID " & $u.id
-```
-
-Generated SQL output:
-```sql
-CREATE OR REPLACE FUNCTION process_user(record) returns Text as
-'myextension', 'pgx_process_user'
-language c strict;
-```
-
-*Note: Composite objects and tuples can be consumed as input parameters or dynamic array items.*
-
----
-
-### 4. Set Returning Functions (`SETOF` / Table Functions) (`v0.15.0`)
-
-Returning a native Nim sequence (`seq[T]`) automatically generates `RETURNS SETOF <type>` in DDL and executes via PostgreSQL's `FuncCallContext` state machine:
-
-```nim
-# Returns SETOF int4 in PostgreSQL
-proc generate_series_nim*(startVal: int32, endVal: int32): seq[int32] =
-  result = @[]
-  for i in startVal .. endVal:
-    result.add(i)
-
-# Returns SETOF text in PostgreSQL
-proc list_fruits*(): seq[string] =
-  return @["Apple", "Banana", "Cherry", "Dragonfruit"]
-```
-
-Generated SQL output:
-```sql
-CREATE OR REPLACE FUNCTION generate_series_nim(int4, int4) RETURNS SETOF int4 AS
-'myextension', 'pgx_generate_series_nim'
-LANGUAGE c STRICT;
-
-CREATE OR REPLACE FUNCTION list_fruits() RETURNS SETOF text AS
-'myextension', 'pgx_list_fruits'
-LANGUAGE c STRICT;
-```
-
----
-
-### 4. 👑 Type-Safe Query Builder, Schema Introspection & SPI Engine (`v0.16.0`)
-
-`pgxcrown` v0.16.0 introduces a comprehensive in-database development suite with zero-string table proxies, compile-time schema introspection (`createTableFrom`), strongly typed row mapping (`fetch[T]`), and hardened Server Programming Interface (SPI) execution.
-
-#### A. Zero-String Table Proxies & Fluent Query AST
 ```nim
 import pgxcrown
 
@@ -322,12 +104,12 @@ proc get_engineering_leaders*(minSalary: int = 80000): string =
   let e = table("employees", "e")
   let d = table("departments", "d")
 
-  # CTE: department stats
+  # 1. Common Table Expression (CTE)
   let deptStats = Select(e.dept_id, avg(e.salary) as "avg_sal")
     .From(e)
     .GroupBy(e.dept_id)
 
-  # Query with CTE, Joins, Window Functions, and CASE WHEN
+  # 2. Main Query with CTE, Joins, Window Functions, and CASE WHEN
   let q = WithCte("dept_stats", deptStats)
     .Select(
       e.id as "emp_id",
@@ -345,9 +127,15 @@ proc get_engineering_leaders*(minSalary: int = 80000): string =
   return $q
 ```
 
-#### B. Compile-Time Schema Introspection & DDL (`createTableFrom`)
-Define pure Nim types and generate schema-compliant PostgreSQL DDL automatically:
+---
+
+### 2. 📦 Compile-Time Schema Introspection (`createTableFrom`)
+
+Define pure Nim `object` models and generate full PostgreSQL DDL automatically—or execute them live inside the database:
+
 ```nim
+import pgxcrown, std/options
+
 type
   UserRecord = object
     id: int
@@ -357,25 +145,41 @@ type
     skills: seq[string]
     bio: Option[string] # Nullable field
 
-# 1. Generate CREATE TABLE DDL
+# 1. Compile-Time Schema DDL Generation
 let ddl = createTableFrom(UserRecord, tableName = "users", ifNotExists = true)
+# Generates:
+# CREATE TABLE IF NOT EXISTS "users" (
+#   "id" INTEGER PRIMARY KEY,
+#   "username" TEXT NOT NULL,
+#   "reputation" DOUBLE PRECISION NOT NULL,
+#   "is_active" BOOLEAN NOT NULL,
+#   "skills" TEXT[] NOT NULL,
+#   "bio" TEXT
+# );
 
 # 2. Execute live inside PostgreSQL via SPI
 discard spiCreateTableFrom(UserRecord, tableName = "users")
 
-# 3. Serialize and insert typed entities via SPI
-let sampleUser = UserRecord(id: 42, username: "Ada", reputation: 99.8, is_active: true, skills: @["nim", "sql"], bio: some("Pioneer"))
-discard spiInsertFrom(sampleUser, tableName = "users")
+# 3. Serialize and Insert Typed Entities via SPI
+let sample = UserRecord(id: 42, username: "Ada", reputation: 99.8, is_active: true, skills: @["nim", "sql"], bio: some("Pioneer"))
+discard spiInsertFrom(sample, tableName = "users")
 ```
 
-#### C. In-Database SPI Execution & Stream Reducers
-Execute queries with zero TCP/IP socket latency inside PostgreSQL worker processes:
-```nim
-# 1. Fetch scalar aggregations directly
-let totalActive = fetchScalar[int](Select(count("*")).From(table("users")).Where(table("users").is_active == true))
+---
 
-# 2. Query raw rows and apply functional collection reducers
+### 3. ⚡ In-Database SPI Engine & Stream Reducers
+
+Execute in-database queries via PostgreSQL's Server Programming Interface with zero socket latency:
+
+```nim
+# 1. Fetch scalar values directly
+let activeCount = fetchScalar[int](
+  Select(count("*")).From(table("users")).Where(table("users").is_active == true)
+)
+
+# 2. Query rows and apply functional collection reducers
 let rows = fetchRawRows("SELECT id, username, reputation, is_active FROM users ORDER BY reputation DESC")
+
 let hasTopTier = rows.any(proc(r: Table[string, string]): bool = parseFloat(r["reputation"]) >= 95.0)
 let allActive  = rows.all(proc(r: Table[string, string]): bool = r["is_active"] == "t")
 let topLeader  = rows.firstOption()
@@ -383,39 +187,156 @@ let topLeader  = rows.firstOption()
 
 ---
 
-### 5. Postgres Hooks (`post_parse_analyze` & `emit_log`)
+### 4. 🛡️ Automatic Panic Shield (`0 SIGABRTs`)
 
-Scaffold dedicated PostgreSQL hooks to intercept engine execution stages:
+All exported functions are automatically wrapped in a compile-time panic shield. Unhandled defects (integer overflows, array out-of-bounds, nil dereferences) are intercepted and safely converted to PostgreSQL `ereport(ERROR)` transaction aborts without crashing the backend process:
 
-```bash
-# Scaffold a logging hook project
-pgxtool create-hook emit_log
-pgxtool build-extension emit_log
+```sql
+-- Integer Overflow (2,147,483,647 + 1) -> Intercepted cleanly
+SELECT proof_integer_overflow(2147483647, 1);
+-- Result: ERROR: Extension Defect [OverflowDefect]: over- or underflow
+
+-- Index Out-of-Bounds -> Intercepted cleanly
+SELECT proof_index_out_of_bounds(5);
+-- Result: ERROR: Extension Defect [IndexDefect]: index 5 not in 0 .. 2
+```
+
+---
+
+### 5. 📊 Set Returning Functions (`RETURNS SETOF <type>`)
+
+Returning a native Nim sequence (`seq[T]`) automatically generates `RETURNS SETOF <type>` in DDL and executes via PostgreSQL's `FuncCallContext` state machine:
+
+```nim
+proc generate_series_nim*(startVal: int32, endVal: int32): seq[int32] =
+  result = @[]
+  for i in startVal .. endVal:
+    result.add(i)
+
+proc list_fruits*(): seq[string] =
+  return @["Apple", "Banana", "Cherry", "Dragonfruit"]
+```
+
+Generated SQL:
+```sql
+CREATE OR REPLACE FUNCTION generate_series_nim(int4, int4) RETURNS SETOF int4 AS
+'myextension', 'pgx_generate_series_nim' LANGUAGE c STRICT;
+
+CREATE OR REPLACE FUNCTION list_fruits() RETURNS SETOF text AS
+'myextension', 'pgx_list_fruits' LANGUAGE c STRICT;
+```
+
+---
+
+### 6. 🔢 Dynamic & Composite Array Mapping
+
+Bidirectional zero-copy mapping between Nim sequences and PostgreSQL dynamic arrays:
+
+```nim
+# Primitive Dynamic Array (seq[int32] <-> int4[])
+proc double_int_array*(numbers: seq[int32]): seq[int32] =
+  result = newSeq[int32](numbers.len)
+  for i in 0 ..< numbers.len:
+    result[i] = numbers[i] * 2
+
+# Composite Record Array (seq[Person] <-> record[])
+type Person* = object
+  age*: int32
+  name*: string
+
+proc count_adults*(people: seq[Person]): int32 =
+  var count: int32 = 0
+  for p in people:
+    if p.age >= 18: count.inc
+  return count
+```
+
+---
+
+### 7. 💡 Default Arguments & `Option[T]` NULL Defense
+
+```nim
+import pgxcrown, std/options
+
+proc greet*(name: string = "World", count: int = 1): string =
+  "Hello " & name & " x" & $count
+
+proc add_opt*(a: int, b: Option[int]): Option[int] =
+  if b.isNone: none(int) else: some(a + b.get)
+```
+
+Generated SQL:
+```sql
+CREATE OR REPLACE FUNCTION greet(Text DEFAULT 'World', int4 DEFAULT 1) RETURNS Text AS
+'myextension', 'pgx_greet' LANGUAGE c;
+
+CREATE OR REPLACE FUNCTION add_opt(int4, int4 DEFAULT NULL) RETURNS int4 AS
+'myextension', 'pgx_add_opt' LANGUAGE c;
+```
+
+---
+
+### 8. 🔌 Raw Engine FFI & Deep C Extensibility
+
+Directly bind **hundreds of low-level PostgreSQL engine C APIs** (`parser.h`, `executor.h`, `builtins.h`) using Nim's native `{.importc.}`:
+
+```nim
+{.push header: "parser/parser.h".}
+proc raw_parser(str: cstring, mode: cint): pointer {.importc: "raw_parser".}
+{.pop.}
+
+proc parse_sql_query*(sqlText: string): string =
+  let tree = raw_parser(cstring(sqlText), 0)
+  return "Parsed AST pointer: " & repr(tree)
 ```
 
 ---
 
 ## 💻 `pgxtool` CLI Reference
 
+The official CLI tool for scaffolding, building, auditing, and testing extensions:
+
 | Command | Usage | Description |
 | :--- | :--- | :--- |
-| `init` | `pgxtool init` | Initializes local `pgxtool` working directory and config file. |
-| `create-project` | `pgxtool create-project <name>` | Scaffolds a new extension project directory and `main.nim`. |
-| `build-extension` | `pgxtool build-extension <name>` | Compiles Nim into `.so`/`.dll`, generates `.control`, `--0.0.1.sql`, and `install.sh`. |
-| `install` | `pgxtool install <name>` | Generates the `install.sh` script and prints `sudo` execution instructions. |
-| `create-type` | `pgxtool create-type <name> --base-type <type>` | Generates a custom datatype template for domain mapping. |
-| `create-hook` | `pgxtool create-hook <hook_name>` | Scaffolds a Postgres engine hook extension (`emit_log`, `post_parse_analyze`). |
-| `path-finders` | `pgxtool path-finders` | Resolves PostgreSQL system paths (`pg_config`, `libdir`, `includedir`, `sharedir`, `extension`). |
-| `test` | `pgxtool test <name>` | Spins up a Docker container with PostgreSQL to mount and test the extension. |
+| **`init`** | `pgxtool init` | Initializes local `pgxtool` working directory and configuration. |
+| **`create-project`** | `pgxtool create-project <name>` | Scaffolds a new extension project directory and `main.nim`. |
+| **`build-extension`** | `pgxtool build-extension <name>` | Compiles Nim to `.so`, audits security symbols, and generates `.control` and `.sql`. |
+| **`install`** | `pgxtool install <name>` | Generates the privileged `install.sh` installation script. |
+| **`create-type`** | `pgxtool create-type <name> --base-type <type>` | Generates a custom datatype template for domain mapping. |
+| **`create-hook`** | `pgxtool create-hook <hook_name>` | Scaffolds a Postgres engine hook extension (`emit_log`, `post_parse_analyze`). |
+| **`path-finders`** | `pgxtool path-finders` | Resolves PostgreSQL paths (`pg_config`, `libdir`, `includedir`, `sharedir`, `extension`). |
+| **`test`** | `pgxtool test <name>` | Spins up a Docker container with PostgreSQL to mount and test the extension. |
+
+---
+
+## 📊 Summary of Capabilities by Version
+
+| Version | Milestone Capabilities |
+| :--- | :--- |
+| **v0.16.0** | **Type-Safe Query Builder AST, Table Proxies, Compile-Time Schema Introspection (`createTableFrom`), Hardened SPI Engine, Stream Reducers (`any`, `all`, `firstOption`), and UPSERT (`ON CONFLICT`).** |
+| **v0.15.0** | **Set Returning Functions (`RETURNS SETOF <type>`), Table Functions, and `FuncCallContext` state machine.** |
+| **v0.14.0** | **Non-STRICT Null-Datum Defense (`isArgNull`), `CALLED ON NULL INPUT`, and safe zero-value fallbacks.** |
+| **v0.13.2** | **PostgreSQL Dynamic Array Mapping (`seq[T] <-> int4[]/text[]/bool[]`) and Composite Record Arrays (`seq[Object] <-> record[]`).** |
+| **v0.13.1** | **Dynamic ELF Binary Symbol Security Auditor (`auditBinarySymbols`) and Raw C Engine FFI (`isImportc`).** |
+| **v0.13.0** | **Default Parameter SQL DDL (`DEFAULT`), `Option[T]` NULL safety, and `none(T) <-> NULL` return mappings.** |
+| **v0.12.0** | **Zero-Overhead Automatic Panic Shield (`try...except Defect`) converting panics to safe `ereport(ERROR)` aborts (`0 SIGABRTs`).** |
+
+---
+
+## 🛠️ Prerequisites
+
+* **PostgreSQL** $\ge 12$ (with development packages `postgresql-server-dev-all` or `pg_config`)
+* **Nim Compiler** $\ge 2.0.0$
+* **GCC / Clang**
 
 ---
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request or open an Issue to discuss proposed changes or features.
+Contributions are welcome! Please feel free to submit a Pull Request or open an Issue on GitHub to discuss proposed features, extensions, or bugfixes.
 
 ---
 
 ## 📜 License
 
-[MIT](https://choosealicense.com/licenses/mit/)
+[MIT License](LICENSE) © 2026 Luis Acosta
