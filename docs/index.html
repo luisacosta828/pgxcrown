@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pgxcrown 👑 v0.15.0 — Native PostgreSQL Extension Framework for Nim</title>
-  <meta name="description" content="Build ultra-fast, lightweight, crash-proof PostgreSQL C extensions in Nim. Features v0.15.0 Set Returning Functions (SETOF / Table Functions), v0.14.0 Non-STRICT Null-Datum Defense, and Automatic Panic Shield.">
+  <title>Pgxcrown 👑 v0.16.0 — Native PostgreSQL Extension Framework for Nim</title>
+  <meta name="description" content="Build ultra-fast, lightweight, crash-proof PostgreSQL C extensions in Nim. Features v0.16.0 Type-Safe Query Builder, Compile-Time Schema Introspection (createTableFrom), and Hardened SPI Engine.">
   
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👑</text></svg>">
   <link rel="stylesheet" href="styles.css">
@@ -18,14 +18,14 @@
       <a href="#" class="nav-brand">
         <span class="crown-icon">👑</span>
         <span class="gradient-text">Pgxcrown</span>
-        <span class="version-badge">v0.15.0</span>
+        <span class="version-badge">v0.16.0</span>
       </a>
 
       <ul class="nav-links" id="navLinks">
         <li><a href="#features">Capabilities</a></li>
+        <li><a href="#query-builder">Query & SPI</a></li>
         <li><a href="#panic-shield">Panic Shield</a></li>
         <li><a href="#types">Data Types</a></li>
-        <li><a href="#hooks">Engine Hooks</a></li>
         <li><a href="#cli">CLI Tooling</a></li>
         <li><a href="#quickstart">Quickstart</a></li>
       </ul>
@@ -53,7 +53,7 @@
         </h1>
 
         <p class="hero-desc">
-          Write lightning-fast PostgreSQL C dynamic libraries with <strong>zero VM overhead</strong>, sub-second compilation times, <strong>auto-generated SQL bindings</strong>, deep kernel hooks, and <strong>v0.12.0 Automatic Panic Shielding</strong>.
+          Write lightning-fast PostgreSQL C dynamic libraries with <strong>zero VM overhead</strong>, type-safe <strong>v0.16.0 SQL Query Builder AST</strong>, compile-time <strong>Schema Introspection (createTableFrom)</strong>, and hardened <strong>SPI execution</strong>.
         </p>
 
         <div class="hero-cta">
@@ -90,11 +90,11 @@
             <span class="dot dot-green"></span>
           </div>
           <div class="code-tabs">
-            <button class="tab-btn active" data-tab="nim">main.nim</button>
+            <button class="tab-btn active" data-tab="sql">Query & SPI (v0.16.0)</button>
+            <button class="tab-btn" data-tab="ddl">Schema & DDL</button>
             <button class="tab-btn" data-tab="srf">SETOF (v0.15.0)</button>
             <button class="tab-btn" data-tab="options">Default & Options</button>
             <button class="tab-btn" data-tab="shield">Panic Shield</button>
-            <button class="tab-btn" data-tab="enums">Enums & Tuples</button>
             <button class="tab-btn" data-tab="hooks">Kernel Hooks</button>
           </div>
         </div>
@@ -114,6 +114,14 @@
       </div>
 
       <div class="features-grid">
+        <!-- Feature 00000: v0.16.0 Query Builder & SPI Spotlight -->
+        <div class="feature-card glass-card" id="query-builder">
+          <div class="feature-icon icon-code">👑</div>
+          <span class="feature-tag tag-new">v0.16.0 Spotlight</span>
+          <h3 class="feature-title">Type-Safe Query Builder & SPI Engine</h3>
+          <p class="feature-text">Fluent compile-time SQL AST with zero-string table proxies (<code>u.name</code>), compile-time schema introspection (<code>createTableFrom</code>), CTEs, window functions, UPSERT, and hardened SPI runtime with stream reducers.</p>
+        </div>
+
         <!-- Feature 0000: v0.15.0 SETOF Spotlight -->
         <div class="feature-card glass-card">
           <div class="feature-icon icon-table">📊</div>

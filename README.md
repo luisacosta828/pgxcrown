@@ -12,6 +12,7 @@ Build Native, High-Performance Postgres Extensions in Nim.
 
 | Feature Area | Supported Capabilities | Details |
 | :--- | :--- | :--- |
+| **Type-Safe Query Builder & SPI Engine (v0.16.0)** | `query_builder`, `spi`, `table()`, `createTableFrom`, `fetch[T]`, `fetchScalar[T]` | Fluent compile-time SQL AST with zero-string table proxies, compile-time schema introspection & DDL generation (`createTableFrom`), strongly typed row mapping (`fetch[T]`), CTEs, window functions, PostgreSQL UPSERT (`ON CONFLICT`), lateral joins, set operations, and hardened SPI runtime with stream reducers (`any`, `all`, `firstOption`). |
 | **Set Returning Functions (v0.15.0)** | `RETURNS SETOF <type>`, `FuncCallContext` | Returning native Nim sequences (`seq[T]`) automatically generates `RETURNS SETOF <type>` DDL manifests and executes via PostgreSQL's `FuncCallContext` state machine with ORC memory safety (`GC_ref`/`GC_unref`). |
 | **Non-STRICT Null-Datum Defense (v0.14.0)** | `isArgNull`, `CALLED ON NULL INPUT` | Intercepts `isArgNull(n)` on non-strict functions, safely substituting zero-values (`""`, `0`, `@[]`) to prevent null pointer dereferences and SEGV crashes when SQL `NULL` arguments are passed. |
 | **PostgreSQL Array Mapping (v0.13.2)** | `seq[T]`, `int4[]`, `text[]`, `bool[]`, `record[]` | Bidirectional zero-copy mapping between Nim sequences (`seq[T]`) and PostgreSQL dynamic arrays. Supports primitive types (`seq[int32]` $\rightarrow$ `int4[]`, `seq[string]` $\rightarrow$ `text[]`, `seq[bool]` $\rightarrow$ `bool[]`) and composite record arrays (`seq[Object]` / `seq[Tuple]` $\rightarrow$ `record[]`). |
@@ -309,7 +310,80 @@ LANGUAGE c STRICT;
 
 ---
 
-### 4. Postgres Hooks (`post_parse_analyze` & `emit_log`)
+### 4. 👑 Type-Safe Query Builder, Schema Introspection & SPI Engine (`v0.16.0`)
+
+`pgxcrown` v0.16.0 introduces a comprehensive in-database development suite with zero-string table proxies, compile-time schema introspection (`createTableFrom`), strongly typed row mapping (`fetch[T]`), and hardened Server Programming Interface (SPI) execution.
+
+#### A. Zero-String Table Proxies & Fluent Query AST
+```nim
+import pgxcrown
+
+proc get_engineering_leaders*(minSalary: int = 80000): string =
+  let e = table("employees", "e")
+  let d = table("departments", "d")
+
+  # CTE: department stats
+  let deptStats = Select(e.dept_id, avg(e.salary) as "avg_sal")
+    .From(e)
+    .GroupBy(e.dept_id)
+
+  # Query with CTE, Joins, Window Functions, and CASE WHEN
+  let q = WithCte("dept_stats", deptStats)
+    .Select(
+      e.id as "emp_id",
+      e.name as "emp_name",
+      d.name as "dept_name",
+      caseWhen(e.salary >= 100000).then("Senior Tier").elseEnd("Associate Tier") as "tier",
+      rowNumber().over(partitionBy = e.dept_id, orderBy = e.salary.desc) as "dept_rank"
+    )
+    .From(e)
+    .InnerJoin(d).On(e.dept_id == d.id)
+    .Where(e.status == "active" and e.salary >= minSalary)
+    .OrderBy(e.salary.desc.nullsLast)
+    .Limit(25)
+
+  return $q
+```
+
+#### B. Compile-Time Schema Introspection & DDL (`createTableFrom`)
+Define pure Nim types and generate schema-compliant PostgreSQL DDL automatically:
+```nim
+type
+  UserRecord = object
+    id: int
+    username: string
+    reputation: float
+    is_active: bool
+    skills: seq[string]
+    bio: Option[string] # Nullable field
+
+# 1. Generate CREATE TABLE DDL
+let ddl = createTableFrom(UserRecord, tableName = "users", ifNotExists = true)
+
+# 2. Execute live inside PostgreSQL via SPI
+discard spiCreateTableFrom(UserRecord, tableName = "users")
+
+# 3. Serialize and insert typed entities via SPI
+let sampleUser = UserRecord(id: 42, username: "Ada", reputation: 99.8, is_active: true, skills: @["nim", "sql"], bio: some("Pioneer"))
+discard spiInsertFrom(sampleUser, tableName = "users")
+```
+
+#### C. In-Database SPI Execution & Stream Reducers
+Execute queries with zero TCP/IP socket latency inside PostgreSQL worker processes:
+```nim
+# 1. Fetch scalar aggregations directly
+let totalActive = fetchScalar[int](Select(count("*")).From(table("users")).Where(table("users").is_active == true))
+
+# 2. Query raw rows and apply functional collection reducers
+let rows = fetchRawRows("SELECT id, username, reputation, is_active FROM users ORDER BY reputation DESC")
+let hasTopTier = rows.any(proc(r: Table[string, string]): bool = parseFloat(r["reputation"]) >= 95.0)
+let allActive  = rows.all(proc(r: Table[string, string]): bool = r["is_active"] == "t")
+let topLeader  = rows.firstOption()
+```
+
+---
+
+### 5. Postgres Hooks (`post_parse_analyze` & `emit_log`)
 
 Scaffold dedicated PostgreSQL hooks to intercept engine execution stages:
 

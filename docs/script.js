@@ -12,18 +12,45 @@ document.addEventListener('DOMContentLoaded', () => {
    1. Live Code Snippets (Showcasing All Pgxcrown Features)
    -------------------------------------------------------------------------- */
 const codeSnippets = {
-  nim: `<span class="syn-cmt"># 1. High-Performance Extension Procedure in Nim</span>
+  sql: `<span class="syn-cmt"># v0.16.0 Type-Safe Query Builder AST & In-Database SPI</span>
 <span class="syn-kw">import</span> pgxcrown
 
-<span class="syn-kw">proc</span> <span class="syn-fn">add_numbers</span>*(a: <span class="syn-type">int32</span>, b: <span class="syn-type">int32</span>): <span class="syn-type">int32</span> =
-  <span class="syn-kw">return</span> a + b
+<span class="syn-kw">proc</span> <span class="syn-fn">get_leaders</span>*(minSalary: <span class="syn-type">int</span> = 80000): <span class="syn-type">string</span> =
+  <span class="syn-kw">let</span> e = <span class="syn-fn">table</span>(<span class="syn-str">"employees"</span>, <span class="syn-str">"e"</span>)
+  <span class="syn-kw">let</span> d = <span class="syn-fn">table</span>(<span class="syn-str">"departments"</span>, <span class="syn-str">"d"</span>)
 
-<span class="syn-kw">proc</span> <span class="syn-fn">greet_user</span>*(name: <span class="syn-type">string</span>): <span class="syn-type">string</span> =
-  <span class="syn-kw">return</span> <span class="syn-str">"Hello from Nim & Postgres, "</span> & name & <span class="syn-str">"!"</span>
+  <span class="syn-cmt"># CTE + Window Function + Case When + Inner Join</span>
+  <span class="syn-kw">let</span> q = <span class="syn-fn">WithCte</span>(<span class="syn-str">"stats"</span>, <span class="syn-fn">Select</span>(e.dept_id, <span class="syn-fn">avg</span>(e.salary)).<span class="syn-fn">From</span>(e).<span class="syn-fn">GroupBy</span>(e.dept_id))
+    .<span class="syn-fn">Select</span>(
+      e.id, e.name, d.name <span class="syn-kw">as</span> <span class="syn-str">"dept_name"</span>,
+      <span class="syn-fn">rowNumber</span>().<span class="syn-fn">over</span>(partitionBy = e.dept_id, orderBy = e.salary.<span class="syn-fn">desc</span>) <span class="syn-kw">as</span> <span class="syn-str">"rank"</span>
+    )
+    .<span class="syn-fn">From</span>(e)
+    .<span class="syn-fn">InnerJoin</span>(d).<span class="syn-fn">On</span>(e.dept_id == d.id)
+    .<span class="syn-fn">Where</span>(e.status == <span class="syn-str">"active"</span> <span class="syn-kw">and</span> e.salary >= minSalary)
+    .<span class="syn-fn">OrderBy</span>(e.salary.<span class="syn-fn">desc</span>.<span class="syn-fn">nullsLast</span>)
 
-<span class="syn-cmt"># Auto-Bound to Native C SQL Bindings at Build Time:</span>
-<span class="syn-sql">CREATE OR REPLACE FUNCTION add_numbers(int4, int4) RETURNS int4 as</span>
-<span class="syn-sql">'$libdir/my_extension', 'pgx_add_numbers' LANGUAGE c STRICT;</span>`,
+  <span class="syn-kw">return</span> $q`,
+
+  ddl: `<span class="syn-cmt"># v0.16.0 Schema Introspection & Entity SPI Insertion</span>
+<span class="syn-kw">import</span> pgxcrown, std/options
+
+<span class="syn-kw">type</span>
+  UserRecord = <span class="syn-kw">object</span>
+    id: <span class="syn-type">int</span>
+    username: <span class="syn-type">string</span>
+    reputation: <span class="syn-type">float</span>
+    is_active: <span class="syn-type">bool</span>
+    skills: <span class="syn-type">seq[string]</span>
+    bio: <span class="syn-type">Option[string]</span>
+
+<span class="syn-cmt"># 1. Compile-Time CREATE TABLE DDL</span>
+<span class="syn-kw">let</span> ddl = <span class="syn-fn">createTableFrom</span>(UserRecord, tableName = <span class="syn-str">"users"</span>)
+<span class="syn-fn">discard</span> <span class="syn-fn">spiCreateTableFrom</span>(UserRecord, tableName = <span class="syn-str">"users"</span>)
+
+<span class="syn-cmt"># 2. Serialize & Insert Entity via SPI</span>
+<span class="syn-kw">let</span> user = UserRecord(id: 42, username: <span class="syn-str">"Ada"</span>, reputation: 99.8, is_active: true, skills: @[<span class="syn-str">"nim"</span>], bio: <span class="syn-fn">some</span>(<span class="syn-str">"Pioneer"</span>))
+<span class="syn-fn">discard</span> <span class="syn-fn">spiInsertFrom</span>(user, tableName = <span class="syn-str">"users"</span>)`,
 
   srf: `<span class="syn-cmt"># v0.15.0 Set Returning Functions (SETOF / Table Functions)</span>
 <span class="syn-kw">import</span> pgxcrown
