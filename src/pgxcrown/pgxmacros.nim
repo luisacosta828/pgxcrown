@@ -500,7 +500,7 @@ proc analyze_node(code: NimNode): NimNode =
     result = check_while_section(code)
   of nnkProcDef, nnkFuncDef:
     result = check_proc_def(code)
-  of nnkPrefix, nnkDotExpr, nnkEmpty, nnkTypeSection, nnkTypeDef, nnkBracket, nnkCurly, nnkPar, nnkSym:
+  of nnkPrefix, nnkDotExpr, nnkEmpty, nnkCommentStmt, nnkTypeSection, nnkTypeDef, nnkObjectTy, nnkRecList, nnkEnumTy, nnkEnumFieldDef, nnkRefTy, nnkPtrTy, nnkDistinctTy, nnkTupleTy, nnkBracket, nnkCurly, nnkPar, nnkSym, nnkLambda, nnkDo, nnkAccQuoted, nnkFormalParams, nnkTableConstr, nnkTupleConstr, nnkObjConstr, nnkConv, nnkHiddenStdConv, nnkHiddenSubConv, nnkStmtListExpr, nnkElifBranch, nnkElse, nnkOfBranch, nnkPragma, nnkExprColonExpr, nnkPragmaExpr, nnkExprEqExpr:
     if code.len == 0:
       result = code
     else:
@@ -535,14 +535,9 @@ proc check_call_section(code: NimNode):NimNode =
       newCall(code[0], pgx_args)
 
 
-template is_datatype_present(node: NimNode) =
-  if node[1].kind == nnkEmpty:
-    raise newException(Exception, "data type expected: " & node.repr)
-
 proc check_var_section(code: NimNode): NimNode =
   result = newNimNode(code.kind)
   for identdef in code:
-    is_datatype_present(identdef) 
     result.add newIdentDefs(
       identdef[0],
       identdef[1],

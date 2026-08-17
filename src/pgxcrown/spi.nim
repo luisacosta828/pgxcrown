@@ -1,31 +1,43 @@
-import std/tables
+## =============================================================================
+## PostgreSQL Server Programming Interface (SPI) Bridge & High-Level Row Consumer.
+## Provides strongly-typed object mapping (.fetch[T]), optional single-row queries
+## (.fetchOne[T]), scalar aggregations (.fetchScalar[T]), and collection reducers.
+## =============================================================================
 
+import std/[tables, options, strutils]
 from datatypes/basic import PDatum, POid, NameData, Oid, oidvector
-  
-{.push header: "executor/spi.h".}
+import query_builder
+
+{.emit: """/*INCLUDESECTION*/
+#include "postgres.h"
+#include "executor/spi.h"
+
+static inline TupleDesc pgx_spi_get_tupdesc(SPITupleTable* tuptable) {
+  if (tuptable == NULL) return NULL;
+  return tuptable->tupdesc;
+}
+
+static inline int pgx_spi_get_natts(TupleDesc tupdesc) {
+  if (tupdesc == NULL) return 0;
+  return tupdesc->natts;
+}
+
+static inline HeapTuple pgx_spi_get_tuple(SPITupleTable* tuptable, uint64 idx) {
+  if (tuptable == NULL || tuptable->vals == NULL) return NULL;
+  return tuptable->vals[idx];
+}
+""".}
 
 type
   const_string* {.importc: "const char*".} = cstring
 
-  Column = Table[string, string]
-  Row = seq[Column]
-  ResultSet = seq[Row]
+  Column* = Table[string, string]
+  Row* = seq[Column]
+  ResultSet* = seq[Row]
 
-  HeapTupleHeader {.importc: "HeapTupleHeader".} = ptr object
-    t_hoff*: cuint
-
-  HeapTupleData {.importc: "HeapTupleData".} = object
-    t_len*: cuint
-    t_data*: HeapTupleHeader
-
-  HeapTuple* = ptr HeapTupleData
-
-  TupleDesc* {.importc: "TupleDesc".} = ref object
-    natts*: int
-
-  TupleTable* {.importc: "SPITupleTable".} = object
-    vals*: ref HeapTuple
-    tupdesc*: TupleDesc
+  HeapTuple* {.importc: "HeapTuple".} = pointer
+  TupleDesc* {.importc: "TupleDesc".} = pointer
+  TupleTable* {.importc: "SPITupleTable*".} = pointer
 
   OK* {.pure.} = enum
     CONNECT = 1,
@@ -38,131 +50,192 @@ type
   ERROR* {.pure.} = enum
     CONNECT = 1,
     COPY, OPUNKNOWN, UNCONNECTED,
-    #CURSOR not used anymore
     ARGUMENT = 6,
     PARAM, TRANSACTION, NOATTRIBUTE, NOOUTFUNC,
     TYPEUNKNOWN, REL_DUPLICATE, REL_NOT_FOUND
 
-
-proc getStruct*(t: HeapTuple):pointer {.importc: "GETSTRUCT".}
-
-proc IsValid*(t: HeapTuple): bool {.importc: "HeapTupleIsValid".}
-
-
-proc connect(): int {.importc: "SPI_connect".}
-
-
-proc finish(): int {.importc: "SPI_finish".}
-
-proc exec*(c: const_string, count: clong): int {.importc: "SPI_exec".}
-
-
-proc execute*(c: const_string, read_only: cchar, count: clong): int {.importc: "SPI_execute".}
-
-
+{.push header: "executor/spi.h".}
+proc connect*(): cint {.importc: "SPI_connect".}
+proc finish*(): cint {.importc: "SPI_finish".}
+proc exec*(c: const_string, count: clong): cint {.importc: "SPI_exec".}
+proc execute*(c: const_string, read_only: cchar, count: clong): cint {.importc: "SPI_execute".}
 proc execute_with_args*(c: const_string, nargs: cint, argtypes: POid, values: PDatum, Nulls: const_string,
-                        read_only: cchar, count: clong): int {.importc: "SPI_execute_with_args".}
+                        read_only: cchar, count: clong): cint {.importc: "SPI_execute_with_args".}
+proc fname*(tupdesc: TupleDesc, fnumber: cint): const_string {.importc: "SPI_fname".}
+proc gettype*(tupdesc: TupleDesc, fnumber: cint): const_string {.importc: "SPI_gettype".}
+proc getvalue*(tupl: HeapTuple, tupdesc: TupleDesc, fnumber: cint): const_string {.importc: "SPI_getvalue".}
+{.pop.}
 
+proc getTupdesc*(tuptable: TupleTable): TupleDesc {.importc: "pgx_spi_get_tupdesc".}
+proc getNatts*(tupdesc: TupleDesc): cint {.importc: "pgx_spi_get_natts".}
+proc getTuple*(tuptable: TupleTable, idx: uint64): HeapTuple {.importc: "pgx_spi_get_tuple".}
 
+# =============================================================================
+# Type Converters & Row Mapper
+# =============================================================================
 
-proc fname*(tupdesc: TupleDesc, fnumber: int): const_string {.importc: "SPI_fname".}
-  ## Return column name
+proc parseValue*[T](val: string): T =
+  ## Safely parses a string column into a strongly typed Nim value
+  when T is int:
+    try: parseInt(val) except CatchableError: 0
+  elif T is int32:
+    try: int32(parseInt(val)) except CatchableError: 0'i32
+  elif T is int64:
+    try: int64(parseBiggestInt(val)) except CatchableError: 0'i64
+  elif T is float:
+    try: parseFloat(val) except CatchableError: 0.0
+  elif T is float64:
+    try: parseFloat(val) except CatchableError: 0.0
+  elif T is bool:
+    val == "t" or val == "true" or val == "1" or val == "TRUE"
+  elif T is string:
+    val
+  else:
+    val
 
+proc mapRowTo*[T: object](row: Table[string, string]): T =
+  ## Maps a SPI row Table into a strongly typed Nim object via field reflection
+  for name, value in fieldPairs(result):
+    if row.hasKey(name):
+      value = parseValue[typeof(value)](row[name])
 
-proc gettype*(tupdesc: TupleDesc, fnumber: int): const_string {.importc: "SPI_gettype".}
-  ## Return column type
-
-
-proc getvalue*(tupl: HeapTuple, tupdesc: TupleDesc, fnumber: int): const_string {.importc: "SPI_getvalue".}
-  ## Return column value
-
+# =============================================================================
+# SPI Initialization & Query Templates
+# =============================================================================
 
 template spi_init*(statements: untyped) =
-
-  var connection_status = connect()
-
-  {.emit: """
-    HeapTuple getHeapIdx(SPITupleTable* tuptable){
-      static int j = 0;
-      if (j < SPI_processed) {
-        return tuptable->vals[j++];
-      } else {
-        j = 0;
-      }
-    }
-  """.}
-
+  var connection_status {.used.} = connect()
   var SPI_processed {.codegenDecl: "extern $# $#", inject.}: uint64
-  var SPI_tuptable {.codegenDecl: "extern $# $#", inject.}: ref TupleTable
-  proc gettuple(tuptable: ref TupleTable): HeapTuple {.importc: "getHeapIdx".}
+  var SPI_tuptable {.codegenDecl: "extern $# $#", inject.}: TupleTable
 
   statements
 
-  var finish_status = finish()
-
-
-template get_info_schema*(table_name: string) =
-  var info_schema {.inject.} = initTable[cstring, string]()
-  var last_column: cstring
-  echo "Getting information schema... ", table_name
-  discard 0.getInt32
-  var ret = exec(const_string("select column_name, data_type from information_schema.columns where table_name='" & table_name & "';"), 0)
-  var tupdesc = SPI_tuptable[].tupdesc
-  if SPI_processed > cast[uint64](0):
-    for lines in 0 .. SPI_processed:
-      var values = gettuple(SPI_tuptable)
-      for i in 1..tupdesc.natts:
-        var ttype: cstring = gettype(tupdesc, i)
-        var colname: cstring = fname(tupdesc, i)
-        var value: cstring = getvalue(values, tupdesc, i)
-        if ttype == "sql_identifier" and last_column != value:
-          info_schema[value] = "not defined"
-          last_column = value
-        if ttype == "character_data":
-          info_schema[last_column] = $value
-  else:
-    info_schema[cstring("error")] = "table_not_found"
-
+  var finish_status {.used.} = finish()
 
 template query*(c: const_string, obj: untyped) =
   discard exec(const_string(c), 0)
-
   var obj {.inject.}: ResultSet = @[]
+  if SPI_tuptable != nil:
+    let tupdesc = getTupdesc(SPI_tuptable)
+    if tupdesc != nil:
+      let natts = int(getNatts(tupdesc))
+      if SPI_processed > 0 and natts > 0:
+        for rowIdx in 0 ..< int(SPI_processed):
+          let tup = getTuple(SPI_tuptable, uint64(rowIdx))
+          if tup != nil:
+            var row: Row = @[]
+            for colIdx in 1 .. natts:
+              let colname = fname(tupdesc, cint(colIdx))
+              let val = getvalue(tup, tupdesc, cint(colIdx))
+              let k = if colname != nil: $colname else: "col_" & $colIdx
+              let v = if val != nil: $val else: ""
+              row.add([(k, v)].toTable)
+            if row.len > 0:
+              obj.add(row)
 
-  var row: Row
+# =============================================================================
+# High-Level SPI Consumer Procs (Eager Fetch, Optionals, Reducers)
+# =============================================================================
 
-  var tupdesc = SPI_tuptable[].tupdesc
-
-  for lines in 0 .. SPI_processed:
-    row = @[]
-    var values = gettuple(SPI_tuptable)
-    for i in 1..tupdesc.natts:
-      # Catching N+1 problem!
-      if lines != (SPI_processed - 1):
-        #var ttype:cstring = gettype(tupdesc,i)
-        var colname: cstring = fname(tupdesc, i)
-        var value: cstring = getvalue(values, tupdesc, i)
-        row.add([($colname, $value)].toTable)
-    if row != @[]:
-      obj.add(row)
-
-
-template getPLSourceCode*(fn_oid, lang_datum: cuint): tuple[name: string, src: string, nargs: string, argtypes: string, rettype: string] =
+proc fetchRawRows*(sqlQuery: string): seq[Table[string, string]] =
+  ## Executes raw SQL via SPI and returns a flat seq of row tables
+  result = @[]
   spi_init:
-    var q = "select proname,prosrc,pronargs, proargtypes, prorettype from pg_proc where prolang = " & $lang_datum & " and oid = " & $fn_oid
-    query(q, Code)
-  (Code[0][0]["proname"], Code[0][1]["prosrc"], Code[0][2]["pronargs"], Code[0][3]["proargtypes"], Code[0][4]["prorettype"])
+    let rc = exec(const_string(sqlQuery), 0)
+    if rc >= 0 and SPI_tuptable != nil:
+      let tupdesc = getTupdesc(SPI_tuptable)
+      if tupdesc != nil:
+        let natts = int(getNatts(tupdesc))
+        if SPI_processed > 0 and natts > 0:
+          for rowIdx in 0 ..< int(SPI_processed):
+            let tup = getTuple(SPI_tuptable, uint64(rowIdx))
+            if tup != nil:
+              var rowTable = initTable[string, string]()
+              for colIdx in 1 .. natts:
+                let colname = fname(tupdesc, cint(colIdx))
+                let val = getvalue(tup, tupdesc, cint(colIdx))
+                let k = if colname != nil: $colname else: "col_" & $colIdx
+                let v = if val != nil: $val else: ""
+                rowTable[k] = v
+              result.add(rowTable)
 
+proc fetch*[T: object](query: ExecutableQuery): seq[T] =
+  ## Maps query result rows directly into a sequence of typed Nim objects
+  let rawRows = fetchRawRows($query)
+  result = @[]
+  for r in rawRows:
+    result.add(mapRowTo[T](r))
 
-template getFunctionHeader*(fn_oid, lang_datum: cuint): tuple[func_name: string, category: string, p1: string, nargs: string] =
+proc fetchOne*[T: object](query: ExecutableQuery): Option[T] =
+  ## Fetches the first row as an Option[T], or none(T) if empty
+  let items = query.fetch[T]()
+  if items.len > 0:
+    return some(items[0])
+  return none(T)
+
+proc fetchScalar*[T: int | float | string | bool](query: ExecutableQuery): T =
+  ## Fetches a single scalar value from the first column of the first row (e.g. COUNT(*))
+  let rawRows = fetchRawRows($query)
+  if rawRows.len > 0:
+    for _, val in rawRows[0]:
+      return parseValue[T](val)
+  return parseValue[T]("")
+
+proc fetchCount*(query: ExecutableQuery): int =
+  ## Executes query and returns total processed count
+  let rawRows = fetchRawRows($query)
+  return rawRows.len
+
+# =============================================================================
+# Stream Helpers & Reducers
+# =============================================================================
+
+proc firstOption*[T](items: openArray[T]): Option[T] =
+  ## Returns the first item as an Option or none
+  if items.len > 0: some(items[0]) else: none(T)
+
+proc toTable*[T, K, V](items: openArray[T], keySelector: proc(x: T): K {.closure.}, valSelector: proc(x: T): V {.closure.}): Table[K, V] {.effectsOf: keySelector, effectsOf: valSelector.} =
+  ## Transforms a collection of items into a key-value Table
+  result = initTable[K, V]()
+  for item in items:
+    result[keySelector(item)] = valSelector(item)
+
+proc any*[T](items: openArray[T], predicate: proc(x: T): bool {.closure.}): bool {.effectsOf: predicate.} =
+  ## Returns true if any item matches the predicate
+  for item in items:
+    if predicate(item): return true
+  return false
+
+proc all*[T](items: openArray[T], predicate: proc(x: T): bool {.closure.}): bool {.effectsOf: predicate.} =
+  ## Returns true if all items match the predicate
+  for item in items:
+    if not predicate(item): return false
+  return true
+
+# =============================================================================
+# Direct Object Schema & Entity Operations via SPI
+# =============================================================================
+
+proc spiCreateTableFrom*[T: object](tableName: string = "", ifNotExists: bool = true, primaryKey: string = "id"): int =
+  ## Inspects properties of object type T, generates CREATE TABLE DDL, and executes it via SPI
+  let ddl = createTableFromType[T](tableName, ifNotExists, primaryKey)
+  var ret = 0
   spi_init:
-    var nargs_inner = " (select pronargs from pg_proc where prolang = " & $lang_datum & " and oid = " & $fn_oid & ") as nargs"
-    var proname_inner = " (select proname from pg_proc where prolang = " & $lang_datum & " and oid = " & $fn_oid & ")"
+    ret = int(exec(const_string(ddl), 0))
+  return ret
 
-    var q = "select func_name, category, p1, " & nargs_inner & " from nim_proc_header where func_name = " & proname_inner
-    query(q, Code)
+proc spiCreateTableFrom*[T: object](obj: T, tableName: string = "", ifNotExists: bool = true, primaryKey: string = "id"): int =
+  ## Inspects properties of an object instance, generates CREATE TABLE DDL, and executes it via SPI
+  spiCreateTableFrom[T](tableName, ifNotExists, primaryKey)
 
-  (Code[0][0]["func_name"], Code[0][1]["category"], Code[0][2]["p1"], Code[0][3]["nargs"])
+proc spiCreateTableFrom*[T: object](t: typedesc[T], tableName: string = "", ifNotExists: bool = true, primaryKey: string = "id"): int =
+  ## Inspects properties of a typedesc[T], generates CREATE TABLE DDL, and executes it via SPI
+  spiCreateTableFrom[T](tableName, ifNotExists, primaryKey)
 
-
-{.pop.}
+proc spiInsertFrom*[T: object](obj: T, tableName: string = ""): int =
+  ## Inspects object instance, generates INSERT statement, and executes it via SPI
+  let q = insertFrom(obj, tableName)
+  var ret = 0
+  spi_init:
+    ret = int(exec(const_string($q), 0))
+  return ret

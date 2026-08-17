@@ -4,6 +4,8 @@ import pgxcrown/datatypes/heaptuples
 import pgxcrown/datatypes/arrays
 include pgxcrown/pgxmacros
 import pgxcrown/reports/reports
+import pgxcrown/query_builder
+import pgxcrown/spi
 
 template PG_MODULE_MAGIC*() =
   const DLL* = "PGDLLEXPORT $# $#$#"
@@ -34,3 +36,5 @@ export basic
 export reports
 export heaptuples
 export arrays
+export query_builder
+export spi
