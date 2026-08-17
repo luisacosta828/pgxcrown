@@ -66,7 +66,7 @@ proc greet*(name: string = "World"): string =
 pgxtool build-extension my_extension
 
 # Install into PostgreSQL's pkglibdir and extension directories
-sudo /home/xbytes/xbytes_pgxtool/my_extension/src/install.sh
+sudo /path/to/my_extension/src/install.sh
 ```
 
 ### 5. Run in PostgreSQL (`psql`)

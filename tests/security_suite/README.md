@@ -19,15 +19,15 @@ This test suite demonstrates Pgxcrown's **4 Security Pillars** and **Binary Symb
 
 ### A. Unsafe Shell / C Call Attempt (`execCmd` / `system` import):
 ```
-/home/xbytes/xbytes_pgxtool/security_violation_demo/src/tmp_main.nim(10, 18) Error: execCmd(cmd) can have an unlisted effect: ExecIOEffect
+/path/to/project/security_violation_demo/src/tmp_main.nim(10, 18) Error: execCmd(cmd) can have an unlisted effect: ExecIOEffect
 ❌ [SECURITY VIOLATION] Compilation aborted for extension 'security_violation_demo' due to restricted C system calls.
 ```
 
 ### B. Verified Safe Extension (`pg_ast_lens` / `security_demo`):
 ```
 Hint: mm: orc; threads: on; opt: speed; options: -d:release
-50560 lines; 1.448s; 71.16MiB peakmem; proj: /home/xbytes/xbytes_pgxtool/pg_ast_lens/src/tmp_main.nim; out: /home/xbytes/xbytes_pgxtool/pg_ast_lens/src/pg_ast_lens [SuccessX]
-🛡️  [SECURITY AUDIT PASSED] No blacklisted OS system calls detected in /home/xbytes/xbytes_pgxtool/pg_ast_lens/src/pg_ast_lens
+50560 lines; 1.448s; 71.16MiB peakmem; proj: /path/to/project/pg_ast_lens/src/tmp_main.nim; out: /path/to/project/pg_ast_lens/src/pg_ast_lens [SuccessX]
+🛡️  [SECURITY AUDIT PASSED] No blacklisted OS system calls detected in /path/to/project/pg_ast_lens/src/pg_ast_lens
 Build completed for extension: pg_ast_lens
 ```
 
