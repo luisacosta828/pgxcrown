@@ -33,7 +33,7 @@ type
     elemtype*: Oid
     dim1*: int 
     lbound1: int
-    values*: ptr Oid
+    values*: UncheckedArray[Oid]
 
 proc cstring_to_text*(s: const_char): Text {.importc.}
 proc NameStr*(name: NameData): cstring {.importc.}

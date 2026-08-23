@@ -95,11 +95,17 @@ template get_pg_proc_argnames*(ttuple: typed): seq[string] =
   arg_names.cstringArrayToSeq(nelems)
   
 
-template get_pg_proc_argtypes*(ttuple: typed): ptr Oid =
+template get_pg_proc_argtypes*(ttuple: typed): ptr UncheckedArray[Oid] =
   var
     datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_proargtypes, addr(is_null))
     fn_args_types = cast[ptr oidvector](DatumGetPointer(datum))
-  fn_args_types.values
+  addr(fn_args_types.values)
+
+template get_pg_proc_arg_oid*(ttuple: typed, arg_idx: int): Oid =
+  var
+    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_proargtypes, addr(is_null))
+    fn_args_types = cast[ptr oidvector](DatumGetPointer(datum))
+  fn_args_types.values[arg_idx]
 
 template asIntptr(vector: ptr Oid): int = cast[int](vector)
 

@@ -1,4 +1,5 @@
-import std/[macros, os, strutils, tables]
+import std/[macros, os, strutils, tables, json]
+export json
 
 const entrypoint {.strdefine.} = ""
 var recordType {.compileTime.}: seq[string] = @[]

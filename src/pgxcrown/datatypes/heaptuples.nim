@@ -1,4 +1,4 @@
-from basic import Oid, Datum, OidOutputFunctionCall, PointerGetDatum, Pointer,
+from basic import Oid, Datum, NameData, OidOutputFunctionCall, PointerGetDatum, Pointer,
   Int32GetDatum, Int64GetDatum, Float4GetDatum, Float8GetDatum, BoolGetDatum,
   CharGetDatum, ObjectIdGetDatum, CStringGetTextDatum, DatumToInt32, DatumToInt64,
   DatumGetFloat8, DatumGetChar, DatumGetObjectId, DatumToCString,
@@ -35,6 +35,15 @@ type
 
   HeapTuple* = ptr HeapTupleData
 
+  FormData_pg_attribute* {.importc: "FormData_pg_attribute".} = object
+    attrelid*: Oid
+    attname*: NameData
+    atttypid*: Oid
+    attnum*: int16
+    attisdropped*: bool
+  
+  Form_pg_attribute* = ptr FormData_pg_attribute
+
 proc heap_form_tuple*(tupleDescriptor: pointer, values: ptr Datum, isnull: ptr bool): HeapTuple {.importc: "heap_form_tuple".}
 proc heap_freetuple*(htup: HeapTuple) {.importc: "heap_freetuple".}
 
@@ -47,15 +56,21 @@ proc HeapTupleGetDatum*(htup: HeapTuple): Datum {.inline.} =
 {.push header: "access/tupdesc.h".}
 type
   TupleDesc* {.importc: "TupleDesc".} = pointer
+  TupleDescData* {.importc: "struct TupleDescData".} = object
+    natts*: cint
+
+  TupleDescStruct* = ptr TupleDescData
 
 proc DecrTupleDescRefCount*(tup: TupleDesc) {.importc.}
 proc CreateTemplateTupleDesc*(natts: cint): TupleDesc {.importc: "CreateTemplateTupleDesc".}
 proc TupleDescInitEntry*(desc: TupleDesc, attnum: int16, attname: cstring, oidtypeid: Oid, typmod: int32, attdim: cint) {.importc: "TupleDescInitEntry".}
 proc BlessTupleDesc*(tupdesc: TupleDesc): TupleDesc {.importc: "BlessTupleDesc".}
+proc TupleDescAttr*(tupdesc: TupleDesc, i: cint): Form_pg_attribute {.importc: "TupleDescAttr".}
 {.pop.}
 
 {.push header: "utils/typcache.h".}
-proc lookup_rowtype_tupdesc(type_id: Oid, typmod: cint): TupleDesc {.importc.}
+proc lookup_rowtype_tupdesc*(type_id: Oid, typmod: cint): TupleDesc {.importc.}
+proc lookup_rowtype_tupdesc_noerror*(type_id: Oid, typmod: int32, noError: bool): TupleDesc {.importc: "lookup_rowtype_tupdesc_noerror".}
 {.pop.}
 
 {.push header: "executor/executor.h" .}
@@ -84,16 +99,6 @@ proc getTypeMod*(tup: HeapTupleHeader): cint =
   if not tup.isNil:
     return tup.t_choice.t_datum.datum_typmod
   return -1
-
-{.push header: "catalog/pg_attribute.h".}
-type
-  FormData_pg_attribute* {.importc: "FormData_pg_attribute".} = object
-    atttypid*: Oid
-{.pop.}
-
-{.push header: "access/tupdesc.h".}
-proc TupleDescAttr*(tupdesc: TupleDesc, i: cint): ptr FormData_pg_attribute {.importc: "TupleDescAttr".}
-{.pop.}
 
 {.push header: "utils/lsyscache.h".}
 proc getTypeOutputInfo*(typeId: Oid, typOutput: var Oid, typIsVarlena: var bool) {.importc: "getTypeOutputInfo".}
