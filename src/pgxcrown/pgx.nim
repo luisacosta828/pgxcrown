@@ -1,11 +1,11 @@
 import std/[macros, os, strutils, tables]
 
-
 const entrypoint {.strdefine.} = ""
 var recordType {.compileTime.}: seq[string] = @[]
 
-template NimToSQLType(dt: string): string =
-  case dt
+proc NimToSQLType(dt: string): string =
+  let cleanDt = dt.strip(chars = {'*'})
+  case cleanDt
   of "int", "int32": "int4"
   of "int64": "int8"
   of "int16": "int2"
@@ -13,18 +13,28 @@ template NimToSQLType(dt: string): string =
   of "float64": "float8"
   of "string": "Text"
   of "cstring": "cstring"
+  of "char": "char"
+  of "uint", "uint32": "oid"
   of "bool", "boolean": "boolean"
+  of "JsonNode", "Json", "json": "jsonb"
+  of "Jsonb", "jsonb": "jsonb"
   of "seq[int]", "seq[int32]": "int4[]"
   of "seq[int64]": "int8[]"
   of "seq[float]", "seq[float32]": "float4[]"
   of "seq[float64]": "float8[]"
   of "seq[string]": "text[]"
   of "seq[bool]": "bool[]"
+  of "seq[JsonNode]", "seq[Jsonb]", "seq[jsonb]": "jsonb[]"
   else:
-    if dt.startsWith("seq["):
-      "record[]"
+    if cleanDt.startsWith("seq["):
+      let inner = cleanDt[4 .. ^2].strip(chars = {'*'})
+      let sqlInner = if inner in recordType: "\"" & inner & "\"" else: NimToSQLType(inner)
+      let finalSqlInner = if sqlInner.endsWith("[]"): sqlInner else: sqlInner & "[]"
+      finalSqlInner
+    elif cleanDt in recordType:
+      "\"" & cleanDt & "\""
     else:
-      dt
+      "record"
 
 proc project(path: string): string {.inline.} =
   var p = path.parentDir
@@ -43,9 +53,10 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
       returnTypeStr = " returns " & NimToSQLType(retTypeNode[1].repr)
       hasOptionOrDefault = true
     elif retTypeNode.kind == nnkBracketExpr and retTypeNode[0].repr == "seq":
-      let innerType = retTypeNode[1].repr
-      let sqlInner = if innerType in recordType or innerType.endsWith("*"): "record" else: NimToSQLType(innerType)
-      returnTypeStr = " returns SETOF " & sqlInner
+      let innerType = retTypeNode[1].repr.strip(chars = {'*'})
+      let sqlInner = if innerType in recordType: "\"" & innerType & "\"" else: NimToSQLType(innerType)
+      let finalSqlInner = if sqlInner.endsWith("[]"): sqlInner[0 .. ^3] else: sqlInner
+      returnTypeStr = " returns SETOF " & finalSqlInner
     else:
       returnTypeStr = " returns " & NimToSQLType(retTypeNode.repr)
 
@@ -66,12 +77,8 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
       hasOptionOrDefault = true
     elif isSeqParam:
       baseTypeStr = NimToSQLType(paramTypeNode.repr)
-    elif paramTypeNode.kind == nnkIdent and paramTypeNode.repr notin recordType:
-      baseTypeStr = NimToSQLType(paramTypeNode.repr)
-    elif paramTypeNode.kind == nnkTupleConstr or paramTypeNode.repr in recordType:
-      baseTypeStr = "record"
     else:
-      baseTypeStr = paramTypeNode.repr
+      baseTypeStr = NimToSQLType(paramTypeNode.repr)
 
     if defaultNode.kind != nnkEmpty:
       hasOptionOrDefault = true
@@ -103,26 +110,55 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
               entry.add defaultNode[1].repr
           else:
             entry.add defaultNode.repr
+        of nnkPrefix:
+          if defaultNode[0].repr == "%*":
+            entry.add "'" & defaultNode.repr[2 .. ^1] & "'"
+          else:
+            entry.add defaultNode.repr
         else:
-          entry.add defaultNode.repr
+          if baseTypeStr in ["json", "jsonb"] and defaultNode.repr.startsWith("%*"):
+            entry.add "'" & defaultNode.repr[2 .. ^1] & "'"
+          else:
+            entry.add defaultNode.repr
       elif isOptionParam:
         entry.add " DEFAULT NULL"
       param_list.add entry
 
-  var strict = if returnTypeStr == "": "language c;\n" 
-               elif hasOptionOrDefault: "language c;\n" 
-               else: "language c strict;\n"
+  var volatility = ""
+  var parallel = ""
+  var isStrict = not hasOptionOrDefault
+
+  if fn.pragma.kind != nnkEmpty:
+    for p in fn.pragma:
+      let pRepr = p.repr.toLowerAscii
+      if pRepr in ["immutable"]:
+        volatility = " IMMUTABLE"
+      elif pRepr in ["stable"]:
+        volatility = " STABLE"
+      elif pRepr in ["volatile"]:
+        volatility = " VOLATILE"
+      elif pRepr in ["parallelsafe", "parallel_safe"]:
+        parallel = " PARALLEL SAFE"
+      elif pRepr in ["parallelrestricted", "parallel_restricted"]:
+        parallel = " PARALLEL RESTRICTED"
+      elif pRepr in ["calledonnullinput", "called_on_null_input"]:
+        isStrict = false
+      elif pRepr in ["strict"]:
+        isStrict = true
+
+  var strictStr = if isStrict and returnTypeStr != "": " STRICT" else: ""
+  var optionsStr = "language c" & volatility & parallel & strictStr & ";\n"
 
   var fnNameStr = fn.name.repr.strip(chars = {'*'})
   sql_scripts.add "\nCREATE OR REPLACE " & procTy & fnNameStr & '(' & param_list.join(", ") & ')' & returnTypeStr & " as\n"
   sql_scripts.add "'" & project(entrypoint) & "', 'pgx_" & fnNameStr & "'\n"
-  sql_scripts.add strict
+  sql_scripts.add optionsStr
 
 
 proc buildEnumType(element: NimNode, sql_scripts: var string) =
   var 
-    enum_template = "\nCREATE TYPE $ENUM_NAME AS ENUM ($ENUM_LIST);\n"
-    enum_name     = element[0].repr
+    enum_template = "\nCREATE TYPE \"$ENUM_NAME\" AS ENUM ($ENUM_LIST);\n"
+    enum_name     = element[0].repr.strip(chars = {'*'})
     enum_list: seq[string] = @[]
 
   for el in element[2]:
@@ -131,6 +167,23 @@ proc buildEnumType(element: NimNode, sql_scripts: var string) =
   
   sql_scripts.add enum_template.replace("$ENUM_NAME", enum_name).replace("$ENUM_LIST", enum_list.join(","))
 
+proc buildObjectType(element: NimNode, sql_scripts: var string) =
+  var objName = element[0].repr.strip(chars = {'*'})
+  var fields: seq[string] = @[]
+  
+  if element[2].kind == nnkObjectTy and element[2].len >= 3:
+    let recList = element[2][2]
+    if recList.kind == nnkRecList:
+      for identDef in recList:
+        if identDef.kind == nnkIdentDefs:
+          let fieldTypeStr = NimToSQLType(identDef[^2].repr)
+          for fieldNameNode in identDef[0 .. ^3]:
+            let fieldNameStr = fieldNameNode.repr.strip(chars = {'*'})
+            fields.add "\"" & fieldNameStr & "\" " & fieldTypeStr
+
+  if fields.len > 0:
+    let typeSql = "\nCREATE TYPE \"" & objName & "\" AS (\n  " & fields.join(",\n  ") & "\n);\n"
+    sql_scripts.add typeSql
 
 proc lift_base_datatypes(function: NimNode, custom_datatypes: Table[string, string]) =
   for idx in 0 ..< len(function.params):
@@ -186,16 +239,10 @@ macro decorateMainFunctions*() =
   var (dir, file, _) = splitFile(entrypoint)
   let pgx_pragma = newNimNode(nnkPragma)
   pgx_pragma.add(ident("pgx"))
+
+  # Pass 1: Process type definitions first so recordType is populated and types are emitted
   for el in source:
-    if el.kind in {nnkProcDef, nnkFuncDef}:
-      if not isImportc(el):
-        var fnNameStr = el.name.repr.strip(chars = {'*'})
-        el.pragma = pgx_pragma
-        v1fns.add ident("pgx_" & fnNameStr)
-        buildSQLFunction(el, sql_scripts)
-        if custom_datatypes.len == 1:
-          lift_base_datatypes(el, custom_datatypes)
-    elif el.kind == nnkTypeSection and hints["create-type"]:
+    if el.kind == nnkTypeSection and hints["create-type"]:
       var 
         custom_dt = el[0][0].repr
         base_dt   = el[0][2].repr
@@ -212,18 +259,32 @@ macro decorateMainFunctions*() =
           pragmaexpr.add(pgx_pragma)
           e[0] = pragmaexpr
         of "tupleConstr": 
-          recordType.add e[0].repr
+          recordType.add e[0].repr.strip(chars = {'*'})
           pragmaexpr.add(e[0])
           pragmaexpr.add(pgx_pragma)
           e[0] = pragmaexpr
         of "object":
-          recordType.add e[0].repr
+          let cleanName = e[0].repr.strip(chars = {'*'})
+          recordType.add cleanName
+          buildObjectType(e, sql_scripts)
           pragmaexpr.add(e[0])
           pragmaexpr.add(pgx_pragma)
           e[0] = pragmaexpr
         else:
           discard
 
+  # Pass 2: Process function definitions
+  for el in source:
+    if el.kind in {nnkProcDef, nnkFuncDef}:
+      if not isImportc(el):
+        var fnNameStr = el.name.repr.strip(chars = {'*'})
+        v1fns.add ident("pgx_" & fnNameStr)
+        buildSQLFunction(el, sql_scripts)
+        if el.pragma.kind == nnkEmpty:
+          el.pragma = newNimNode(nnkPragma)
+        el.pragma.add(ident("pgx"))
+        if custom_datatypes.len == 1:
+          lift_base_datatypes(el, custom_datatypes)
 
   let prjName = project(entrypoint)
   let controlContent = "# " & prjName & " extension\ncomment = '" & prjName & " extension for PostgreSQL'\ndefault_version = '0.0.1'\nmodule_pathname = '$libdir/" & prjName & "'\nrelocatable = true\n"

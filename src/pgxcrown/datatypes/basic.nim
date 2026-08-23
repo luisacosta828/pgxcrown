@@ -1,5 +1,5 @@
-import std/options
-export options
+import std/[options, json]
+export options, json
 
 # Basic Data Types definitions from postgres.h
 {.push header: "postgres.h".}
@@ -184,6 +184,10 @@ proc OidOutputFunctionCall*(functionId: Oid, value: Datum): cstring {. importc, 
 
 {.push header: "utils/fmgrprotos.h".}
 proc enum_out*(fcinfo: FunctionCallInfo): Datum {.importc: "enum_out", noconv, cdecl, noSideEffect, gcsafe.}
+proc jsonb_in*(fcinfo: FunctionCallInfo): Datum {.importc: "jsonb_in", noconv, cdecl, noSideEffect, gcsafe.}
+proc jsonb_out*(fcinfo: FunctionCallInfo): Datum {.importc: "jsonb_out", noconv, cdecl, noSideEffect, gcsafe.}
+proc json_in*(fcinfo: FunctionCallInfo): Datum {.importc: "json_in", noconv, cdecl, noSideEffect, gcsafe.}
+proc json_out*(fcinfo: FunctionCallInfo): Datum {.importc: "json_out", noconv, cdecl, noSideEffect, gcsafe.}
 {.pop.}
 
 {.push header: "funcapi.h".}
@@ -252,4 +256,29 @@ converter NameToDatum*(value: Name): Datum = NameGetDatum(value)
 converter CstringToNimString*(value: cstring): string =
   if value == nil: "" else: $value
 converter StringToDatum*(value: string): Datum = CStringGetTextDatum(cstring(value))
+converter DatumToJsonNode*(x: Datum): JsonNode {.tags: [].} =
+  {.cast(noSideEffect).}:
+    {.cast(tags: []).}:
+      if x == 0: return newJNull()
+      let cstrDatum = DirectFunctionCall1(jsonb_out, x)
+      let cs = DatumToCString(cstrDatum)
+      if cs == nil or cs.len == 0:
+        return newJNull()
+      try:
+        return parseJson($cs)
+      except CatchableError:
+        return newJNull()
+
+converter JsonNodeToDatum*(j: JsonNode): Datum {.tags: [].} =
+  {.cast(noSideEffect).}:
+    {.cast(tags: []).}:
+      if isNil(j) or j.kind == JNull:
+        let csDatum = CStringToDatum("null")
+        return DirectFunctionCall1(jsonb_in, csDatum)
+      let csDatum = CStringToDatum(cstring($j))
+      return DirectFunctionCall1(jsonb_in, csDatum)
+
+template getJsonNode*(value: cuint): JsonNode =
+  DatumToJsonNode(getDatum(value))
+
 

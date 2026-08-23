@@ -12,10 +12,10 @@ document.addEventListener('DOMContentLoaded', () => {
    1. Live Code Snippets (Showcasing All Pgxcrown Features)
    -------------------------------------------------------------------------- */
 const codeSnippets = {
-  sql: `<span class="syn-cmt"># v0.16.0 Type-Safe Query Builder AST & In-Database SPI</span>
+  sql: `<span class="syn-cmt"># Type-Safe Query Builder AST & In-Database SPI</span>
 <span class="syn-kw">import</span> pgxcrown
 
-<span class="syn-kw">proc</span> <span class="syn-fn">get_leaders</span>*(minSalary: <span class="syn-type">int</span> = 80000): <span class="syn-type">string</span> =
+<span class="syn-kw">proc</span> <span class="syn-fn">get_leaders</span>*(minSalary: <span class="syn-type">int</span> = 80000): <span class="syn-type">string</span> <span class="syn-pragma">{.stable.}</span> =
   <span class="syn-kw">let</span> e = <span class="syn-fn">table</span>(<span class="syn-str">"employees"</span>, <span class="syn-str">"e"</span>)
   <span class="syn-kw">let</span> d = <span class="syn-fn">table</span>(<span class="syn-str">"departments"</span>, <span class="syn-str">"d"</span>)
 
@@ -32,14 +32,54 @@ const codeSnippets = {
 
   <span class="syn-kw">return</span> $q`,
 
-  ddl: `<span class="syn-cmt"># v0.16.0 Schema Introspection & Entity SPI Insertion</span>
+  objects: `<span class="syn-cmt"># Universal 'type object' & Named Composite Types (Auto CREATE TYPE)</span>
+<span class="syn-kw">import</span> pgxcrown, std/[options, json]
+
+<span class="syn-kw">type</span>
+  User* = <span class="syn-kw">object</span>
+    id*: <span class="syn-type">int32</span>
+    username*: <span class="syn-type">string</span>
+    score*: <span class="syn-type">float64</span>
+    active*: <span class="syn-type">bool</span>
+    profile*: <span class="syn-type">JsonNode</span>
+
+<span class="syn-cmt"># 1. Pure entity constructor -> IMMUTABLE PARALLEL SAFE</span>
+<span class="syn-kw">proc</span> <span class="syn-fn">make_user</span>*(id: <span class="syn-type">int32</span>, name: <span class="syn-type">string</span>, score: <span class="syn-type">float64</span>): <span class="syn-type">User</span> <span class="syn-pragma">{.immutable, parallelSafe.}</span> =
+  <span class="syn-kw">return</span> User(id: id, username: name, score: score, active: true, profile: %*{<span class="syn-str">"tier"</span>: <span class="syn-str">"pro"</span>})
+
+<span class="syn-cmt"># 2. Query Builder + SPI object mapping -> RETURNS SETOF "User"</span>
+<span class="syn-kw">proc</span> <span class="syn-fn">get_top_users</span>*(minScore: <span class="syn-type">float64</span>): <span class="syn-type">seq[User]</span> <span class="syn-pragma">{.stable.}</span> =
+  <span class="syn-kw">let</span> u = <span class="syn-fn">table</span>(<span class="syn-str">"users"</span>, <span class="syn-str">"u"</span>)
+  <span class="syn-kw">let</span> q = <span class="syn-fn">Select</span>(u.id, u.username, u.score, u.active, u.profile).<span class="syn-fn">From</span>(u).<span class="syn-fn">Where</span>(u.score >= minScore)
+  <span class="syn-kw">return</span> q.<span class="syn-fn">fetch</span>(User)`,
+
+  jsonb: `<span class="syn-cmt"># Native Binary JSONB (Direct PostgreSQL engine representation)</span>
+<span class="syn-kw">import</span> pgxcrown, std/json
+
+<span class="syn-kw">proc</span> <span class="syn-fn">enrich_metadata</span>*(data: <span class="syn-type">JsonNode</span>): <span class="syn-type">JsonNode</span> <span class="syn-pragma">{.immutable.}</span> =
+  <span class="syn-kw">result</span> = data.copy()
+  <span class="syn-kw">result</span>[<span class="syn-str">"verified"</span>] = %true
+  <span class="syn-kw">result</span>[<span class="syn-str">"processed_by"</span>] = %<span class="syn-str">"pgxcrown"</span>
+
+<span class="syn-kw">proc</span> <span class="syn-fn">default_config</span>*(): <span class="syn-type">JsonNode</span> <span class="syn-pragma">{.immutable.}</span> =
+  <span class="syn-kw">return</span> %*{<span class="syn-str">"env"</span>: <span class="syn-str">"production"</span>, <span class="syn-str">"max_connections"</span>: 100, <span class="syn-str">"metrics"</span>: true}`,
+
+  security: `<span class="syn-cmt"># SQL Volatility Pragmas & Compile-Time Safety</span>
+<span class="syn-kw">proc</span> <span class="syn-fn">calc_tax</span>*(price: <span class="syn-type">float64</span>): <span class="syn-type">float64</span> <span class="syn-pragma">{.immutable, parallelSafe.}</span> =
+  <span class="syn-kw">return</span> price * 1.16  <span class="syn-cmt"># IMMUTABLE PARALLEL SAFE</span>
+
+<span class="syn-kw">proc</span> <span class="syn-fn">find_user</span>*(id: <span class="syn-type">int32</span>): <span class="syn-type">Option[User]</span> <span class="syn-pragma">{.stable.}</span> =
+  <span class="syn-kw">let</span> u = <span class="syn-fn">table</span>(<span class="syn-str">"users"</span>, <span class="syn-str">"u"</span>)
+  <span class="syn-kw">return</span> <span class="syn-fn">Select</span>(u.id, u.username).<span class="syn-fn">From</span>(u).<span class="syn-fn">Where</span>(u.id == id).<span class="syn-fn">fetchOne</span>(User)`,
+
+  ddl: `<span class="syn-cmt"># Schema Introspection & Entity SPI Insertion</span>
 <span class="syn-kw">import</span> pgxcrown, std/options
 
 <span class="syn-kw">type</span>
   UserRecord = <span class="syn-kw">object</span>
-    id: <span class="syn-type">int</span>
+    id: <span class="syn-type">int32</span>
     username: <span class="syn-type">string</span>
-    reputation: <span class="syn-type">float</span>
+    reputation: <span class="syn-type">float64</span>
     is_active: <span class="syn-type">bool</span>
     skills: <span class="syn-type">seq[string]</span>
     bio: <span class="syn-type">Option[string]</span>
@@ -52,62 +92,16 @@ const codeSnippets = {
 <span class="syn-kw">let</span> user = UserRecord(id: 42, username: <span class="syn-str">"Ada"</span>, reputation: 99.8, is_active: true, skills: @[<span class="syn-str">"nim"</span>], bio: <span class="syn-fn">some</span>(<span class="syn-str">"Pioneer"</span>))
 <span class="syn-fn">discard</span> <span class="syn-fn">spiInsertFrom</span>(user, tableName = <span class="syn-str">"users"</span>)`,
 
-  srf: `<span class="syn-cmt"># v0.15.0 Set Returning Functions (SETOF / Table Functions)</span>
-<span class="syn-kw">import</span> pgxcrown
-
-<span class="syn-kw">proc</span> <span class="syn-fn">generate_series_nim</span>*(startVal: <span class="syn-type">int32</span>, endVal: <span class="syn-type">int32</span>): <span class="syn-type">seq[int32]</span> =
-  result = @[]
-  <span class="syn-kw">for</span> i <span class="syn-kw">in</span> startVal .. endVal:
-    result.add(i)
-
-<span class="syn-kw">proc</span> <span class="syn-fn">list_fruits</span>*(): <span class="syn-type">seq[string]</span> =
-  <span class="syn-kw">return</span> @[<span class="syn-str">"Apple"</span>, <span class="syn-str">"Banana"</span>, <span class="syn-str">"Cherry"</span>, <span class="syn-str">"Dragonfruit"</span>]
-
-<span class="syn-cmt"># Auto-Generated PostgreSQL DDL:</span>
-<span class="syn-sql">CREATE FUNCTION generate_series_nim(int4, int4) RETURNS SETOF int4;</span>
-<span class="syn-sql">CREATE FUNCTION list_fruits() RETURNS SETOF text;</span>`,
-
-  options: `<span class="syn-cmt"># v0.13.0 Default Parameters & Option[T] NULL Defense</span>
-<span class="syn-kw">import</span> pgxcrown, std/options
-
-<span class="syn-kw">proc</span> <span class="syn-fn">greet</span>*(name: <span class="syn-type">string</span> = <span class="syn-str">"World"</span>, count: <span class="syn-type">int</span> = 1): <span class="syn-type">string</span> =
-  <span class="syn-str">"Hello "</span> & name & <span class="syn-str">" x"</span> & $count
-
-<span class="syn-kw">proc</span> <span class="syn-fn">add_opt</span>*(a: <span class="syn-type">int</span>, b: <span class="syn-type">Option[int]</span>): <span class="syn-type">Option[int]</span> =
-  <span class="syn-kw">if</span> b.isNone: <span class="syn-fn">none</span>(<span class="syn-type">int</span>) <span class="syn-kw">else</span>: <span class="syn-fn">some</span>(a + b.get)
-
-<span class="syn-cmt"># Auto-Generated PostgreSQL DDL:</span>
-<span class="syn-sql">CREATE FUNCTION greet(Text DEFAULT 'World', int4 DEFAULT 1) RETURNS Text;</span>
-<span class="syn-sql">CREATE FUNCTION add_opt(int4, int4 DEFAULT NULL) RETURNS int4;</span>`,
-
-  shield: `<span class="syn-cmt"># v0.12.0 Automatic Panic & Exception Shield</span>
+  shield: `<span class="syn-cmt"># Automatic Panic & Exception Shield (0 SIGABRTs)</span>
 <span class="syn-kw">func</span> <span class="syn-fn">pgx_proof_integer_overflow</span>(): <span class="syn-type">Datum</span> <span class="syn-pragma">{.pgv1, trusted.}</span> =
   <span class="syn-kw">try</span>:
     <span class="syn-kw">var</span> a: <span class="syn-type">cint</span> = getInt32(0)
     <span class="syn-kw">var</span> b: <span class="syn-type">cint</span> = getInt32(1)
-    <span class="syn-kw">return</span> a + b  <span class="syn-cmt"># OverflowDefect caught cleanly!</span>
+    <span class="syn-kw">return</span> a + b  <span class="syn-cmt"># OverflowDefect caught cleanly without crashing server!</span>
   <span class="syn-kw">except</span> <span class="syn-type">Defect</span> <span class="syn-kw">as</span> e:
     <span class="syn-fn">reportError</span>(<span class="syn-str">"Extension Defect ["</span> & $e.name & <span class="syn-str">"]: "</span> & e.msg)
   <span class="syn-kw">except</span> <span class="syn-type">CatchableError</span> <span class="syn-kw">as</span> e:
-    <span class="syn-fn">reportError</span>(<span class="syn-str">"Extension Error ["</span> & $e.name & <span class="syn-str">"]: "</span> & e.msg)`,
-
-  enums: `<span class="syn-cmt"># Postgres Enum & Composite Tuple Conversion</span>
-<span class="syn-kw">type</span>
-  CardType = <span class="syn-kw">enum</span> Debit, Credit
-  UserRecord = <span class="syn-kw">tuple</span>[id: <span class="syn-type">int32</span>, name: <span class="syn-type">string</span>]
-
-<span class="syn-kw">proc</span> <span class="syn-fn">process_card</span>*(c: <span class="syn-type">CardType</span>): <span class="syn-type">string</span> =
-  <span class="syn-kw">case</span> c
-  <span class="syn-kw">of</span> Debit: <span class="syn-str">"Debit Card Transaction"</span>
-  <span class="syn-kw">of</span> Credit: <span class="syn-str">"Credit Card Transaction"</span>`,
-
-  hooks: `<span class="syn-cmt"># Low-Level Engine Hook Interceptor</span>
-<span class="syn-kw">import</span> pgxcrown/hooks/emit_hook
-
-<span class="syn-cmt"># Intercept internal PostgreSQL emit_log diagnostics</span>
-<span class="syn-kw">proc</span> <span class="syn-fn">audit_logger</span>*(edata: <span class="syn-type">ptr ErrorData</span>) <span class="syn-pragma">{.cdecl.}</span> =
-  <span class="syn-kw">if</span> edata.elevel >= ERROR:
-    <span class="syn-fn">report</span>(NOTICE, <span class="syn-str">"Pgxcrown Audit Hook Intercepted Query Failure!"</span>)`
+    <span class="syn-fn">reportError</span>(<span class="syn-str">"Extension Error ["</span> & $e.name & <span class="syn-str">"]: "</span> & e.msg)`
 };
 
 function initCodeTabs() {
@@ -115,7 +109,7 @@ function initCodeTabs() {
   const codeDisplay = document.getElementById('codeDisplay');
   if (!codeDisplay) return;
 
-  codeDisplay.innerHTML = codeSnippets['nim'];
+  codeDisplay.innerHTML = codeSnippets['sql'];
 
   tabs.forEach(tab => {
     tab.addEventListener('click', () => {

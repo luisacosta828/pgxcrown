@@ -8,4 +8,7 @@ src/pgxcrown.out
 src/pgxcrown/pgxtool
 v013_demo/
 tmp_*
-
+.agent/
+.agents/
+.gemini/
+nimcache/

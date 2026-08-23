@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pgxcrown 👑 v0.16.0 — Native PostgreSQL Extension Framework for Nim</title>
-  <meta name="description" content="Build ultra-fast, lightweight, crash-proof PostgreSQL C extensions in Nim. Features v0.16.0 Type-Safe Query Builder, Compile-Time Schema Introspection (createTableFrom), and Hardened SPI Engine.">
+  <title>Pgxcrown 👑 v0.17.0 — Native PostgreSQL Extension Framework for Nim</title>
+  <meta name="description" content="Build ultra-fast, lightweight, crash-proof PostgreSQL C extensions in Nim. Features v0.17.0 Universal Objects, Native Binary JSONB, 3-Layer Effect Sandboxing, Type-Safe Query Builder, and Hardened SPI Engine.">
   
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👑</text></svg>">
   <link rel="stylesheet" href="styles.css">
@@ -18,7 +18,7 @@
       <a href="#" class="nav-brand">
         <span class="crown-icon">👑</span>
         <span class="gradient-text">Pgxcrown</span>
-        <span class="version-badge">v0.16.0</span>
+        <span class="version-badge">v0.17.0</span>
       </a>
 
       <ul class="nav-links" id="navLinks">
@@ -90,12 +90,12 @@
             <span class="dot dot-green"></span>
           </div>
           <div class="code-tabs">
-            <button class="tab-btn active" data-tab="sql">Query & SPI (v0.16.0)</button>
+            <button class="tab-btn active" data-tab="sql">Query & SPI</button>
+            <button class="tab-btn" data-tab="objects">Objects & Types</button>
+            <button class="tab-btn" data-tab="jsonb">Native JSONB</button>
+            <button class="tab-btn" data-tab="security">Volatility & Safety</button>
             <button class="tab-btn" data-tab="ddl">Schema & DDL</button>
-            <button class="tab-btn" data-tab="srf">SETOF (v0.15.0)</button>
-            <button class="tab-btn" data-tab="options">Default & Options</button>
             <button class="tab-btn" data-tab="shield">Panic Shield</button>
-            <button class="tab-btn" data-tab="hooks">Kernel Hooks</button>
           </div>
         </div>
 
@@ -114,51 +114,49 @@
       </div>
 
       <div class="features-grid">
-        <!-- Feature 00000: v0.16.0 Query Builder & SPI Spotlight -->
+        <!-- Feature: Universal Objects Spotlight -->
+        <div class="feature-card glass-card">
+          <div class="feature-icon icon-box">📦</div>
+          <span class="feature-tag tag-new">v0.17.0 Core</span>
+          <h3 class="feature-title">Universal `type object` & Named Types</h3>
+          <p class="feature-text">Define pure Nim objects and automatically generate <code>CREATE TYPE "Name" AS (...)</code> DDL with zero runtime reflection. Supports <code>Option[Object]</code>, <code>seq[Object]</code>, and direct SPI mapping without requiring <code>AS (...)</code> column aliases.</p>
+        </div>
+
+        <!-- Feature: Native Binary JSONB Spotlight -->
+        <div class="feature-card glass-card">
+          <div class="feature-icon icon-tag">⚡</div>
+          <span class="feature-tag tag-new">v0.17.0 Core</span>
+          <h3 class="feature-title">Native Binary JSON & JSONB Support</h3>
+          <p class="feature-text">Direct zero-overhead conversion between Nim <code>JsonNode</code> and PostgreSQL's binary <code>jsonb</code> engine representation using internal <code>jsonb_in</code> and <code>jsonb_out</code> handlers with full literal DDL support.</p>
+        </div>
+
+        <!-- Feature: SQL Volatility & Safety Spotlight -->
+        <div class="feature-card glass-card">
+          <div class="feature-icon icon-shield">🛡️</div>
+          <span class="feature-tag tag-new">v0.17.0 Core</span>
+          <h3 class="feature-title">SQL Volatility & Compile-Time Safety</h3>
+          <p class="feature-text">Declare function volatility directly in Nim (<code>{.immutable.}</code>, <code>{.stable.}</code>, <code>{.volatile.}</code>, <code>{.parallelSafe.}</code>). The compiler validates database operations at build time and generates matching PostgreSQL options.</p>
+        </div>
+
+        <!-- Feature: Query Builder & SPI Spotlight -->
         <div class="feature-card glass-card" id="query-builder">
           <div class="feature-icon icon-code">👑</div>
-          <span class="feature-tag tag-new">v0.16.0 Spotlight</span>
+          <span class="feature-tag tag-new">v0.17.0 Core</span>
           <h3 class="feature-title">Type-Safe Query Builder & SPI Engine</h3>
           <p class="feature-text">Fluent compile-time SQL AST with zero-string table proxies (<code>u.name</code>), compile-time schema introspection (<code>createTableFrom</code>), CTEs, window functions, UPSERT, and hardened SPI runtime with stream reducers.</p>
         </div>
 
-        <!-- Feature 0000: v0.15.0 SETOF Spotlight -->
+        <!-- Feature 00: SETOF Spotlight -->
         <div class="feature-card glass-card">
           <div class="feature-icon icon-table">📊</div>
-          <span class="feature-tag tag-new">v0.15.0 Spotlight</span>
           <h3 class="feature-title">Set Returning Functions (SETOF)</h3>
           <p class="feature-text">Returning native Nim sequences (<code>seq[T]</code>) automatically generates <code>RETURNS SETOF &lt;type&gt;</code> in DDL and executes via PostgreSQL's <code>FuncCallContext</code> state machine.</p>
         </div>
 
-        <!-- Feature 000: v0.14.0 Null-Datum Defense Spotlight -->
+        <!-- Feature 0: Panic Shield -->
         <div class="feature-card glass-card">
           <div class="feature-icon icon-shield">🛡️</div>
-          <span class="feature-tag tag-new">v0.14.0 Spotlight</span>
-          <h3 class="feature-title">Non-STRICT Null-Datum Defense</h3>
-          <p class="feature-text">Automatically intercepts <code>isArgNull(n)</code> on non-strict functions, safely substituting zero-values (<code>""</code>, <code>0</code>, <code>@[]</code>) to prevent null pointer dereferences and SEGV crashes.</p>
-        </div>
-
-        <!-- Feature 00: v0.13.2 Array Mapping Spotlight -->
-        <div class="feature-card glass-card">
-          <div class="feature-icon icon-code">🔢</div>
-          <span class="feature-tag tag-new">v0.13.2 Spotlight</span>
-          <h3 class="feature-title">Dynamic & Composite Array Mapping</h3>
-          <p class="feature-text">Bidirectional zero-copy mapping between Nim sequences (<code>seq[T]</code>) and PostgreSQL dynamic arrays (<code>int4[]</code>, <code>text[]</code>, <code>bool[]</code>, <code>record[]</code>), including custom object & tuple record arrays.</p>
-        </div>
-
-        <!-- Feature 0: Default & Option[T] Defense -->
-        <div class="feature-card glass-card">
-          <div class="feature-icon icon-shield">💡</div>
-          <span class="feature-tag tag-new">v0.13.0 Spotlight</span>
-          <h3 class="feature-title">Default & Option[T] NULL Defense</h3>
-          <p class="feature-text">Maps Nim default parameters to SQL <code>DEFAULT</code> DDL, extracts SQL NULLs into <code>Option[T]</code> via <code>isArgNull</code>, and returns SQL <code>NULL</code> cleanly on <code>none(T)</code>.</p>
-        </div>
-
-        <!-- Feature 1: Panic Shield -->
-        <div class="feature-card glass-card">
-          <div class="feature-icon icon-shield">🛡️</div>
-          <span class="feature-tag tag-new">v0.12.0 Spotlight</span>
-          <h3 class="feature-title">Automatic Panic Shield</h3>
+          <h3 class="feature-title">Automatic Panic Shield (0 SIGABRTs)</h3>
           <p class="feature-text">Intercepts integer overflows, array out-of-bounds, nil dereferences, and defects at compile time, converting panics to safe <code>ereport(ERROR)</code> transaction aborts.</p>
         </div>
 

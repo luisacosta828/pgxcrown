@@ -15,25 +15,21 @@ var
 
 
 proc checkPgxTypeDef(dt: string): string =
-  result = "unknown"
   var idx: string = $cacheIteration & "type"
   if dt in pgxEnums:
     currentPGXCustomType[idx] = ident("enum")
     result = "getOid"
-  elif dt == "nnkTupleConstr" or dt in pgxTupleConstr:
-    currentPGXCustomType[idx] = ident("tupleConstr")
-    result = "getHeapTupleHeader"
-  elif dt in pgxObjectTy:
+  elif dt.startsWith("seq["):
+    result = "getArrayHeapTuples"
+  else:
     currentPGXCustomType[idx] = ident("object")
     result = "getHeapTupleHeader"
 
-
 proc checkNimTypeDef(dt: string): string =
-  result = "unknown"
   if dt in pgxEnums: 
     result = "Oid"
-  if dt == "nnkTupleConstr" or dt in pgxTupleConstr or dt in pgxObjectTy:
-    result = "HeapTupleHeader"
+  else:
+    result = dt
 
 template NimTypes(dt: string): string =
   case dt
@@ -50,6 +46,7 @@ template NimTypes(dt: string): string =
   of "bool": "bool"
   of "string": "string"
   of "cstring": "cstring"
+  of "JsonNode", "Json", "json", "Jsonb", "jsonb": "JsonNode"
   else: 
     checkNimTypeDef(dt)
 
@@ -66,6 +63,7 @@ template PgxToNim(dt: string): string =
   of "float64": "getFloat8"
   of "string": "TextDatumGetCString"
   of "cstring": "getCString" 
+  of "JsonNode", "Json", "json", "Jsonb", "jsonb": "getJsonNode"
   of "seq[int]", "seq[int32]": "getArrayInt32"
   of "seq[int64]": "getArrayInt64"
   of "seq[float]", "seq[float32]", "seq[float64]": "getArrayFloat64"
@@ -348,6 +346,7 @@ template move_nim_params_as_locals =
         of "int", "int32", "cint": newLit(int32(0))
         of "int64": newLit(int64(0))
         of "float", "float64": newLit(float64(0.0))
+        of "JsonNode", "Json", "json", "Jsonb", "jsonb": newCall(ident("newJNull"))
         else:
           if ptype.startsWith("seq["):
             newTree(nnkPrefix, ident("@"), newTree(nnkBracket, newSeq[NimNode]()))
@@ -366,26 +365,37 @@ template move_nim_params_as_locals =
       else:
         getValue = rawFetch
 
+    let isPrimitiveOrJson = ptype in ["int", "int32", "int16", "uint16", "int64", "char", "bool", "uint", "uint32", "float", "float32", "float64", "string", "cstring", "JsonNode", "Json", "json", "Jsonb", "jsonb"]
+    let isPrimitiveSeq = ptype in ["seq[int]", "seq[int32]", "seq[int64]", "seq[float]", "seq[float32]", "seq[float64]", "seq[bool]", "seq[string]", "seq[JsonNode]", "seq[Jsonb]", "seq[jsonb]"]
     var idx = $cacheIteration & "type"
     var enumVisited = enum_visited(idx)
-    var tupleConstrVisited = tuplec_visited(idx)
-    var objectVisited = object_visited(idx)
 
-    var isSeqComposite = ptype.startsWith("seq[") and f == "getArrayHeapTuples"
-    var innerElemType = if isSeqComposite: typeNode[1].repr else: ""
-
-    if isSeqComposite:
-      map_seq_tuplec_params(pvar, innerElemType, fn.params[i], argIdxNode)
+    if isOptionParam:
+      if isPrimitiveOrJson or isPrimitiveSeq:
+        varSection.add(newIdentDefs(ident(pvar), typeNode, getValue))
+      else:
+        let rawOptFetch = newTree(nnkIfExpr,
+          newTree(nnkElifBranch,
+            newCall(ident("isArgNull"), newLit(argIdxVal)),
+            newCall(ident("none"), innerTypeNode)
+          ),
+          newTree(nnkElse,
+            newCall(ident("some"), newCall(newTree(nnkBracketExpr, ident("tupleHeaderToObject"), innerTypeNode), rawFetch))
+          )
+        )
+        varSection.add(newIdentDefs(ident(pvar), typeNode, rawOptFetch))
+    elif isPrimitiveOrJson or isPrimitiveSeq:
+      varSection.add(newIdentDefs(ident(pvar), typeNode, getValue))
     elif enumVisited:
       map_enums_params(pvar, ptype)
       varSection.add(newIdentDefs(ident(pvar), ident(NimTypes(ptype)), getValue))
-    elif tupleConstrVisited or objectVisited:
-      varSection.add(newIdentDefs(ident(pvar & "th"), ident("HeapTupleHeader"), getValue))
-      map_tuplec_params(pvar, ptype, fn.params[i])
-    elif isOptionParam or ptype.startsWith("seq["):
-      varSection.add(newIdentDefs(ident(pvar), typeNode, getValue))
+    elif ptype.startsWith("seq["):
+      let innerElemTypeNode = typeNode[1]
+      let callObjSeq = newCall(newTree(nnkBracketExpr, ident("seqTupleHeaderToObjects"), innerElemTypeNode), newCall(ident("getDatum"), argIdxNode))
+      varSection.add(newIdentDefs(ident(pvar), typeNode, callObjSeq))
     else:
-      varSection.add(newIdentDefs(ident(pvar), ident(NimTypes(ptype)), getValue))
+      let callObj = newCall(newTree(nnkBracketExpr, ident("tupleHeaderToObject"), typeNode), getValue)
+      varSection.add(newIdentDefs(ident(pvar), typeNode, callObj))
     cacheIteration += 1
 
   if fn.params[0].kind != nnkEmpty:
@@ -614,24 +624,72 @@ template clean_tuple_desc =
         rbody.add anonTuplConstr[key]
   
 
-proc wrapOptionReturn(code: NimNode): NimNode =
-  if code.kind == nnkReturnStmt:
-    let optVal = ident("optValTemp")
-    let retExpr = code[0]
-    result = quote do:
-      block:
-        let `optVal` = `retExpr`
-        if `optVal`.isNone:
-          returnNull()
-          return Datum(0)
-        else:
-          return `optVal`.get
-  elif code.len == 0:
-    result = code
+proc wrapOptionReturn(code: NimNode, innerTypeStr: string): NimNode =
+  let datumConverter = case innerTypeStr:
+    of "int", "int32", "cint": "Int32GetDatum"
+    of "int64", "clonglong": "Int64GetDatum"
+    of "int16", "cshort": "Int16GetDatum"
+    of "float", "float32", "cfloat": "Float4GetDatum"
+    of "float64", "cdouble": "Float8GetDatum"
+    of "bool": "BoolGetDatum"
+    of "string": "CStringGetTextDatum"
+    of "JsonNode", "Json", "json", "Jsonb", "jsonb": "JsonNodeToDatum"
+    else: "objectToDatum"
+
+  proc transformReturn(n: NimNode): NimNode =
+    if n.kind == nnkReturnStmt:
+      let optVal = ident("optValTemp")
+      let retExpr = if n[0].kind == nnkEmpty: ident("userResult") else: n[0]
+      let convIdent = ident(datumConverter)
+      if innerTypeStr == "string":
+        return quote do:
+          block:
+            let `optVal` = `retExpr`
+            if `optVal`.isNone:
+              returnNull()
+              return Datum(0)
+            else:
+              return CStringGetTextDatum(cstring(`optVal`.get))
+      else:
+        return quote do:
+          block:
+            let `optVal` = `retExpr`
+            if `optVal`.isNone:
+              returnNull()
+              return Datum(0)
+            else:
+              return `convIdent`(`optVal`.get)
+    elif n.len == 0:
+      return n
+    else:
+      result = newNimNode(n.kind)
+      for child in n:
+        result.add transformReturn(child)
+
+  let transformed = transformReturn(code)
+  if not hasReturn(transformed):
+    result = transformed
+    let convIdent = ident(datumConverter)
+    if innerTypeStr == "string":
+      result.add quote do:
+        block:
+          let optValTemp = userResult
+          if optValTemp.isNone:
+            returnNull()
+            return Datum(0)
+          else:
+            return CStringGetTextDatum(cstring(optValTemp.get))
+    else:
+      result.add quote do:
+        block:
+          let optValTemp = userResult
+          if optValTemp.isNone:
+            returnNull()
+            return Datum(0)
+          else:
+            return `convIdent`(optValTemp.get)
   else:
-    result = newNimNode(code.kind)
-    for child in code:
-      result.add wrapOptionReturn(child)
+    result = transformed
 
 proc wrapSeqReturn(code: NimNode, retTypeStr: string): NimNode =
   let elemTypeStr = retTypeStr[4 .. ^2]
@@ -643,10 +701,8 @@ proc wrapSeqReturn(code: NimNode, retTypeStr: string): NimNode =
     of "float64", "cdouble": "Float8GetDatum"
     of "bool": "BoolGetDatum"
     of "string": "CStringGetTextDatum"
-    else: ""
-
-  if datumConverter.len == 0:
-    return code
+    of "JsonNode", "Json", "json", "Jsonb", "jsonb": "JsonNodeToDatum"
+    else: "objectToDatum"
 
   proc replaceResult(n: NimNode): NimNode =
     if n.kind == nnkIdent and n.repr == "result":
@@ -721,21 +777,24 @@ proc wrapScalarReturn(code: NimNode, retTypeStr: string): NimNode =
     of "float64", "cdouble": "Float8GetDatum"
     of "bool": "BoolGetDatum"
     of "string": "CStringGetTextDatum"
-    else: ""
-
-  if datumConverter.len == 0:
-    return code
+    of "JsonNode", "Json", "json", "Jsonb", "jsonb": "JsonNodeToDatum"
+    else: "objectToDatum"
 
   proc transformReturn(n: NimNode): NimNode =
     if n.kind == nnkReturnStmt:
       let retExpr = if n[0].kind == nnkEmpty: ident("userResult") else: n[0]
-      if retExpr.kind == nnkCall and retExpr[0].repr.endsWith("GetDatum"):
+      if retExpr.kind == nnkCall and (retExpr[0].repr.endsWith("GetDatum") or retExpr[0].repr in ["JsonNodeToDatum", "objectToDatum"]):
         return n
       elif retTypeStr == "string":
         if retExpr.kind == nnkCall and retExpr[0].repr == "CStringGetTextDatum":
           return n
         else:
           return newTree(nnkReturnStmt, newCall(ident("CStringGetTextDatum"), newCall(ident("cstring"), retExpr)))
+      elif retTypeStr in ["JsonNode", "Json", "json", "Jsonb", "jsonb"]:
+        if retExpr.kind == nnkCall and retExpr[0].repr == "JsonNodeToDatum":
+          return n
+        else:
+          return newTree(nnkReturnStmt, newCall(ident("JsonNodeToDatum"), retExpr))
       else:
         return newTree(nnkReturnStmt, newCall(ident(datumConverter), retExpr))
     elif n.len == 0:
@@ -750,16 +809,83 @@ proc wrapScalarReturn(code: NimNode, retTypeStr: string): NimNode =
     result = transformed
     if retTypeStr == "string":
       result.add newTree(nnkReturnStmt, newCall(ident("CStringGetTextDatum"), newCall(ident("cstring"), ident("userResult"))))
+    elif retTypeStr in ["JsonNode", "Json", "json", "Jsonb", "jsonb"]:
+      result.add newTree(nnkReturnStmt, newCall(ident("JsonNodeToDatum"), ident("userResult")))
     else:
       result.add newTree(nnkReturnStmt, newCall(ident(datumConverter), ident("userResult")))
   else:
     result = transformed
 
+proc isStatement(n: NimNode): bool =
+  case n.kind:
+  of nnkAsgn, nnkVarSection, nnkLetSection, nnkConstSection, nnkTypeSection,
+     nnkDiscardStmt, nnkBreakStmt, nnkContinueStmt, nnkIfStmt, nnkWhenStmt,
+     nnkWhileStmt, nnkForStmt, nnkBlockStmt, nnkStmtList:
+    true
+  of nnkCall, nnkInfix:
+    if n.len > 0 and n[0].kind == nnkIdent and n[0].repr in ["[]=", "add", "del", "delete", "insert", "inc", "dec"]:
+      true
+    else:
+      false
+  else:
+    false
+
+proc checkSecurityPragmas(node: NimNode) =
+  case node.kind:
+  of nnkPragmaBlock:
+    if node.len > 0:
+      let pragmaNode = node[0]
+      for p in pragmaNode:
+        let pRepr = p.repr
+        if pRepr.startsWith("cast(") or pRepr.startsWith("cast:"):
+          error("❌ [SECURITY VIOLATION] Usage of effect-evasion pragma '{" & pRepr & "}' is strictly prohibited in Pgxcrown UDFs. Database extensions cannot bypass effect sandboxing.", node)
+  of nnkPragma:
+    for p in node:
+      let pRepr = p.repr
+      if pRepr.startsWith("cast(") or pRepr.startsWith("cast:"):
+        error("❌ [SECURITY VIOLATION] Usage of effect-evasion pragma '{" & pRepr & "}' is strictly prohibited in Pgxcrown UDFs. Database extensions cannot bypass effect sandboxing.", node)
+  else:
+    discard
+
+  for child in node:
+    checkSecurityPragmas(child)
+
 proc explainWrapper(fn: NimNode): NimNode =
-  let pgx_proc = newProc(ident("pgx_" & $fn.name), proc_type = nnkFuncDef)
+  checkSecurityPragmas(fn)
+  let pgx_proc = newProc(ident("pgx_" & $fn.name), proc_type = nnkProcDef)
   pgxFunctions[fn.name.repr] = fn.params
   pgx_proc.params[0] = ident("Datum")
-  pgx_proc.pragma = newNimNode(nnkPragma).add(ident("pgv1")).add(ident("trusted"))
+
+  var isImmutable = false
+  var isStable = false
+  if fn.pragma.kind != nnkEmpty:
+    for p in fn.pragma:
+      let pRepr = p.repr.toLowerAscii
+      if pRepr in ["immutable"]:
+        isImmutable = true
+      elif pRepr in ["stable"]:
+        isStable = true
+
+  var forbidsExpr = newNimNode(nnkExprColonExpr)
+  forbidsExpr.add(ident("forbids"))
+  var forbidsList = newNimNode(nnkBracket)
+  forbidsList.add(ident("IOEffect"))
+  forbidsList.add(ident("TimeEffect"))
+  if isImmutable:
+    forbidsList.add(ident("DbReadEffect"))
+    forbidsList.add(ident("DbWriteEffect"))
+  elif isStable:
+    forbidsList.add(ident("DbWriteEffect"))
+  forbidsExpr.add(forbidsList)
+
+  var trustedPragma = newNimNode(nnkPragma)
+  trustedPragma.add(ident("pgv1"))
+  trustedPragma.add(ident("trusted"))
+  trustedPragma.add(forbidsExpr)
+  if isImmutable:
+    trustedPragma.add(ident("noSideEffect"))
+
+  pgx_proc.pragma = trustedPragma
 
   var rbody = newTree(nnkStmtList)
 
@@ -772,12 +898,19 @@ proc explainWrapper(fn: NimNode): NimNode =
   if isSeqReturn:
     rbody = wrapSeqReturn(rbody, retTypeStr)
   elif isOptionReturn:
+    let innerTypeStr = fn.params[0][1].repr
     if not hasReturn(rbody) and fn.params[0].kind != nnkEmpty and rbody.len > 0:
-      rbody[^1] = newTree(nnkReturnStmt, rbody[^1])
-    rbody = wrapOptionReturn(rbody)
+      if isStatement(rbody[^1]):
+        rbody.add newTree(nnkReturnStmt, ident("userResult"))
+      else:
+        rbody[^1] = newTree(nnkReturnStmt, rbody[^1])
+    rbody = wrapOptionReturn(rbody, innerTypeStr)
   else:
     if not hasReturn(rbody) and fn.params[0].kind != nnkEmpty and rbody.len > 0:
-      rbody[^1] = newTree(nnkReturnStmt, rbody[^1])
+      if isStatement(rbody[^1]):
+        rbody.add newTree(nnkReturnStmt, ident("userResult"))
+      else:
+        rbody[^1] = newTree(nnkReturnStmt, rbody[^1])
     rbody = wrapScalarReturn(rbody, retTypeStr)
 
   var shieldedBody = newTree(nnkTryStmt,

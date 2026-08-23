@@ -5,14 +5,15 @@
 ## PostgreSQL UPSERT (ON CONFLICT), Set Operations, and Infix `as` Sugar.
 ## =============================================================================
 
-import std/[strutils, sequtils, tables, macros, options]
+import std/[strutils, sequtils, tables, macros, options, json]
+export json
 
 # =============================================================================
 # 1. Parameter Types & Safe Value Encoding
 # =============================================================================
 type
   ParamKind* = enum
-    pkInt, pkFloat, pkString, pkBool, pkNull
+    pkInt, pkFloat, pkString, pkBool, pkNull, pkJson
 
   QueryParam* = object
     case kind*: ParamKind
@@ -21,11 +22,13 @@ type
     of pkString: strVal*: string
     of pkBool: boolVal*: bool
     of pkNull: discard
+    of pkJson: jsonVal*: JsonNode
 
 proc toParam*(v: int): QueryParam = QueryParam(kind: pkInt, intVal: v)
 proc toParam*(v: float): QueryParam = QueryParam(kind: pkFloat, floatVal: v)
 proc toParam*(v: string): QueryParam = QueryParam(kind: pkString, strVal: v)
 proc toParam*(v: bool): QueryParam = QueryParam(kind: pkBool, boolVal: v)
+proc toParam*(v: JsonNode): QueryParam = QueryParam(kind: pkJson, jsonVal: v)
 
 proc quoteIdent*(s: string): string =
   ## Safely quotes PostgreSQL table or column identifiers ("table"."col")
@@ -139,12 +142,88 @@ proc inList*(c: ColumnRef, items: openArray[int]): SqlExpr =
 proc between*(c: ColumnRef, minVal, maxVal: int): SqlExpr =
   SqlExpr(sql: $c & " BETWEEN " & $minVal & " AND " & $maxVal)
 
-# ColumnExpr comparisons (for HAVING)
+# ColumnExpr comparisons (for HAVING or JSON extractions)
 proc `>`*(c: ColumnExpr, val: int): SqlExpr = SqlExpr(sql: c.expr & " > " & $val)
 proc `<`*(c: ColumnExpr, val: int): SqlExpr = SqlExpr(sql: c.expr & " < " & $val)
 proc `>=`*(c: ColumnExpr, val: int): SqlExpr = SqlExpr(sql: c.expr & " >= " & $val)
 proc `<=`*(c: ColumnExpr, val: int): SqlExpr = SqlExpr(sql: c.expr & " <= " & $val)
 proc `==`*(c: ColumnExpr, val: int): SqlExpr = SqlExpr(sql: c.expr & " = " & $val)
+proc `!=`*(c: ColumnExpr, val: int): SqlExpr = SqlExpr(sql: c.expr & " != " & $val)
+proc `==`*(c: ColumnExpr, val: string): SqlExpr = SqlExpr(sql: c.expr & " = " & quoteLiteral(val))
+proc `!=`*(c: ColumnExpr, val: string): SqlExpr = SqlExpr(sql: c.expr & " != " & quoteLiteral(val))
+
+# JSON / JSONB operators & helpers
+proc `[]`*(c: ColumnRef, key: string): ColumnExpr =
+  ## Extracts JSON field as JSON (-> 'key')
+  ColumnExpr(expr: $c & " -> " & quoteLiteral(key), alias: "")
+
+proc `[]`*(c: ColumnRef, idx: int): ColumnExpr =
+  ## Extracts JSON array element by index as JSON (-> idx)
+  ColumnExpr(expr: $c & " -> " & $idx, alias: "")
+
+proc `[]`*(c: ColumnExpr, key: string): ColumnExpr =
+  ## Chains extraction of JSON field as JSON (-> 'key')
+  ColumnExpr(expr: c.expr & " -> " & quoteLiteral(key), alias: "")
+
+proc `[]`*(c: ColumnExpr, idx: int): ColumnExpr =
+  ## Chains extraction of JSON array element by index (-> idx)
+  ColumnExpr(expr: c.expr & " -> " & $idx, alias: "")
+
+proc asText*(c: ColumnRef, key: string): ColumnExpr =
+  ## Extracts JSON field as text (->> 'key')
+  ColumnExpr(expr: $c & " ->> " & quoteLiteral(key), alias: "")
+
+proc asText*(c: ColumnRef, idx: int): ColumnExpr =
+  ## Extracts JSON array element as text (->> idx)
+  ColumnExpr(expr: $c & " ->> " & $idx, alias: "")
+
+proc asText*(c: ColumnExpr, key: string): ColumnExpr =
+  ## Chains extraction of JSON field as text (->> 'key')
+  ColumnExpr(expr: c.expr & " ->> " & quoteLiteral(key), alias: "")
+
+proc asText*(c: ColumnExpr, idx: int): ColumnExpr =
+  ## Chains extraction of JSON array element as text (->> idx)
+  ColumnExpr(expr: c.expr & " ->> " & $idx, alias: "")
+
+proc jsonPath*(c: ColumnRef, pathElements: varargs[string]): ColumnExpr =
+  ## Extracts nested JSON object at specified path (#> '{a,b,c}')
+  let p = "{" & pathElements.join(",") & "}"
+  ColumnExpr(expr: $c & " #> " & quoteLiteral(p), alias: "")
+
+proc jsonPathText*(c: ColumnRef, pathElements: varargs[string]): ColumnExpr =
+  ## Extracts nested JSON value as text at specified path (#>> '{a,b,c}')
+  let p = "{" & pathElements.join(",") & "}"
+  ColumnExpr(expr: $c & " #>> " & quoteLiteral(p), alias: "")
+
+proc containsJson*(c: ColumnRef, jsonVal: JsonNode): SqlExpr =
+  ## JSON containment operator (@>)
+  SqlExpr(sql: $c & " @> " & quoteLiteral($jsonVal))
+
+proc containsJson*(c: ColumnRef, jsonVal: string): SqlExpr =
+  ## JSON containment operator (@>) with raw string
+  SqlExpr(sql: $c & " @> " & quoteLiteral(jsonVal))
+
+proc containedByJson*(c: ColumnRef, jsonVal: JsonNode): SqlExpr =
+  ## JSON contained-by operator (<@)
+  SqlExpr(sql: $c & " <@ " & quoteLiteral($jsonVal))
+
+proc containedByJson*(c: ColumnRef, jsonVal: string): SqlExpr =
+  ## JSON contained-by operator (<@) with raw string
+  SqlExpr(sql: $c & " <@ " & quoteLiteral(jsonVal))
+
+proc hasJsonKey*(c: ColumnRef, key: string): SqlExpr =
+  ## Checks if top-level key exists in JSON (?)
+  SqlExpr(sql: $c & " ? " & quoteLiteral(key))
+
+proc hasAnyJsonKey*(c: ColumnRef, keys: openArray[string]): SqlExpr =
+  ## Checks if any top-level key exists in JSON (?|)
+  let quoted = keys.mapIt(quoteLiteral(it)).join(", ")
+  SqlExpr(sql: $c & " ?| ARRAY[" & quoted & "]")
+
+proc hasAllJsonKeys*(c: ColumnRef, keys: openArray[string]): SqlExpr =
+  ## Checks if all top-level keys exist in JSON (?&)
+  let quoted = keys.mapIt(quoteLiteral(it)).join(", ")
+  SqlExpr(sql: $c & " ?& ARRAY[" & quoted & "]")
 
 # Boolean logic
 proc `and`*(a, b: SqlExpr): SqlExpr = SqlExpr(sql: a.sql & " AND " & b.sql)
@@ -748,6 +827,8 @@ proc formatSqlValue*[T](val: T): string =
     quoteLiteral($val)
   elif T is char:
     quoteLiteral($val)
+  elif T is JsonNode:
+    quoteLiteral($val)
   elif T is Option:
     if val.isSome:
       formatSqlValue(val.get)
@@ -758,6 +839,8 @@ proc formatSqlValue*[T](val: T): string =
       "ARRAY[" & val.mapIt(quoteLiteral($it)).join(", ") & "]"
     elif typeof(val[0]) is int or typeof(val[0]) is int32 or typeof(val[0]) is int64 or typeof(val[0]) is float or typeof(val[0]) is bool:
       "ARRAY[" & val.mapIt($it).join(", ") & "]"
+    elif typeof(val[0]) is JsonNode:
+      "ARRAY[" & val.mapIt(quoteLiteral($it)).join(", ") & "]::jsonb[]"
     else:
       quoteLiteral($val)
   else:
@@ -794,6 +877,8 @@ proc columnDefsFromType*[T: object](primaryKey: string = "id"): seq[(string, str
       sqlColType = "TEXT"
     elif typeof(val) is char:
       sqlColType = "CHAR(1)"
+    elif typeof(val) is JsonNode:
+      sqlColType = "JSONB"
     elif typeof(val) is seq[int] or typeof(val) is seq[int32]:
       sqlColType = "INTEGER[]"
     elif typeof(val) is seq[int64]:
@@ -804,6 +889,8 @@ proc columnDefsFromType*[T: object](primaryKey: string = "id"): seq[(string, str
       sqlColType = "DOUBLE PRECISION[]"
     elif typeof(val) is seq[bool]:
       sqlColType = "BOOLEAN[]"
+    elif typeof(val) is seq[JsonNode]:
+      sqlColType = "JSONB[]"
     elif typeof(val) is Option:
       isNullable = true
       when typeof(val.get) is int or typeof(val.get) is int32:
@@ -822,6 +909,8 @@ proc columnDefsFromType*[T: object](primaryKey: string = "id"): seq[(string, str
         sqlColType = "TEXT"
       elif typeof(val.get) is char:
         sqlColType = "CHAR(1)"
+      elif typeof(val.get) is JsonNode:
+        sqlColType = "JSONB"
       else:
         sqlColType = "TEXT"
     else:

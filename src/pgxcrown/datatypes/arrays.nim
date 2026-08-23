@@ -47,6 +47,7 @@ const
   TEXTOID*: Oid = 25
   FLOAT4OID*: Oid = 700
   FLOAT8OID*: Oid = 701
+  JSONBOID*: Oid = 3802
   RECORDOID*: Oid = 2249
 
 proc getArrayHeapTuples*(arrayDatum: Datum): seq[HeapTupleHeader] =
@@ -266,3 +267,46 @@ proc returnArrayString*(s: seq[string]): Datum =
   let arrPtr = construct_array(cast[ptr Datum](elemsBuf), s.len.cint, TEXTOID, -1'i32, false, 'i'.cchar)
   pfree(elemsBuf)
   return PointerGetDatum(cast[Pointer](arrPtr))
+
+proc getArrayJsonNode*(arrayDatum: Datum): seq[JsonNode] =
+  if arrayDatum == 0: return @[]
+  let arrPtr = DatumGetArrayTypeP(arrayDatum)
+  if arrPtr == nil: return @[]
+
+  var elemsPtr: ptr Datum
+  var nullsPtr: ptr bool
+  var nElems: cint
+
+  deconstruct_array(arrPtr, JSONBOID, -1'i32, false, 'i'.cchar, addr elemsPtr, addr nullsPtr, addr nElems)
+
+  let elemArray = cast[ptr UncheckedArray[Datum]](elemsPtr)
+  let nullArray = cast[ptr UncheckedArray[bool]](nullsPtr)
+
+  result = newSeq[JsonNode](nElems)
+  for i in 0 ..< nElems:
+    if nullArray != nil and nullArray[i]:
+      result[i] = newJNull()
+    else:
+      result[i] = DatumToJsonNode(elemArray[i])
+
+  if elemsPtr != nil: pfree(elemsPtr)
+  if nullsPtr != nil: pfree(nullsPtr)
+
+proc returnArrayJsonNode*(s: seq[JsonNode]): Datum =
+  if s.len == 0:
+    let arrPtr = construct_array(nil, 0'i32, JSONBOID, -1'i32, false, 'i'.cchar)
+    return PointerGetDatum(cast[Pointer](arrPtr))
+
+  let elemsBuf = cast[ptr UncheckedArray[Datum]](palloc(cuint(s.len * sizeof(Datum))))
+  for i in 0 ..< s.len:
+    elemsBuf[i] = JsonNodeToDatum(s[i])
+
+  let arrPtr = construct_array(cast[ptr Datum](elemsBuf), s.len.cint, JSONBOID, -1'i32, false, 'i'.cchar)
+  pfree(elemsBuf)
+  return PointerGetDatum(cast[Pointer](arrPtr))
+
+proc seqTupleHeaderToObjects*[T: object](arrayDatum: Datum): seq[T] =
+  let thSeq = getArrayHeapTuples(arrayDatum)
+  result = newSeq[T](thSeq.len)
+  for i in 0 ..< thSeq.len:
+    result[i] = tupleHeaderToObject[T](thSeq[i])

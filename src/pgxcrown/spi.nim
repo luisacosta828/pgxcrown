@@ -4,7 +4,8 @@
 ## (.fetchOne[T]), scalar aggregations (.fetchScalar[T]), and collection reducers.
 ## =============================================================================
 
-import std/[tables, options, strutils]
+import std/[tables, options, strutils, json]
+export json
 from datatypes/basic import PDatum, POid, NameData, Oid, oidvector
 import query_builder
 
@@ -29,6 +30,9 @@ static inline HeapTuple pgx_spi_get_tuple(SPITupleTable* tuptable, uint64 idx) {
 """.}
 
 type
+  DbReadEffect* = object of RootEffect
+  DbWriteEffect* = object of DbReadEffect
+
   const_string* {.importc: "const char*".} = cstring
 
   Column* = Table[string, string]
@@ -74,26 +78,49 @@ proc getTuple*(tuptable: TupleTable, idx: uint64): HeapTuple {.importc: "pgx_spi
 # Type Converters & Row Mapper
 # =============================================================================
 
-proc parseValue*[T](val: string): T =
+proc parseValue*[T](val: string): T {.tags: [].} =
   ## Safely parses a string column into a strongly typed Nim value
   when T is int:
     try: parseInt(val) except CatchableError: 0
   elif T is int32:
     try: int32(parseInt(val)) except CatchableError: 0'i32
+  elif T is int16:
+    try: int16(parseInt(val)) except CatchableError: 0'i16
+  elif T is int8:
+    try: int8(parseInt(val)) except CatchableError: 0'i8
+  elif T is uint32:
+    try: uint32(parseUInt(val)) except CatchableError: 0'u32
   elif T is int64:
     try: int64(parseBiggestInt(val)) except CatchableError: 0'i64
   elif T is float:
     try: parseFloat(val) except CatchableError: 0.0
   elif T is float64:
     try: parseFloat(val) except CatchableError: 0.0
+  elif T is float32:
+    try: float32(parseFloat(val)) except CatchableError: 0.0'f32
   elif T is bool:
     val == "t" or val == "true" or val == "1" or val == "TRUE"
   elif T is string:
     val
+  elif T is cstring:
+    cstring(val)
+  elif T is char:
+    if val.len > 0: val[0] else: '\0'
+  elif T is JsonNode:
+    {.cast(tags: []).}:
+      if val.len == 0: newJNull()
+      else: (try: parseJson(val) except CatchableError: newJNull())
+  elif T is enum:
+    try: parseEnum[T](val) except CatchableError: default(T)
+  elif T is Option:
+    if val.len == 0:
+      none(typeof(default(T).get))
+    else:
+      some(parseValue[typeof(default(T).get)](val))
   else:
-    val
+    default(T)
 
-proc mapRowTo*[T: object](row: Table[string, string]): T =
+proc mapRowTo*[T: object](row: Table[string, string]): T {.tags: [].} =
   ## Maps a SPI row Table into a strongly typed Nim object via field reflection
   for name, value in fieldPairs(result):
     if row.hasKey(name):
@@ -137,7 +164,7 @@ template query*(c: const_string, obj: untyped) =
 # High-Level SPI Consumer Procs (Eager Fetch, Optionals, Reducers)
 # =============================================================================
 
-proc fetchRawRows*(sqlQuery: string): seq[Table[string, string]] =
+proc fetchRawRows*(sqlQuery: string): seq[Table[string, string]] {.tags: [DbReadEffect].} =
   ## Executes raw SQL via SPI and returns a flat seq of row tables
   result = @[]
   spi_init:
@@ -159,21 +186,27 @@ proc fetchRawRows*(sqlQuery: string): seq[Table[string, string]] =
                 rowTable[k] = v
               result.add(rowTable)
 
-proc fetch*[T: object](query: ExecutableQuery): seq[T] =
+proc fetch*[T: object](query: ExecutableQuery): seq[T] {.tags: [DbReadEffect].} =
   ## Maps query result rows directly into a sequence of typed Nim objects
   let rawRows = fetchRawRows($query)
   result = @[]
   for r in rawRows:
     result.add(mapRowTo[T](r))
 
-proc fetchOne*[T: object](query: ExecutableQuery): Option[T] =
+proc fetch*[T: object](query: ExecutableQuery, _: typedesc[T]): seq[T] {.tags: [DbReadEffect].} =
+  fetch[T](query)
+
+proc fetchOne*[T: object](query: ExecutableQuery): Option[T] {.tags: [DbReadEffect].} =
   ## Fetches the first row as an Option[T], or none(T) if empty
-  let items = query.fetch[T]()
+  let items = fetch[T](query)
   if items.len > 0:
     return some(items[0])
   return none(T)
 
-proc fetchScalar*[T: int | float | string | bool](query: ExecutableQuery): T =
+proc fetchOne*[T: object](query: ExecutableQuery, _: typedesc[T]): Option[T] {.tags: [DbReadEffect].} =
+  fetchOne[T](query)
+
+proc fetchScalar*[T: int | float | string | bool](query: ExecutableQuery): T {.tags: [DbReadEffect].} =
   ## Fetches a single scalar value from the first column of the first row (e.g. COUNT(*))
   let rawRows = fetchRawRows($query)
   if rawRows.len > 0:
@@ -181,7 +214,7 @@ proc fetchScalar*[T: int | float | string | bool](query: ExecutableQuery): T =
       return parseValue[T](val)
   return parseValue[T]("")
 
-proc fetchCount*(query: ExecutableQuery): int =
+proc fetchCount*(query: ExecutableQuery): int {.tags: [DbReadEffect].} =
   ## Executes query and returns total processed count
   let rawRows = fetchRawRows($query)
   return rawRows.len
@@ -216,7 +249,7 @@ proc all*[T](items: openArray[T], predicate: proc(x: T): bool {.closure.}): bool
 # Direct Object Schema & Entity Operations via SPI
 # =============================================================================
 
-proc spiCreateTableFrom*[T: object](tableName: string = "", ifNotExists: bool = true, primaryKey: string = "id"): int =
+proc spiCreateTableFrom*[T: object](tableName: string = "", ifNotExists: bool = true, primaryKey: string = "id"): int {.tags: [DbWriteEffect].} =
   ## Inspects properties of object type T, generates CREATE TABLE DDL, and executes it via SPI
   let ddl = createTableFromType[T](tableName, ifNotExists, primaryKey)
   var ret = 0
@@ -224,15 +257,15 @@ proc spiCreateTableFrom*[T: object](tableName: string = "", ifNotExists: bool = 
     ret = int(exec(const_string(ddl), 0))
   return ret
 
-proc spiCreateTableFrom*[T: object](obj: T, tableName: string = "", ifNotExists: bool = true, primaryKey: string = "id"): int =
+proc spiCreateTableFrom*[T: object](obj: T, tableName: string = "", ifNotExists: bool = true, primaryKey: string = "id"): int {.tags: [DbWriteEffect].} =
   ## Inspects properties of an object instance, generates CREATE TABLE DDL, and executes it via SPI
   spiCreateTableFrom[T](tableName, ifNotExists, primaryKey)
 
-proc spiCreateTableFrom*[T: object](t: typedesc[T], tableName: string = "", ifNotExists: bool = true, primaryKey: string = "id"): int =
+proc spiCreateTableFrom*[T: object](t: typedesc[T], tableName: string = "", ifNotExists: bool = true, primaryKey: string = "id"): int {.tags: [DbWriteEffect].} =
   ## Inspects properties of a typedesc[T], generates CREATE TABLE DDL, and executes it via SPI
   spiCreateTableFrom[T](tableName, ifNotExists, primaryKey)
 
-proc spiInsertFrom*[T: object](obj: T, tableName: string = ""): int =
+proc spiInsertFrom*[T: object](obj: T, tableName: string = ""): int {.tags: [DbWriteEffect].} =
   ## Inspects object instance, generates INSERT statement, and executes it via SPI
   let q = insertFrom(obj, tableName)
   var ret = 0

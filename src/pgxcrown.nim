@@ -7,13 +7,20 @@ import pgxcrown/reports/reports
 import pgxcrown/query_builder
 import pgxcrown/spi
 
+template trusted*() {.pragma: [raises: [ValueError], forbids: [IOEffect, TimeEffect], tags: []].}
+template immutable*() {.pragma: [noSideEffect, trusted, forbids: [DbReadEffect, DbWriteEffect]].}
+template stable*() {.pragma: [trusted, forbids: [DbWriteEffect]].}
+template volatile*() {.pragma: [trusted].}
+template parallelSafe*() {.pragma: [trusted].}
+template parallelRestricted*() {.pragma: [trusted].}
+template calledOnNullInput*() {.pragma.}
+
 template PG_MODULE_MAGIC*() =
   const DLL* = "PGDLLEXPORT $# $#$#"
   const V1_DEF* = "PGDLLEXPORT $# $#(PG_FUNCTION_ARGS)"
   {.pragma: pgdllexport, codegenDecl: DLL, exportc.}
   {.pragma: pgv1 , codegenDecl: V1_DEF, exportc, dynlib.}
   {.pragma: pgv1_plnim , codegenDecl: "PGDLLEXPORT $# $#$#", exportc, dynlib.}
-  {.pragma: trusted, raises: [ValueError], forbids: [IOEffect], tags: [].}
   {.emit: """PG_MODULE_MAGIC;""" .}
 
 
