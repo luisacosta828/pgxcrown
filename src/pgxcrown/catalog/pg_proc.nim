@@ -45,10 +45,9 @@ var
 {.pop.}
 
 template get_pg_proc_retset*(ttuple: typed): bool =
-  var
-    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_proretset, addr(is_null))
-    fn_retset = (cast[uint](datum) != 0)
-  fn_retset
+  var is_null = false
+  var datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_proretset, addr(is_null))
+  (cast[uint](datum) != 0)
 
 template get_pg_proc_src*(ttuple: typed): cstring =
   var
