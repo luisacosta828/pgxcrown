@@ -186,27 +186,29 @@ proc fetchRawRows*(sqlQuery: string): seq[Table[string, string]] {.tags: [DbRead
                 rowTable[k] = v
               result.add(rowTable)
 
-proc fetch*[T: object](query: ExecutableQuery): seq[T] {.tags: [DbReadEffect].} =
+type Queryable* = string | ExecutableQuery
+
+proc fetch*[T: object](query: Queryable): seq[T] {.tags: [DbReadEffect].} =
   ## Maps query result rows directly into a sequence of typed Nim objects
   let rawRows = fetchRawRows($query)
   result = @[]
   for r in rawRows:
     result.add(mapRowTo[T](r))
 
-proc fetch*[T: object](query: ExecutableQuery, _: typedesc[T]): seq[T] {.tags: [DbReadEffect].} =
+proc fetch*[T: object](query: Queryable, _: typedesc[T]): seq[T] {.tags: [DbReadEffect].} =
   fetch[T](query)
 
-proc fetchOne*[T: object](query: ExecutableQuery): Option[T] {.tags: [DbReadEffect].} =
+proc fetchOne*[T: object](query: Queryable): Option[T] {.tags: [DbReadEffect].} =
   ## Fetches the first row as an Option[T], or none(T) if empty
   let items = fetch[T](query)
   if items.len > 0:
     return some(items[0])
   return none(T)
 
-proc fetchOne*[T: object](query: ExecutableQuery, _: typedesc[T]): Option[T] {.tags: [DbReadEffect].} =
+proc fetchOne*[T: object](query: Queryable, _: typedesc[T]): Option[T] {.tags: [DbReadEffect].} =
   fetchOne[T](query)
 
-proc fetchScalar*[T: int | float | string | bool](query: ExecutableQuery): T {.tags: [DbReadEffect].} =
+proc fetchScalar*[T](query: Queryable): T {.tags: [DbReadEffect].} =
   ## Fetches a single scalar value from the first column of the first row (e.g. COUNT(*))
   let rawRows = fetchRawRows($query)
   if rawRows.len > 0:
@@ -214,7 +216,7 @@ proc fetchScalar*[T: int | float | string | bool](query: ExecutableQuery): T {.t
       return parseValue[T](val)
   return parseValue[T]("")
 
-proc fetchCount*(query: ExecutableQuery): int {.tags: [DbReadEffect].} =
+proc fetchCount*(query: Queryable): int {.tags: [DbReadEffect].} =
   ## Executes query and returns total processed count
   let rawRows = fetchRawRows($query)
   return rawRows.len

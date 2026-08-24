@@ -69,7 +69,8 @@ template `.`*(t: TableRef, field: untyped): ColumnRef =
   ## Dot-access for table proxies: `u.name` -> ColumnRef(table: "u", col: "name")
   ColumnRef(rawTable: t.rawTable, rawAlias: t.rawAlias, rawCol: astToStr(field))
 
-proc ident*(s: string): SqlIdent = SqlIdent(s)
+proc sqlIdent*(s: string): SqlIdent = SqlIdent(s)
+proc sqlId*(s: string): SqlIdent = SqlIdent(s)
 proc raw*(s: string): RawSql = RawSql(s)
 
 proc `$`*(c: ColumnRef): string =
