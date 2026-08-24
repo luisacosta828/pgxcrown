@@ -39,7 +39,16 @@ var
   #An array of the names of the function arguments. Arguments without a name are set to empty strings in the array
   Anum_pg_proc_proargnames* {.importc.}: cuint
 
+  #Function returns a set (true for RETURNS SETOF / RETURNS TABLE)
+  Anum_pg_proc_proretset* {.importc.}: cuint
+
 {.pop.}
+
+template get_pg_proc_retset*(ttuple: typed): bool =
+  var
+    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_proretset, addr(is_null))
+    fn_retset = (cast[uint](datum) != 0)
+  fn_retset
 
 template get_pg_proc_src*(ttuple: typed): cstring =
   var
