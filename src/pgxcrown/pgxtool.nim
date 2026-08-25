@@ -76,21 +76,12 @@ proc getPgxcrownPath(): string {.inline.} =
   else:
     " "
 
-proc getPgIncludes(): string =
-  let srv = pgIncludeServerFinder()
-  let inc = pgIncludeFinder()
-  result = ""
-  if srv.len > 0 and dirExists(srv):
-    result.add(" --cincludes:" & wrap(srv))
-  if inc.len > 0 and dirExists(inc):
-    result.add(" --cincludes:" & wrap(inc))
-
 proc nim_c(module: string): string {.inline.} =
-  "nim c -d:release --mm:orc --cc:" & platform_compiler & getPgxcrownPath() & getPgIncludes() & " -d:entrypoint=" & wrap(module) & " " & wrap(module)
+  "nim c -d:release --mm:orc --cc:" & platform_compiler & getPgxcrownPath() & "-d:entrypoint=" & wrap(module) & " " & wrap(module)
 
 proc emit_pgx_c_extension(module: string): string {.inline.} =
   var prj = module.splitPath.head
-  "nim c -d:release --mm:orc --cc:" & platform_compiler & getPgxcrownPath() & getPgIncludes() & " --app:lib -o:" & wrap(prj.splitPath.head.splitPath.tail) & " --outdir:" & wrap(prj) & " " & wrap(module)
+  "nim c -d:release --mm:orc --cc:" & platform_compiler & getPgxcrownPath() & "--app:lib -o:" & wrap(prj.splitPath.head.splitPath.tail) & " --outdir:" & wrap(prj) & " " & wrap(module)
 
 
 template generate_tmp_file(input_file: string, kind: string = "") =
