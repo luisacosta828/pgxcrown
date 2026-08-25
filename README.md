@@ -6,7 +6,7 @@
 
 [![Nim Version](https://img.shields.io/badge/Nim-2.0%2B-FFE953?logo=nim&logoColor=white)](https://nim-lang.org/)
 [![PostgreSQL Support](https://img.shields.io/badge/PostgreSQL-12%20--%2017-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![Release](https://img.shields.io/badge/Release-v0.17.2-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
+[![Release](https://img.shields.io/badge/Release-v0.17.3-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Memory Safety](https://img.shields.io/badge/Safety-Memory%20Safe-success)](#3-sql-volatility-pragmas--compile-time-safety)
 
