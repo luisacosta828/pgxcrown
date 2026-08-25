@@ -5,7 +5,7 @@
 ## =============================================================================
 
 import std/[tables, options, strutils, json]
-export json
+export json, tables
 from datatypes/basic import PDatum, POid, NameData, Oid, oidvector
 import query_builder
 
@@ -130,13 +130,12 @@ proc mapRowTo*[T: object](row: Table[string, string]): T {.tags: [].} =
 # SPI Initialization & Query Templates
 # =============================================================================
 
+var SPI_processed* {.importc: "SPI_processed".}: uint64
+var SPI_tuptable* {.importc: "SPI_tuptable".}: TupleTable
+
 template spi_init*(statements: untyped) =
   var connection_status {.used.} = connect()
-  var SPI_processed {.codegenDecl: "extern $# $#", inject.}: uint64
-  var SPI_tuptable {.codegenDecl: "extern $# $#", inject.}: TupleTable
-
   statements
-
   var finish_status {.used.} = finish()
 
 template query*(c: const_string, obj: untyped) =
@@ -164,8 +163,8 @@ template query*(c: const_string, obj: untyped) =
 # High-Level SPI Consumer Procs (Eager Fetch, Optionals, Reducers)
 # =============================================================================
 
-proc fetchRawRows*(sqlQuery: string): seq[Table[string, string]] {.tags: [DbReadEffect].} =
-  ## Executes raw SQL via SPI and returns a flat seq of row tables
+proc fetchRawRows(sqlQuery: string): seq[Table[string, string]] {.tags: [DbReadEffect].} =
+  ## Internal: Executes raw SQL via SPI and returns a flat seq of row tables
   result = @[]
   spi_init:
     let rc = exec(const_string(sqlQuery), 0)
@@ -186,38 +185,40 @@ proc fetchRawRows*(sqlQuery: string): seq[Table[string, string]] {.tags: [DbRead
                 rowTable[k] = v
               result.add(rowTable)
 
-type Queryable* = string | ExecutableQuery
+proc fetchRows*(query: ExecutableQuery): seq[Table[string, string]] {.tags: [DbReadEffect].} =
+  ## Executes a fluent query via SPI and returns rows as key-value string tables
+  fetchRawRows($query)
 
-proc fetch*[T: object](query: Queryable): seq[T] {.tags: [DbReadEffect].} =
-  ## Maps query result rows directly into a sequence of typed Nim objects
+proc fetch*[T: object](query: ExecutableQuery): seq[T] {.tags: [DbReadEffect].} =
+  ## Maps fluent query result rows directly into a sequence of typed Nim objects
   let rawRows = fetchRawRows($query)
   result = @[]
   for r in rawRows:
     result.add(mapRowTo[T](r))
 
-proc fetch*[T: object](query: Queryable, _: typedesc[T]): seq[T] {.tags: [DbReadEffect].} =
+proc fetch*[T: object](query: ExecutableQuery, _: typedesc[T]): seq[T] {.tags: [DbReadEffect].} =
   fetch[T](query)
 
-proc fetchOne*[T: object](query: Queryable): Option[T] {.tags: [DbReadEffect].} =
-  ## Fetches the first row as an Option[T], or none(T) if empty
+proc fetchOne*[T: object](query: ExecutableQuery): Option[T] {.tags: [DbReadEffect].} =
+  ## Fetches the first row of a fluent query as an Option[T], or none(T) if empty
   let items = fetch[T](query)
   if items.len > 0:
     return some(items[0])
   return none(T)
 
-proc fetchOne*[T: object](query: Queryable, _: typedesc[T]): Option[T] {.tags: [DbReadEffect].} =
+proc fetchOne*[T: object](query: ExecutableQuery, _: typedesc[T]): Option[T] {.tags: [DbReadEffect].} =
   fetchOne[T](query)
 
-proc fetchScalar*[T](query: Queryable): T {.tags: [DbReadEffect].} =
-  ## Fetches a single scalar value from the first column of the first row (e.g. COUNT(*))
+proc fetchScalar*[T](query: ExecutableQuery): T {.tags: [DbReadEffect].} =
+  ## Fetches a single scalar value from the first column of the first row (e.g. COUNT(*), SUM(x))
   let rawRows = fetchRawRows($query)
   if rawRows.len > 0:
     for _, val in rawRows[0]:
       return parseValue[T](val)
   return parseValue[T]("")
 
-proc fetchCount*(query: Queryable): int {.tags: [DbReadEffect].} =
-  ## Executes query and returns total processed count
+proc fetchCount*(query: ExecutableQuery): int {.tags: [DbReadEffect].} =
+  ## Executes fluent query and returns total processed count
   let rawRows = fetchRawRows($query)
   return rawRows.len
 
