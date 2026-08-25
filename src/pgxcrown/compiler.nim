@@ -14,9 +14,37 @@ proc discoverPgVersion(): string =
   else:
     return "14"
 
+proc discoverIncludeDir(): string =
+  when defined(windows):
+    for semver in [17, 16, 15, 14, 13, 12]:
+      let inc = "C:/Program Files/PostgreSQL/" & $semver & "/include"
+      let chk = staticExec("if exist \"" & inc & "\\server\\postgres.h\" (echo found)").strip
+      if "found" in chk:
+        return inc
+  let raw = safePgConfig("pg_config --includedir", "/usr/include/postgresql").split("\n")[0]
+  when defined(windows):
+    if "STRAWB" in raw.toUpperAscii or "not found" in raw:
+      for semver in [17, 16, 15, 14, 13, 12]:
+        return "C:/Program Files/PostgreSQL/" & $semver & "/include"
+  return raw
+
+proc discoverLibDir(): string =
+  when defined(windows):
+    for semver in [17, 16, 15, 14, 13, 12]:
+      let lib = "C:/Program Files/PostgreSQL/" & $semver & "/lib"
+      let chk = staticExec("if exist \"" & lib & "\" (echo found)").strip
+      if "found" in chk:
+        return lib
+  let raw = safePgConfig("pg_config --libdir", "/usr/lib/postgresql").split("\n")[0]
+  when defined(windows):
+    if "STRAWB" in raw.toUpperAscii or "not found" in raw:
+      for semver in [17, 16, 15, 14, 13, 12]:
+        return "C:/Program Files/PostgreSQL/" & $semver & "/lib"
+  return raw
+
 const
-  includeDir {.strdefine.} = safePgConfig("pg_config --includedir", "/usr/include/postgresql").split("\n")[0]
-  libDir {.strdefine.} = safePgConfig("pg_config --libdir", "/usr/lib/postgresql").split("\n")[0]
+  includeDir {.strdefine.} = discoverIncludeDir()
+  libDir {.strdefine.} = discoverLibDir()
   pgVersion {.strdefine.} = discoverPgVersion()
 
 
