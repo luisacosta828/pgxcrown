@@ -39,23 +39,6 @@ proc pgLibFinder*(): string =
             echo "WARNING: Can not find Postgres libdir"
 
 
-proc pgIncludeServerFinder*(): string =
-  let (output, exitCode) = execCmdEx(pgconfigFinder() & " --includedir-server")
-  if exitCode == 0:
-    result = output.strip
-  when defined(windows):
-    if not dirExists(result):
-      const
-        folder = """C:\Program Files\PostgreSQL\"""
-        tail = """\include\server"""
-      if dirExists(folder):
-        for semver in 15 .. 25:
-          if fileExists(folder & $semver & tail):
-            result = folder & $semver & tail
-            break
-          if semver == 25:
-            echo "WARNING: Can not find Postgres includedir-server"
-
 proc pgIncludeFinder*(): string =
   let (output, exitCode) = execCmdEx(pgconfigFinder() & " --includedir")
   if exitCode == 0:

@@ -1,6 +1,5 @@
 import std/[macros, os, strutils, tables, json]
-import compiler, spi, query_builder
-export json, spi, query_builder, compiler
+export json
 
 const entrypoint {.strdefine.} = ""
 var recordType {.compileTime.}: seq[string] = @[]
