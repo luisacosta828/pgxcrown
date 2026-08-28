@@ -3,12 +3,16 @@ import pathfinders
 import test_suite
 
 const available_hooks = ["emit_log", "post_parse_analyze"]
-const platform_compiler: string = when defined(windows):
-  "vcc"
-elif defined(linux):
-  "gcc"
-else:
-  quit "Unsupported operating system"
+proc getPlatformCompiler(): string {.inline.} =
+  when defined(windows):
+    if findExe("cl.exe").len > 0 or findExe("cl").len > 0:
+      "vcc"
+    else:
+      "gcc"
+  elif defined(linux):
+    "gcc"
+  else:
+    "gcc"
 
 const
   home = getHomeDir()
@@ -80,18 +84,41 @@ proc getCIncludes(): string {.inline.} =
   let incServer = pgIncludeServerFinder()
   let incBase = pgIncludeFinder()
   var res = ""
-  if incServer.len > 0 and dirExists(incServer):
-    res.add " --cincludes:" & wrap(incServer)
-  if incBase.len > 0 and dirExists(incBase):
-    res.add " --cincludes:" & wrap(incBase)
+  when defined(windows):
+    if incServer.len > 0 and dirExists(incServer):
+      if dirExists(incServer / "port" / "win32_msvc"):
+        res.add " --cincludes:" & wrap(incServer / "port" / "win32_msvc")
+      if dirExists(incServer / "port" / "win32"):
+        res.add " --cincludes:" & wrap(incServer / "port" / "win32")
+      res.add " --cincludes:" & wrap(incServer)
+    if incBase.len > 0 and dirExists(incBase):
+      res.add " --cincludes:" & wrap(incBase)
+  else:
+    if incServer.len > 0 and dirExists(incServer):
+      res.add " --cincludes:" & wrap(incServer)
+    if incBase.len > 0 and dirExists(incBase):
+      res.add " --cincludes:" & wrap(incBase)
   res
 
+proc getCLibs(): string {.inline.} =
+  when defined(windows):
+    let libd = pgLibFinder()
+    if libd.len > 0 and dirExists(libd):
+      if fileExists(libd / "postgres.lib"):
+        " --clibdir:" & wrap(libd) & " --passL:" & wrap(libd / "postgres.lib") & " "
+      else:
+        " --clibdir:" & wrap(libd) & " "
+    else:
+      " "
+  else:
+    " "
+
 proc nim_c(module: string): string {.inline.} =
-  "nim c -d:release --mm:orc --cc:" & platform_compiler & getPgxcrownPath() & getCIncludes() & " -d:entrypoint=" & wrap(module) & " " & wrap(module)
+  "nim c -d:release --mm:orc --cc:" & getPlatformCompiler() & getPgxcrownPath() & getCIncludes() & " -d:entrypoint=" & wrap(module) & " " & wrap(module)
 
 proc emit_pgx_c_extension(module: string): string {.inline.} =
   var prj = module.splitPath.head
-  "nim c -d:release --mm:orc --cc:" & platform_compiler & getPgxcrownPath() & getCIncludes() & " -d:entrypoint=" & wrap(module) & " --app:lib -o:" & wrap(prj.splitPath.head.splitPath.tail) & " --outdir:" & wrap(prj) & " " & wrap(module)
+  "nim c -d:release --mm:orc --cc:" & getPlatformCompiler() & getPgxcrownPath() & getCIncludes() & getCLibs() & " -d:entrypoint=" & wrap(module) & " --app:lib -o:" & wrap(prj.splitPath.head.splitPath.tail) & " --outdir:" & wrap(prj) & " " & wrap(module)
 
 template generate_tmp_file(input_file: string, kind: string = "") =
   var
