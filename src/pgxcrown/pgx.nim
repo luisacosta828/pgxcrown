@@ -1,5 +1,7 @@
 import std/[macros, os, strutils, tables, json]
-export json
+export json, tables
+import ../pgxcrown
+export pgxcrown
 
 const entrypoint {.strdefine.} = ""
 var recordType {.compileTime.}: seq[string] = @[]
@@ -43,7 +45,7 @@ proc project(path: string): string {.inline.} =
     p = p.parentDir
   return p.lastPathPart
 
-proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
+proc buildSQLFunction(fn: NimNode, sql_scripts: var string, isCreateType: bool = false) =
   var
     returnTypeStr = ""
     hasOptionOrDefault = false
@@ -147,6 +149,11 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
       elif pRepr in ["strict"]:
         isStrict = true
 
+  if isCreateType and volatility == "":
+    volatility = " IMMUTABLE"
+    if parallel == "":
+      parallel = " PARALLEL SAFE"
+
   var strictStr = if isStrict and returnTypeStr != "": " STRICT" else: ""
   var optionsStr = "language c" & volatility & parallel & strictStr & ";\n"
 
@@ -190,14 +197,14 @@ proc lift_base_datatypes(function: NimNode, custom_datatypes: Table[string, stri
   for idx in 0 ..< len(function.params):
     if idx == 0:
       if function.params[0].repr in custom_datatypes:
-        function.params[0] = ident(custom_datatypes[function.params[0].repr])
+        function.params[0] = newIdentNode(custom_datatypes[function.params[0].repr])
     else:
       if function.params[idx][1].repr in custom_datatypes:
-        function.params[idx][1] = ident(custom_datatypes[function.params[idx][1].repr])
+        function.params[idx][1] = newIdentNode(custom_datatypes[function.params[idx][1].repr])
 
 
-template triggered_by_create_type(source) =
-  hints["create-type"] = "pgxtool create-type template" in source.repr
+template triggered_by_create_type(file_content: string) =
+  hints["create-type"] = "pgxtool create-type template" in file_content
 
 template check_type_section(element):string =
   case element[2].kind:
@@ -208,7 +215,7 @@ template check_type_section(element):string =
   else: element.treerepr
 
 template addEnumDefaultCase(element) =
-  element[2].add ident("PgxUnknownValue")
+  element[2].add newIdentNode("PgxUnknownValue")
   
 proc isImportc(fn: NimNode): bool =
   if fn.pragma.kind != nnkEmpty:
@@ -226,41 +233,44 @@ macro decorateMainFunctions*() =
     source.del(0)
 
   var res = newNimNode(nnkStmtList)
-  res.add newNimNode(nnkImportStmt).add ident("pgxcrown")
+  res.add newNimNode(nnkImportStmt).add newIdentNode("pgxcrown")
 
-  res.add ident("PG_MODULE_MAGIC")
+  res.add newIdentNode("PG_MODULE_MAGIC")
 
   var custom_datatypes: Table[string, string]
   var hints: Table[string, bool]
 
-  triggered_by_create_type(source)
+  triggered_by_create_type(file_content)
 
   var v1fns: seq[NimNode]
   var sql_scripts: string
   var (dir, file, _) = splitFile(entrypoint)
   let pgx_pragma = newNimNode(nnkPragma)
-  pgx_pragma.add(ident("pgx"))
+  pgx_pragma.add(newIdentNode("pgx"))
 
   # Pass 1: Process type definitions first so recordType is populated and types are emitted
   for el in source:
     if el.kind == nnkTypeSection and hints["create-type"]:
       var 
-        custom_dt = el[0][0].repr
-        base_dt   = el[0][2].repr
+        custom_dt = el[0][0].repr.strip(chars = {'*'})
+        base_dt   = el[0][2].repr.strip(chars = {'*'})
       custom_datatypes[custom_dt] = base_dt
+      recordType.add custom_dt
+      sql_scripts.add "\nCREATE TYPE " & custom_dt & ";\n"
     elif el.kind == nnkTypeSection:
       for e in el:
         var pragmaexpr = newNimNode(nnkPragmaExpr)
         var type_checked = check_type_section(e)
         case type_checked:
         of "enum":
+          let cleanName = e[0].repr.strip(chars = {'*'})
+          recordType.add cleanName
           addEnumDefaultCase(e)
           buildEnumType(e, sql_scripts)
           pragmaexpr.add(e[0])
           pragmaexpr.add(pgx_pragma)
           e[0] = pragmaexpr
         of "tupleConstr": 
-          recordType.add e[0].repr.strip(chars = {'*'})
           pragmaexpr.add(e[0])
           pragmaexpr.add(pgx_pragma)
           e[0] = pragmaexpr
@@ -279,13 +289,18 @@ macro decorateMainFunctions*() =
     if el.kind in {nnkProcDef, nnkFuncDef}:
       if not isImportc(el):
         var fnNameStr = el.name.repr.strip(chars = {'*'})
-        v1fns.add ident("pgx_" & fnNameStr)
-        buildSQLFunction(el, sql_scripts)
+        v1fns.add newIdentNode("pgx_" & fnNameStr)
+        buildSQLFunction(el, sql_scripts, hints["create-type"])
+        if custom_datatypes.len > 0:
+          lift_base_datatypes(el, custom_datatypes)
         if el.pragma.kind == nnkEmpty:
           el.pragma = newNimNode(nnkPragma)
-        el.pragma.add(ident("pgx"))
-        if custom_datatypes.len == 1:
-          lift_base_datatypes(el, custom_datatypes)
+        el.pragma.add(newIdentNode("pgx"))
+
+  if hints["create-type"]:
+    for custom_dt, base_dt in custom_datatypes:
+      let baseSql = NimToSQLType(base_dt)
+      sql_scripts.add "\nCREATE TYPE " & custom_dt & " (\n  INPUT = " & custom_dt & "_input,\n  OUTPUT = " & custom_dt & "_output,\n  LIKE = " & baseSql & "\n);\n"
 
   let prjName = project(entrypoint)
   let controlContent = "# " & prjName & " extension\ncomment = '" & prjName & " extension for PostgreSQL'\ndefault_version = '0.0.1'\nmodule_pathname = '$libdir/" & prjName & "'\nrelocatable = true\n"

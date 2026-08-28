@@ -7,6 +7,7 @@
 import std/[tables, options, strutils, json]
 export json, tables
 from datatypes/basic import PDatum, POid, NameData, Oid, oidvector
+from datatypes/heaptuples import HeapTuple, TupleDesc
 import query_builder
 
 {.emit: """/*INCLUDESECTION*/
@@ -39,8 +40,6 @@ type
   Row* = seq[Column]
   ResultSet* = seq[Row]
 
-  HeapTuple* {.importc: "HeapTuple".} = pointer
-  TupleDesc* {.importc: "TupleDesc".} = pointer
   TupleTable* {.importc: "SPITupleTable*".} = pointer
 
   OK* {.pure.} = enum
@@ -163,7 +162,7 @@ template query*(c: const_string, obj: untyped) =
 # High-Level SPI Consumer Procs (Eager Fetch, Optionals, Reducers)
 # =============================================================================
 
-proc fetchRawRows(sqlQuery: string): seq[Table[string, string]] {.tags: [DbReadEffect].} =
+proc fetchRawRows*(sqlQuery: string): seq[Table[string, string]] {.tags: [DbReadEffect].} =
   ## Internal: Executes raw SQL via SPI and returns a flat seq of row tables
   result = @[]
   spi_init:

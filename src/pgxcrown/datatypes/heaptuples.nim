@@ -129,7 +129,7 @@ proc getTupleStringAttr*(element: HeapTupleHeader, row: TupleDesc, idx: cint): c
 # High-Level Generic Deserializer: HeapTupleHeader -> object
 # -----------------------------------------------------------------------------
 
-proc tupleHeaderToObject*[T: object](th: HeapTupleHeader): T {.tags: [].} =
+proc tupleHeaderToObject*[T: object | tuple](th: HeapTupleHeader): T {.tags: [].} =
   {.cast(noSideEffect).}:
     {.cast(tags: []).}:
       if th.isNil: return default(T)
@@ -223,7 +223,7 @@ proc tupleHeaderToObject*[T: object](th: HeapTupleHeader): T {.tags: [].} =
 # High-Level Generic Serializer: object -> HeapTuple / Datum
 # -----------------------------------------------------------------------------
 
-proc buildTupleDescFor*[T: object](): TupleDesc =
+proc buildTupleDescFor*[T: object | tuple](): TupleDesc =
   var numFields: cint = 0
   var dummy: T
   for name, val in fieldPairs(dummy):
@@ -262,7 +262,7 @@ proc buildTupleDescFor*[T: object](): TupleDesc =
     attrNum += 1
   return BlessTupleDesc(desc)
 
-proc objectToHeapTuple*[T: object](obj: T, customDesc: TupleDesc = nil): HeapTuple {.tags: [].} =
+proc objectToHeapTuple*[T: object | tuple](obj: T, customDesc: TupleDesc = nil): HeapTuple {.tags: [].} =
   {.cast(noSideEffect).}:
     {.cast(tags: []).}:
       let tupDesc = if customDesc != nil: customDesc else: buildTupleDescFor[T]()
@@ -320,7 +320,7 @@ proc objectToHeapTuple*[T: object](obj: T, customDesc: TupleDesc = nil): HeapTup
       let htup = heap_form_tuple(tupDesc, cast[ptr Datum](addr values[0]), cast[ptr bool](addr nulls[0]))
       return htup
 
-proc objectToDatum*[T: object](obj: T, customDesc: TupleDesc = nil): Datum {.tags: [].} =
+proc objectToDatum*[T: object | tuple](obj: T, customDesc: TupleDesc = nil): Datum {.tags: [].} =
   {.cast(noSideEffect).}:
     {.cast(tags: []).}:
       let htup = objectToHeapTuple[T](obj, customDesc)

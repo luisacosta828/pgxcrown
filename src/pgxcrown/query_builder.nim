@@ -71,6 +71,7 @@ template `.`*(t: TableRef, field: untyped): ColumnRef =
 
 proc sqlIdent*(s: string): SqlIdent = SqlIdent(s)
 proc sqlId*(s: string): SqlIdent = SqlIdent(s)
+proc ident*(s: string): ColumnRef = ColumnRef(rawCol: s)
 proc raw*(s: string): RawSql = RawSql(s)
 
 proc `$`*(c: ColumnRef): string =

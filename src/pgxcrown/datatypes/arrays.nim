@@ -305,7 +305,7 @@ proc returnArrayJsonNode*(s: seq[JsonNode]): Datum =
   pfree(elemsBuf)
   return PointerGetDatum(cast[Pointer](arrPtr))
 
-proc seqTupleHeaderToObjects*[T: object](arrayDatum: Datum): seq[T] =
+proc seqTupleHeaderToObjects*[T: object | tuple](arrayDatum: Datum): seq[T] =
   let thSeq = getArrayHeapTuples(arrayDatum)
   result = newSeq[T](thSeq.len)
   for i in 0 ..< thSeq.len:

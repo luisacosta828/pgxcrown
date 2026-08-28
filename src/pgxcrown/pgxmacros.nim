@@ -96,6 +96,8 @@ proc ReplyLiteralsWithPgxTypes(dt: NimNode): string =
 proc hasReturn(node: NimNode): bool =
   if node.kind == nnkReturnStmt:
     return true
+  if node.kind in {nnkProcDef, nnkFuncDef, nnkIteratorDef, nnkTemplateDef, nnkMacroDef}:
+    return false
   
   for child in node:
     if hasReturn(child):
@@ -454,10 +456,7 @@ proc check_discard_section(code: NimNode): NimNode =
 proc check_block_section(code: NimNode): NimNode = analyze_node(code)
 
 proc check_proc_def(code: NimNode): NimNode =
-  var sanitized_proc = newProc(code.name, proc_type = nnkFuncDef)
-  sanitized_proc.params = code.params
-  sanitized_proc.body = analyze_node(code.body)
-  result = sanitized_proc
+  result = code
 
 proc analyze_node(code: NimNode): NimNode =
   result = newNimNode(code.kind)
@@ -769,6 +768,26 @@ proc wrapSeqReturn(code: NimNode, retTypeStr: string): NimNode =
       SRF_RETURN_DONE(`funcctxIdent`)
 
 proc wrapScalarReturn(code: NimNode, retTypeStr: string): NimNode =
+  let isVoid = retTypeStr == "" or retTypeStr == "void"
+  if isVoid:
+    proc transformVoidReturn(n: NimNode): NimNode =
+      if n.kind == nnkReturnStmt:
+        return newTree(nnkReturnStmt, newCall(ident("Datum"), newLit(0)))
+      elif n.kind in {nnkProcDef, nnkFuncDef, nnkIteratorDef, nnkTemplateDef, nnkMacroDef}:
+        return n
+      elif n.len == 0:
+        return n
+      else:
+        result = newNimNode(n.kind)
+        for child in n:
+          result.add transformVoidReturn(child)
+
+    let transformed = transformVoidReturn(code)
+    result = transformed
+    if not hasReturn(transformed):
+      result.add newTree(nnkReturnStmt, newCall(ident("Datum"), newLit(0)))
+    return result
+
   let datumConverter = case retTypeStr:
     of "int", "int32", "cint": "Int32GetDatum"
     of "int64", "clonglong": "Int64GetDatum"
@@ -776,7 +795,7 @@ proc wrapScalarReturn(code: NimNode, retTypeStr: string): NimNode =
     of "float", "float32", "cfloat": "Float4GetDatum"
     of "float64", "cdouble": "Float8GetDatum"
     of "bool": "BoolGetDatum"
-    of "string": "CStringGetTextDatum"
+    of "string", "cstring": "CStringGetTextDatum"
     of "JsonNode", "Json", "json", "Jsonb", "jsonb": "JsonNodeToDatum"
     else: "objectToDatum"
 
@@ -785,7 +804,7 @@ proc wrapScalarReturn(code: NimNode, retTypeStr: string): NimNode =
       let retExpr = if n[0].kind == nnkEmpty: ident("userResult") else: n[0]
       if retExpr.kind == nnkCall and (retExpr[0].repr.endsWith("GetDatum") or retExpr[0].repr in ["JsonNodeToDatum", "objectToDatum"]):
         return n
-      elif retTypeStr == "string":
+      elif retTypeStr in ["string", "cstring"]:
         if retExpr.kind == nnkCall and retExpr[0].repr == "CStringGetTextDatum":
           return n
         else:
@@ -797,6 +816,8 @@ proc wrapScalarReturn(code: NimNode, retTypeStr: string): NimNode =
           return newTree(nnkReturnStmt, newCall(ident("JsonNodeToDatum"), retExpr))
       else:
         return newTree(nnkReturnStmt, newCall(ident(datumConverter), retExpr))
+    elif n.kind in {nnkProcDef, nnkFuncDef, nnkIteratorDef, nnkTemplateDef, nnkMacroDef}:
+      return n
     elif n.len == 0:
       return n
     else:
@@ -807,7 +828,7 @@ proc wrapScalarReturn(code: NimNode, retTypeStr: string): NimNode =
   let transformed = transformReturn(code)
   if not hasReturn(transformed):
     result = transformed
-    if retTypeStr == "string":
+    if retTypeStr in ["string", "cstring"]:
       result.add newTree(nnkReturnStmt, newCall(ident("CStringGetTextDatum"), newCall(ident("cstring"), ident("userResult"))))
     elif retTypeStr in ["JsonNode", "Json", "json", "Jsonb", "jsonb"]:
       result.add newTree(nnkReturnStmt, newCall(ident("JsonNodeToDatum"), ident("userResult")))

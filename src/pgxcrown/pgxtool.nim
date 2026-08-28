@@ -22,14 +22,14 @@ const available_base_types = ["int", "int32", "int64", "uint", "uint32", "uint64
 const type_template = """
 import std/strutils
 
-#hint
+# pgxtool create-type template
 
 type $udf = $base_type
 
-proc $udf_input(a: cstring): $udf =
+proc $udf_input*(a: cstring): $udf {.immutable, parallelSafe.} =
   discard
 
-proc $udf_output(a: $udf): cstring =
+proc $udf_output*(a: $udf): cstring {.immutable, parallelSafe.} =
   discard
 """
 
@@ -76,14 +76,22 @@ proc getPgxcrownPath(): string {.inline.} =
   else:
     " "
 
-proc nim_c(module: string): string {.inline.} =
-  "nim c -d:release --mm:orc --cc:" & platform_compiler & getPgxcrownPath() & "-d:entrypoint=" & wrap(module) & " " & wrap(module)
+proc getCIncludes(): string {.inline.} =
+  let incServer = pgIncludeServerFinder()
+  let incBase = pgIncludeFinder()
+  var res = ""
+  if incServer.len > 0 and dirExists(incServer):
+    res.add " --cincludes:" & wrap(incServer)
+  if incBase.len > 0 and dirExists(incBase):
+    res.add " --cincludes:" & wrap(incBase)
+  res
 
+proc nim_c(module: string): string {.inline.} =
+  "nim c -d:release --mm:orc --cc:" & platform_compiler & getPgxcrownPath() & getCIncludes() & " -d:entrypoint=" & wrap(module) & " " & wrap(module)
 
 proc emit_pgx_c_extension(module: string): string {.inline.} =
   var prj = module.splitPath.head
-  "nim c -d:release --mm:orc --cc:" & platform_compiler & getPgxcrownPath() & "--app:lib -o:" & wrap(prj.splitPath.head.splitPath.tail) & " --outdir:" & wrap(prj) & " " & wrap(module)
-
+  "nim c -d:release --mm:orc --cc:" & platform_compiler & getPgxcrownPath() & getCIncludes() & " -d:entrypoint=" & wrap(module) & " --app:lib -o:" & wrap(prj.splitPath.head.splitPath.tail) & " --outdir:" & wrap(prj) & " " & wrap(module)
 
 template generate_tmp_file(input_file: string, kind: string = "") =
   var
