@@ -70,7 +70,7 @@ template init_hook(file: string, kind: string, params: seq[NimNode]) =
 
 macro build_hook*() =
   var (dir, _, _) = splitFile(entrypoint)
-  var selectedHook = dir.split("/")[^2]
+  var selectedHook = dir.parentDir.lastPathPart
  
   var params: seq[NimNode] = case selectedHook
     of "emit_log": @[newIdentDefs(ident("edata"), newNimNode(nnkPtrTy).add(ident("ErrorData")))]

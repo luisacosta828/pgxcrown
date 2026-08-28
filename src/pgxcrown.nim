@@ -21,6 +21,11 @@ template PG_MODULE_MAGIC*() =
   {.pragma: pgdllexport, codegenDecl: DLL, exportc.}
   {.pragma: pgv1 , codegenDecl: V1_DEF, exportc, dynlib.}
   {.pragma: pgv1_plnim , codegenDecl: "PGDLLEXPORT $# $#$#", exportc, dynlib.}
+  {.emit: """/*INCLUDESECTION*/
+#include "postgres.h"
+#include "fmgr.h"
+#include "funcapi.h"
+""".}
   {.emit: """PG_MODULE_MAGIC;""" .}
 
 
