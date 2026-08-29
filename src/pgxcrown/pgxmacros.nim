@@ -804,7 +804,12 @@ proc wrapScalarReturn(code: NimNode, retTypeStr: string): NimNode =
       let retExpr = if n[0].kind == nnkEmpty: ident("userResult") else: n[0]
       if retExpr.kind == nnkCall and (retExpr[0].repr.endsWith("GetDatum") or retExpr[0].repr in ["JsonNodeToDatum", "objectToDatum"]):
         return n
-      elif retTypeStr in ["string", "cstring"]:
+      elif retTypeStr == "cstring":
+        if retExpr.kind == nnkCall and retExpr[0].repr == "CStringGetDatum":
+          return n
+        else:
+          return newTree(nnkReturnStmt, newCall(ident("CStringGetDatum"), newCall(ident("pstrdup"), newCall(ident("cstring"), retExpr))))
+      elif retTypeStr in ["string", "Text"]:
         if retExpr.kind == nnkCall and retExpr[0].repr == "CStringGetTextDatum":
           return n
         else:
@@ -814,6 +819,22 @@ proc wrapScalarReturn(code: NimNode, retTypeStr: string): NimNode =
           return n
         else:
           return newTree(nnkReturnStmt, newCall(ident("JsonNodeToDatum"), retExpr))
+      elif retTypeStr in ["int", "int32", "cint"]:
+        return newTree(nnkReturnStmt, newCall(ident("Int32GetDatum"), newCall(ident("int32"), retExpr)))
+      elif retTypeStr in ["int64", "clonglong"]:
+        return newTree(nnkReturnStmt, newCall(ident("Int64GetDatum"), newCall(ident("int64"), retExpr)))
+      elif retTypeStr in ["int16", "cshort"]:
+        return newTree(nnkReturnStmt, newCall(ident("Int16GetDatum"), newCall(ident("int16"), retExpr)))
+      elif retTypeStr in ["float", "float32", "cfloat"]:
+        return newTree(nnkReturnStmt, newCall(ident("Float4GetDatum"), newCall(ident("float32"), retExpr)))
+      elif retTypeStr in ["float64", "cdouble"]:
+        return newTree(nnkReturnStmt, newCall(ident("Float8GetDatum"), newCall(ident("float64"), retExpr)))
+      elif retTypeStr in ["bool"]:
+        return newTree(nnkReturnStmt, newCall(ident("BoolGetDatum"), newCall(ident("bool"), retExpr)))
+      elif retTypeStr in ["uint", "uint32"]:
+        return newTree(nnkReturnStmt, newCall(ident("UInt32GetDatum"), newCall(ident("uint32"), retExpr)))
+      elif retTypeStr in ["uint64"]:
+        return newTree(nnkReturnStmt, newCall(ident("UInt64GetDatum"), newCall(ident("uint64"), retExpr)))
       else:
         return newTree(nnkReturnStmt, newCall(ident(datumConverter), retExpr))
     elif n.kind in {nnkProcDef, nnkFuncDef, nnkIteratorDef, nnkTemplateDef, nnkMacroDef}:

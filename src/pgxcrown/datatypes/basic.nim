@@ -69,6 +69,7 @@ proc Float4GetDatum*(x: cfloat | float32 | float): Datum {.importc.}
 proc Float8GetDatum*(x: cdouble | float64): Datum {.importc.}
 proc PointerGetDatum*(x: Pointer): Datum {.importc.}
 proc CStringGetDatum*(x: cstring): Datum {.importc.}
+proc pstrdup*(x: cstring): cstring {.importc.}
 proc NameGetDatum*(x: Name): Datum {.importc.}
 proc VARDATA*(x: pointer): cstring {.importc.}
 proc VARDATA_ANY*(x: pointer): cstring {.importc.}

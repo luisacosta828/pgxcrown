@@ -24,17 +24,17 @@ const
 const available_base_types = ["int", "int32", "int64", "uint", "uint32", "uint64", "char", "string", "cstring","float32", "float64"]
 
 const type_template = """
+import pgxcrown
 import std/strutils
 
-# pgxtool create-type template
+type
+  $udf* {.pgxType: $base_type.} = distinct $base_type
 
-type $udf = $base_type
+proc parse_$udf*(s: cstring): $udf {.pgxInput, immutable, parallelSafe.} =
+  parseInt($s).$udf
 
-proc $udf_input*(a: cstring): $udf {.immutable, parallelSafe.} =
-  discard
-
-proc $udf_output*(a: $udf): cstring {.immutable, parallelSafe.} =
-  discard
+proc format_$udf*(val: $udf): string {.pgxOutput, immutable, parallelSafe.} =
+  $val.$base_type
 """
 
 proc cli_helper() =
@@ -156,7 +156,7 @@ template build_project(req: string, kind: string) =
   if kind in "create-project":
     writeFile(entry_point, "")
   elif "create-type" in kind:
-    writeFile(entry_point, type_template.replace("$udf", req).replace("$base_type", kind.split(":")[^1]).replace("#hint", "# pgxtool create-type template"))
+    writeFile(entry_point, type_template.replace("$udf", req).replace("$base_type", kind.split(":")[^1]))
 
 
   if "hook" in kind:

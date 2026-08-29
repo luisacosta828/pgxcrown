@@ -15,6 +15,17 @@ template parallelSafe*() {.pragma: [trusted].}
 template parallelRestricted*() {.pragma: [trusted].}
 template calledOnNullInput*() {.pragma.}
 
+# Declarative Custom Base Type Pragmas
+template pgxType*(baseType: typed) {.pragma.}
+template pgxInput*() {.pragma.}
+template pgxInput*(customType: typed) {.pragma.}
+template pgxOutput*() {.pragma.}
+template pgxOutput*(customType: typed) {.pragma.}
+template pgxReceive*() {.pragma.}
+template pgxReceive*(customType: typed) {.pragma.}
+template pgxSend*() {.pragma.}
+template pgxSend*(customType: typed) {.pragma.}
+
 template PG_MODULE_MAGIC*() =
   const DLL* = "PGDLLEXPORT $# $#$#"
   const V1_DEF* = "PGDLLEXPORT $# $#(PG_FUNCTION_ARGS)"
