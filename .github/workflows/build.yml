@@ -19,20 +19,22 @@ jobs:
     - name: Linux Dev dependencies setup      
       run: |
         sudo apt -y update
-        sudo apt -y install build-essential postgresql postgresql-contrib libpq5 libpq-dev postgresql-server-dev-all
+        sudo apt -y install build-essential postgresql postgresql-contrib libpq-dev postgresql-server-dev-16 || sudo apt -y install build-essential postgresql postgresql-contrib libpq-dev postgresql-server-dev-all
 
     - name: Nimble setup
       run: |
         nimble -y refresh
         nimble -y install
 
-    - name: Build & Validate Extensions and Hooks
+    - name: Build & Validate Extensions, Types, and Hooks
       run: |
         pgxtool
         pgxtool init
         pgxtool available-hooks
         pgxtool create-project test
         pgxtool create-hook emit_log
+        pgxtool create-type factorial
         pgxtool build-extension test
         pgxtool build-extension emit_log
+        pgxtool build-extension factorial
 
