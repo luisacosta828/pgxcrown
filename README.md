@@ -321,11 +321,12 @@ SELECT proof_index_out_of_bounds(5);
 
 ---
 
-## Prerequisites
-
-- **PostgreSQL** $\ge 12$ (with development packages `postgresql-server-dev-all` or `pg_config`)
-- **Nim Compiler** $\ge 2.0.0$
-- **GCC / Clang**
+## Platform & System Requirements
+ 
+- **Supported Operating Systems**: Linux (`x86_64`, `aarch64`), macOS. *(Windows developers: use WSL2 or Docker).*
+- **PostgreSQL**: $\ge 12$ (with development packages `postgresql-server-dev-all` or `pg_config`)
+- **Nim Compiler**: $\ge 2.0.0$
+- **C Compiler**: GCC / Clang
 
 ---
 

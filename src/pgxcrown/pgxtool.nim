@@ -114,7 +114,7 @@ proc getCLibs(): string {.inline.} =
     " "
 
 proc nim_c(module: string): string {.inline.} =
-  "nim c -d:release --mm:orc --cc:" & getPlatformCompiler() & getPgxcrownPath() & getCIncludes() & " -d:entrypoint=" & wrap(module) & " " & wrap(module)
+  "nim c --noMain --compileOnly -d:release --mm:orc --cc:" & getPlatformCompiler() & getPgxcrownPath() & getCIncludes() & " -d:entrypoint=" & wrap(module) & " " & wrap(module)
 
 proc emit_pgx_c_extension(module: string): string {.inline.} =
   var prj = module.splitPath.head

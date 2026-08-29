@@ -6,9 +6,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform:       [ubuntu-latest, windows-latest]
-        nim-channel:    [stable]  # , devel] devel and windows are not supported.
-    name: ${{ matrix.platform }}-${{ matrix.nim-channel }}
+        platform: [ubuntu-latest]
+        nim-channel: [stable]
+    name: ${{ matrix.platform }}-nim-${{ matrix.nim-channel }}
     runs-on: ${{ matrix.platform }}
     steps:
     - uses: actions/checkout@v4
@@ -16,19 +16,9 @@ jobs:
       with:
         nim-version: ${{ matrix.nim-channel }}
 
-    - name: Windows Dev dependencies setup
-      if: runner.os == 'Windows'
-      run: |
-        Invoke-WebRequest -UseBasicParsing -Uri "https://get.enterprisedb.com/postgresql/postgresql-17.0-1-windows-x64.exe" -OutFile "postgresql-17.0-1-windows-x64.exe"
-        Start-Process -FilePath ".\postgresql-17.0-1-windows-x64.exe" -ArgumentList "--mode unattended --superpassword postgres" -Wait
-        "C:\Program Files\PostgreSQL\17\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-        "C:\Program Files\PostgreSQL\17\include" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-            
     - name: Linux Dev dependencies setup      
-      if: runner.os == 'Linux'
       run: |
         sudo apt -y update
-        sudo apt --purge remove postgresql-* libpq5 libpq-dev -y
         sudo apt -y install build-essential postgresql postgresql-contrib libpq5 libpq-dev postgresql-server-dev-all
 
     - name: Nimble setup
@@ -36,7 +26,7 @@ jobs:
         nimble -y refresh
         nimble -y install
 
-    - name: Build
+    - name: Build & Validate Extensions and Hooks
       run: |
         pgxtool
         pgxtool init
@@ -44,3 +34,5 @@ jobs:
         pgxtool create-project test
         pgxtool create-hook emit_log
         pgxtool build-extension test
+        pgxtool build-extension emit_log
+
