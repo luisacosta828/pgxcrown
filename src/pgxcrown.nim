@@ -26,6 +26,8 @@ template pgxReceive*(customType: typed) {.pragma.}
 template pgxSend*() {.pragma.}
 template pgxSend*(customType: typed) {.pragma.}
 
+const pgTargetVersion* {.intdefine.}: int = 0
+
 template PG_MODULE_MAGIC*() =
   const DLL* = "PGDLLEXPORT $# $#$#"
   const V1_DEF* = "PGDLLEXPORT $# $#(PG_FUNCTION_ARGS)"
@@ -37,7 +39,60 @@ template PG_MODULE_MAGIC*() =
 #include "fmgr.h"
 #include "funcapi.h"
 """.}
-  {.emit: """PG_MODULE_MAGIC;""" .}
+  when pgTargetVersion >= 15:
+    {.emit: """
+#ifdef PG_MAGIC_FUNCTION_NAME
+extern PGDLLEXPORT const void *PG_MAGIC_FUNCTION_NAME(void);
+typedef struct
+{
+	int			len;
+	int			version;
+	int			funcmaxargs;
+	int			indexmaxkeys;
+	int			nameddatalen;
+	int			float8byval;
+	char		abi[32];
+} Pg_magic_struct_v15;
+
+const void *
+PG_MAGIC_FUNCTION_NAME(void)
+{
+    static const Pg_magic_struct_v15 Pg_magic_data = {
+        sizeof(Pg_magic_struct_v15),
+        """ & $(pgTargetVersion * 100) & """,
+        FUNC_MAX_ARGS,
+        INDEX_MAX_KEYS,
+        NAMEDATALEN,
+        FLOAT8PASSBYVAL,
+        "PostgreSQL"
+    };
+    return &Pg_magic_data;
+}
+extern int no_such_variable;
+#endif
+""".}
+  elif pgTargetVersion > 0:
+    {.emit: """
+#ifdef PG_MAGIC_FUNCTION_NAME
+extern PGDLLEXPORT const Pg_magic_struct *PG_MAGIC_FUNCTION_NAME(void);
+const Pg_magic_struct *
+PG_MAGIC_FUNCTION_NAME(void)
+{
+    static const Pg_magic_struct Pg_magic_data = {
+        sizeof(Pg_magic_struct),
+        """ & $(pgTargetVersion * 100) & """,
+        FUNC_MAX_ARGS,
+        INDEX_MAX_KEYS,
+        NAMEDATALEN,
+        FLOAT8PASSBYVAL
+    };
+    return &Pg_magic_data;
+}
+extern int no_such_variable;
+#endif
+""".}
+  else:
+    {.emit: """PG_MODULE_MAGIC;""" .}
 
 
 template PG_FUNCTION_INFO_V1*(funcname: typed) =

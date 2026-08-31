@@ -1,5 +1,4 @@
 import std/[unittest, tables, options, strutils, json]
-import ../src/pgxcrown/compiler
 import ../src/pgxcrown/query_builder
 import ../src/pgxcrown/spi
 

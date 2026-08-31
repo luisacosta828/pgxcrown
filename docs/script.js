@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Pgxcrown v0.12.0 - Product Showcase & Interactive Mechanics
+   Pgxcrown v0.19.0 - Product Showcase & Interactive Mechanics
    ========================================================================== */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -155,21 +155,26 @@ const cliLogs = {
   'pgxtool build-extension my_extension': [
     { text: '[pgxtool] Compiling native release extension for "my_extension"...', type: 'info' },
     { text: '  • Executing: nim c -d:release --mm:orc --cc:gcc --app:lib -o:"my_extension.so" src/main.nim', type: 'info' },
-    { text: '  • Applying v0.12.0 Automatic Panic Shield: ENABLED', type: 'warn' },
+    { text: '  • Applying Automatic Panic Shield: ENABLED (0 SIGABRTs)', type: 'warn' },
+    { text: '  • Binary Security Audit: PASSED (No blacklisted OS calls detected)', type: 'success' },
     { text: '  • Output binary generated: my_extension.so (512 KB)', type: 'info' },
     { text: 'Build completed for extension: my_extension', type: 'success' }
   ],
   'pgxtool install my_extension': [
     { text: 'Installing extension \'my_extension\' into PostgreSQL...', type: 'info' },
-    { text: '  Copying library to /usr/lib/postgresql/14/lib/...', type: 'info' },
-    { text: '  Copying control & SQL files to /usr/share/postgresql/14/extension/...', type: 'info' },
+    { text: '  Copying library to /usr/lib/postgresql/16/lib/...', type: 'info' },
+    { text: '  Copying control & SQL files to /usr/share/postgresql/16/extension/...', type: 'info' },
     { text: 'Extension \'my_extension\' installed successfully!', type: 'success' }
   ],
   'pgxtool test my_extension': [
-    { text: '[pgxtool] Spawning PostgreSQL Docker test harness...', type: 'info' },
-    { text: '  • Running: psql -c "CREATE EXTENSION my_extension;"', type: 'info' },
-    { text: '  • Testing Panic Shield Overflow Guard: PASSED [ERROR: Extension Defect]', type: 'success' },
-    { text: 'All 5 Safety Verification Tests Passed cleanly!', type: 'success' }
+    { text: '🔍 Container Engine: Docker (/usr/bin/docker)', type: 'info' },
+    { text: '🐘 Pgxcrown Test Runner [PostgreSQL 16 via Docker]', type: 'info' },
+    { text: '🚀 [1/4] Starting PostgreSQL 16 sandbox container...', type: 'info' },
+    { text: '📦 [2/4] Injecting extension \'my_extension\' into PostgreSQL engine...', type: 'info' },
+    { text: '🗄️  [3/4] Creating clean database \'pgxtool_test_my_extension\' and loading extension...', type: 'info' },
+    { text: '🧪 [4/4] Executing SQL regression tests...', type: 'info' },
+    { text: '   • tests/sql/01_basic.sql ...... ✅ PASSED (14ms)', type: 'success' },
+    { text: '🎉 PG 16 ALL TESTS PASSED (1/1)', type: 'success' }
   ]
 };
 

@@ -20,22 +20,47 @@ const
   pgxtool_init_dir = home / current_user & "_pgxtool"
   pgxtool_config = pgxtool_init_dir / "config.json"
 
+const available_base_types* = [
+  "int", "int16", "int32", "int64",
+  "uint", "uint16", "uint32", "uint64",
+  "float", "float32", "float64",
+  "char", "string", "cstring",
+  "bool"
+]
 
-const available_base_types = ["int", "int32", "int64", "uint", "uint32", "uint64", "char", "string", "cstring","float32", "float64"]
+proc generateTypeSource*(udf: string, baseType: string): (string, string) =
+  var parseCode = ""
+  var testLiteral = "'42'"
 
-const type_template = """
-import pgxcrown
-import std/strutils
+  case baseType
+  of "float", "float32", "float64":
+    parseCode = "parseFloat($s)." & baseType & "." & udf
+    testLiteral = "'3.14'"
+  of "string", "cstring":
+    parseCode = "($s)." & udf
+    testLiteral = "'hello'"
+  of "char":
+    parseCode = "($s)[0]." & udf
+    testLiteral = "'A'"
+  of "bool":
+    parseCode = "parseBool($s)." & udf
+    testLiteral = "'true'"
+  of "int64":
+    parseCode = "parseBiggestInt($s)." & udf
+    testLiteral = "'42'"
+  of "uint64":
+    parseCode = "parseBiggestUInt($s)." & udf
+    testLiteral = "'42'"
+  of "uint", "uint32", "uint16", "uint8":
+    parseCode = "parseUInt($s)." & baseType & "." & udf
+    testLiteral = "'42'"
+  else: # int, int32, int16, int8
+    parseCode = "parseInt($s)." & baseType & "." & udf
+    testLiteral = "'42'"
 
-type
-  $udf* {.pgxType: $base_type.} = distinct $base_type
-
-proc parse_$udf*(s: cstring): $udf {.pgxInput, immutable, parallelSafe.} =
-  parseInt($s).$udf
-
-proc format_$udf*(val: $udf): string {.pgxOutput, immutable, parallelSafe.} =
-  $val.$base_type
-"""
+  let src = "import pgxcrown\nimport std/strutils\n\ntype\n  " & udf & "* {.pgxType: " & baseType & ".} = distinct " & baseType & "\n\nproc parse_" & udf & "*(s: cstring): " & udf & " {.pgxInput, immutable, parallelSafe.} =\n  " & parseCode & "\n\nproc format_" & udf & "*(val: " & udf & "): string {.pgxOutput, immutable, parallelSafe.} =\n  $val." & baseType & "\n"
+  let testSql = "SELECT " & testLiteral & "::" & udf & ";\n"
+  return (src, testSql)
 
 proc cli_helper() =
   echo """
@@ -46,19 +71,18 @@ Commands:
      * pgxtool init
 
   create-project: Initialize a new pgxcrown project template to edit
-     * pgxtool create-project test
+     * pgxtool create-project <name>
 
   create-type: Create a template for defining new types
-     * pgxtool create-type test --base-type nim_datatype
+     * pgxtool create-type <name> --base-type nim_datatype
 
   build-extension: Compile a dynamic library that can be loaded into Postgres (.so in Linux, .dll in Windows)
-     * pgxtool build-extension test
+     * pgxtool build-extension <name>
 
   install: Automatically copy built extension files (.so, .control, .sql) to PostgreSQL directories
-     * pgxtool install test
+     * pgxtool install <name>
 
   create-hook: Initialize a new project template for creating Postgres hooks
-
      * pgxtool create-hook emit_log
 
   available-hooks: List Postgres hooks supported for pgxcrown
@@ -67,10 +91,44 @@ Commands:
   path-finders: List Postgres pg_config, libdir, includedir paths
      * pgxtool path-finders
 
-  test: Test an extension
-     * pgxtool test project
+  test: Run regression tests in isolated Docker containers (PostgreSQL 14 to 17)
+     * pgxtool test <name>
+     * pgxtool test <name> --verbose
+     * pgxtool test <name> --pg 16
+     * pgxtool test <name> --all
+     * pgxtool test <name> --bless
+     * pgxtool test <name> --keep
+     * pgxtool test --help
 
 """
+
+proc test_cli_helper() =
+  echo """
+Usage: pgxtool test <project> [options]
+
+Run SQL regression tests in isolated Docker containers (PostgreSQL 14 to 17).
+
+Arguments:
+  <project>               Name of the extension project to test
+
+Options:
+  --verbose, -v           Display the full SQL script and raw PostgreSQL query response table
+  --pg <version>          Specify target PostgreSQL version (14, 15, 16, 17, or 'latest')
+                          Defaults to host PostgreSQL version (if detected) or 17
+  --all, --all-versions   Execute test suite across the full matrix of supported PostgreSQL versions (14 to 17)
+  --bless                 Auto-generate or update golden snapshot files (tests/expected/*.out) from actual output
+  --keep                  Keep the test sandbox container alive after running tests for manual debugging
+  --help, -h              Display this help message
+
+Examples:
+  * pgxtool test my_ext
+  * pgxtool test my_ext --verbose
+  * pgxtool test my_ext --pg 16
+  * pgxtool test my_ext --all
+  * pgxtool test my_ext --bless
+  * pgxtool test my_ext --keep
+"""
+
 proc wrap(s: string): string {. inline .} = "\"" & s & "\""
 
 proc getPgxcrownPath(): string {.inline.} =
@@ -113,12 +171,18 @@ proc getCLibs(): string {.inline.} =
   else:
     " "
 
-proc nim_c(module: string): string {.inline.} =
-  "nim c --noMain --compileOnly -d:release --mm:orc --cc:" & getPlatformCompiler() & getPgxcrownPath() & getCIncludes() & " -d:entrypoint=" & wrap(module) & " " & wrap(module)
+proc nim_c*(module: string, targetPgVersion: int = 0): string {.inline.} =
+  var extraDefines = ""
+  if targetPgVersion > 0:
+    extraDefines = " -d:pgTargetVersion=" & $targetPgVersion
+  "nim c --noMain --compileOnly -d:release --mm:orc --cc:" & getPlatformCompiler() & getPgxcrownPath() & getCIncludes() & extraDefines & " -d:entrypoint=" & wrap(module) & " " & wrap(module)
 
-proc emit_pgx_c_extension(module: string): string {.inline.} =
+proc emit_pgx_c_extension*(module: string, targetPgVersion: int = 0): string {.inline.} =
   var prj = module.splitPath.head
-  "nim c -d:release --mm:orc --cc:" & getPlatformCompiler() & getPgxcrownPath() & getCIncludes() & getCLibs() & " -d:entrypoint=" & wrap(module) & " --app:lib -o:" & wrap(prj.splitPath.head.splitPath.tail) & " --outdir:" & wrap(prj) & " " & wrap(module)
+  var extraDefines = ""
+  if targetPgVersion > 0:
+    extraDefines = " -d:pgTargetVersion=" & $targetPgVersion
+  "nim c -d:release --mm:orc --cc:" & getPlatformCompiler() & getPgxcrownPath() & getCIncludes() & getCLibs() & extraDefines & " -d:entrypoint=" & wrap(module) & " --app:lib -o:" & wrap(prj.splitPath.head.splitPath.tail) & " --outdir:" & wrap(prj) & " " & wrap(module)
 
 template generate_tmp_file(input_file: string, kind: string = "") =
   var
@@ -128,10 +192,8 @@ template generate_tmp_file(input_file: string, kind: string = "") =
     (dir, file, ext) = splitFile(input_file)
     tmp_file {.inject.} = (dir / ("tmp_" & file & ext))
 
-
 template run(cmd: string) =
   if execShellCmd(cmd) != 0: quit "Error executing: " & cmd
-
 
 template build_project(req: string, kind: string) =
   if not fileExists(pgxtool_config):
@@ -148,23 +210,27 @@ template build_project(req: string, kind: string) =
   var
     source = pgxtool_init_dir / req / "src"
     private = pgxtool_init_dir / req / "private" 
+    testsSql = pgxtool_init_dir / req / "tests" / "sql"
+    testsExp = pgxtool_init_dir / req / "tests" / "expected"
     entry_point = source / "main.nim"
 
   createDir(source)
   createDir(private)
+  createDir(testsSql)
+  createDir(testsExp)
   
-  if kind in "create-project":
+  if "create-project" in kind:
     writeFile(entry_point, "")
   elif "create-type" in kind:
-    writeFile(entry_point, type_template.replace("$udf", req).replace("$base_type", kind.split(":")[^1]))
-
+    let baseType = kind.split(":")[^1]
+    let (srcCode, testSql) = generateTypeSource(req, baseType)
+    writeFile(entry_point, srcCode)
+    writeFile(testsSql / "01_basic.sql", testSql)
 
   if "hook" in kind:
     generate_tmp_file(entry_point, kind)
     writeFile(tmp_file, tmp_content)
     run nim_c(tmp_file)
-
-    #writeFile(source / "hook_type.txt", kind.split(":")[1])
 
 proc auditBinarySymbols*(soPath: string): bool =
   result = true
@@ -229,7 +295,7 @@ proc cleanupGeneratedFiles*(dir: string, prjName: string, tmpFile: string) =
     if fileExists(f):
       removeFile(f)
 
-proc compile2pgx(input_file: string) =
+proc compile2pgx*(input_file: string, targetPgVersion: int = 0) =
   var (dir, file, _) = splitFile(input_file)
   let projectDir = dir.parentDir()
   let prjName = projectDir.splitFile().name
@@ -237,11 +303,11 @@ proc compile2pgx(input_file: string) =
   generate_tmp_file input_file
   writeFile(tmp_file, tmp_content)
 
-  if execShellCmd(nim_c(tmp_file)) != 0:
+  if execShellCmd(nim_c(tmp_file, targetPgVersion)) != 0:
     cleanupGeneratedFiles(dir, prjName, tmp_file)
     quit "Error executing: nim_c"
 
-  if execShellCmd(emit_pgx_c_extension(tmp_file)) != 0:
+  if execShellCmd(emit_pgx_c_extension(tmp_file, targetPgVersion)) != 0:
     cleanupGeneratedFiles(dir, prjName, tmp_file)
     quit "Error executing: emit_pgx_c_extension"
 
@@ -261,10 +327,8 @@ proc compile2pgx(input_file: string) =
   if fileExists(exe.dir / exe.name):
     removeFile(exe.dir / exe.name)
 
-
-proc compile2hook(input_file: string) =
-  run emit_pgx_c_extension(input_file)
-
+proc compile2hook*(input_file: string, targetPgVersion: int = 0) =
+  run emit_pgx_c_extension(input_file, targetPgVersion)
 
 proc generate_install_script*(req: string): string =
   var prj_dir = pgxtool_init_dir / req / "src"
@@ -306,7 +370,6 @@ proc generate_install_script*(req: string): string =
     discard execShellCmd("chmod +x " & quoteShell(script_path))
   result = script_path
 
-
 proc install_extension(req: string) =
   var prj_dir = pgxtool_init_dir / req / "src"
   var entry_point = prj_dir / "main.nim"
@@ -323,9 +386,6 @@ proc install_extension(req: string) =
   echo "To install into PostgreSQL with privileges, run:"
   echo "  sudo ", script_path
 
-
-
-
 template build_project_template(req: string, kind: string = "") =
   if dirExists( pgxtool_init_dir / req):
     echo "Path in use, directory already exists, choose another name."
@@ -333,7 +393,7 @@ template build_project_template(req: string, kind: string = "") =
   build_project(req, kind)
 
 template validate_second_arg(pc: int) =
-  if pc != 2:
+  if pc < 2:
     cli_helper()
     return
 
@@ -356,24 +416,28 @@ template validate_create_type_args(pc: int) =
     else:
       base_type = paramStr(4)
       if base_type notin available_base_types:
-        quit(base_type & " not supported.\nCheck supported base types:\n" & $available_base_types) 
+        quit(base_type & " not supported.\nCheck supported base types:\n" & $available_base_types)
+  elif pc == 2:
+    base_type = "int"
   else:
     cli_helper()
     return
 
-
 proc check_command(pc: int) =
   var
     arg = paramStr(1)
-    req:string
+    req: string
 
-  if arg in ["available-hooks","path-finders","init"] : 
+  if arg in ["available-hooks", "path-finders", "init", "--help", "-h", "help"]: 
     req = ""    
 
   case arg
   of "create-hook":
     validate_second_arg(pc)
     req = paramStr(2)
+    if req in ["--help", "-h", "help"]:
+      cli_helper()
+      return
     if req in available_hooks:
       build_project_template(req, "hook:" & req)
     else:
@@ -381,14 +445,23 @@ proc check_command(pc: int) =
   of "create-project":
     validate_second_arg(pc)
     req = paramStr(2)
+    if req in ["--help", "-h", "help"]:
+      cli_helper()
+      return
     build_project_template(req, arg)
   of "create-type":
+    if pc == 2 and paramStr(2) in ["--help", "-h", "help"]:
+      echo "Usage: pgxtool create-type <name> --base-type <base_type>\nSupported base types: " & $available_base_types
+      return
     validate_create_type_args(pc)
     req = paramStr(2)
     build_project_template(req, arg & ":" & base_type)
   of "build-extension":
     validate_second_arg(pc)
     req = paramStr(2)
+    if req in ["--help", "-h", "help"]:
+      cli_helper()
+      return
     var entry_point = pgxtool_init_dir / req / "src" / "main.nim"
     if fileExists(entry_point):
       if req in available_hooks:
@@ -404,8 +477,10 @@ proc check_command(pc: int) =
   of "install":
     validate_second_arg(pc)
     req = paramStr(2)
+    if req in ["--help", "-h", "help"]:
+      cli_helper()
+      return
     install_extension(req)
-
 
   of "path-finders":
     echo "pg_config  = ", pgconfigFinder()
@@ -421,18 +496,75 @@ proc check_command(pc: int) =
   of "init":
     prepare_working_directory
   of "test":
-    validate_second_arg(pc)
+    if pc == 1:
+      test_cli_helper()
+      return
+
     req = paramStr(2)
-    serveTestEnv(pgxtool_init_dir, pgxtool_config, req)  
+    if req in ["--help", "-h", "help"]:
+      test_cli_helper()
+      return
+
+    var pgVersionStr = ""
+    var bless = false
+    var allVersions = false
+    var keepContainer = false
+    var verbose = false
+
+    var idx = 3
+    while idx <= pc:
+      let flag = paramStr(idx)
+      if flag in ["--help", "-h"]:
+        test_cli_helper()
+        return
+      elif flag in ["--verbose", "-v"]:
+        verbose = true
+        idx += 1
+      elif flag == "--pg" and idx + 1 <= pc:
+        pgVersionStr = paramStr(idx + 1)
+        idx += 2
+      elif flag == "--all" or flag == "--all-versions":
+        allVersions = true
+        idx += 1
+      elif flag == "--bless":
+        bless = true
+        idx += 1
+      elif flag == "--keep":
+        keepContainer = true
+        idx += 1
+      else:
+        echo "⚠️  Unknown option: ", flag
+        idx += 1
+
+    let isHook = req in available_hooks
+    let compileCallback: CompileCallback = proc(entryPoint: string, targetVersion: int) =
+      if isHook:
+        compile2hook(entryPoint, targetVersion)
+      else:
+        compile2pgx(entryPoint, targetVersion)
+
+    let exitCode = serveTestEnv(
+      pgxtool_init_dir = pgxtool_init_dir,
+      pgxtool_config = pgxtool_config,
+      project = req,
+      pgVersionStr = pgVersionStr,
+      bless = bless,
+      allVersions = allVersions,
+      keepContainer = keepContainer,
+      verbose = verbose,
+      compileCb = compileCallback
+    )
+    if exitCode != 0:
+      quit(exitCode)
 
   else: cli_helper()
-
 
 proc main() =
   let pc = paramCount()
-  case pc
-  of 1, 2, 4: check_command(pc)
-  else: cli_helper()
+  if pc >= 1:
+    check_command(pc)
+  else:
+    cli_helper()
 
-
-main()
+if isMainModule:
+  main()

@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pgxcrown 👑 v0.17.4 — Native PostgreSQL Extension Framework for Nim</title>
-  <meta name="description" content="Build ultra-fast, lightweight, crash-proof PostgreSQL C extensions in Nim. Features v0.17.4 Universal Objects, Native Binary JSONB, 3-Layer Effect Sandboxing, Type-Safe Query Builder, and Hardened SPI Engine.">
+  <title>Pgxcrown 👑 v0.19.0 — Native PostgreSQL Extension Framework for Nim</title>
+  <meta name="description" content="Build ultra-fast, lightweight, crash-proof PostgreSQL C extensions in Nim. Features v0.19.0 Declarative Base Types, Isolated Docker Sandbox Testing, Universal Objects, Native Binary JSONB, and Hardened SPI Engine.">
   
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👑</text></svg>">
   <link rel="stylesheet" href="styles.css">
@@ -18,7 +18,7 @@
       <a href="#" class="nav-brand">
         <span class="crown-icon">👑</span>
         <span class="gradient-text">Pgxcrown</span>
-        <span class="version-badge">v0.17.4</span>
+        <span class="version-badge">v0.19.0</span>
       </a>
 
       <ul class="nav-links" id="navLinks">
@@ -53,7 +53,7 @@
         </h1>
 
         <p class="hero-desc">
-          Write lightning-fast PostgreSQL C dynamic libraries with <strong>zero VM overhead</strong>, type-safe <strong>v0.16.0 SQL Query Builder AST</strong>, compile-time <strong>Schema Introspection (createTableFrom)</strong>, and hardened <strong>SPI execution</strong>.
+          Write lightning-fast PostgreSQL C dynamic libraries with <strong>zero VM overhead</strong>, <strong>v0.19.0 Isolated Docker Sandbox Testing</strong>, <strong>Declarative Base Types</strong>, type-safe <strong>SQL Query Builder AST</strong>, and hardened <strong>SPI execution</strong>.
         </p>
 
         <div class="hero-cta">
@@ -114,10 +114,26 @@
       </div>
 
       <div class="features-grid">
+        <!-- Feature: Isolated Docker Sandbox Test Engine -->
+        <div class="feature-card glass-card">
+          <div class="feature-icon icon-box">🐳</div>
+          <span class="feature-tag tag-new">v0.19.0 Core</span>
+          <h3 class="feature-title">Isolated Docker Sandbox Test Harness</h3>
+          <p class="feature-text">Execute SQL regression tests in isolated ephemeral Docker containers across the entire PostgreSQL 14–17 multi-version matrix with zero host mutation, visual diffing, and golden snapshot blessing (<code>--bless</code>).</p>
+        </div>
+
+        <!-- Feature: Declarative Custom Base Types -->
+        <div class="feature-card glass-card">
+          <div class="feature-icon icon-tag">🏷️</div>
+          <span class="feature-tag tag-new">v0.19.0 Core</span>
+          <h3 class="feature-title">Declarative Custom Base Types</h3>
+          <p class="feature-text">Easily define distinct domain types with <code>{.pgxType.}</code>, <code>{.pgxInput.}</code>, and <code>{.pgxOutput.}</code> pragmas. Dynamic parser generation across 15 flat scalar types (<code>int</code>, <code>float64</code>, <code>string</code>, <code>bool</code>, etc.).</p>
+        </div>
+
         <!-- Feature: Universal Objects Spotlight -->
         <div class="feature-card glass-card">
           <div class="feature-icon icon-box">📦</div>
-          <span class="feature-tag tag-new">v0.17.0 Core</span>
+          <span class="feature-tag tag-new">v0.19.0 Core</span>
           <h3 class="feature-title">Universal `type object` & Named Types</h3>
           <p class="feature-text">Define pure Nim objects and automatically generate <code>CREATE TYPE "Name" AS (...)</code> DDL with zero runtime reflection. Supports <code>Option[Object]</code>, <code>seq[Object]</code>, and direct SPI mapping without requiring <code>AS (...)</code> column aliases.</p>
         </div>
@@ -125,7 +141,7 @@
         <!-- Feature: Native Binary JSONB Spotlight -->
         <div class="feature-card glass-card">
           <div class="feature-icon icon-tag">⚡</div>
-          <span class="feature-tag tag-new">v0.17.0 Core</span>
+          <span class="feature-tag tag-new">v0.19.0 Core</span>
           <h3 class="feature-title">Native Binary JSON & JSONB Support</h3>
           <p class="feature-text">Direct zero-overhead conversion between Nim <code>JsonNode</code> and PostgreSQL's binary <code>jsonb</code> engine representation using internal <code>jsonb_in</code> and <code>jsonb_out</code> handlers with full literal DDL support.</p>
         </div>
@@ -133,7 +149,7 @@
         <!-- Feature: SQL Volatility & Safety Spotlight -->
         <div class="feature-card glass-card">
           <div class="feature-icon icon-shield">🛡️</div>
-          <span class="feature-tag tag-new">v0.17.0 Core</span>
+          <span class="feature-tag tag-new">v0.19.0 Core</span>
           <h3 class="feature-title">SQL Volatility & Compile-Time Safety</h3>
           <p class="feature-text">Declare function volatility directly in Nim (<code>{.immutable.}</code>, <code>{.stable.}</code>, <code>{.volatile.}</code>, <code>{.parallelSafe.}</code>). The compiler validates database operations at build time and generates matching PostgreSQL options.</p>
         </div>
@@ -141,7 +157,7 @@
         <!-- Feature: Query Builder & SPI Spotlight -->
         <div class="feature-card glass-card" id="query-builder">
           <div class="feature-icon icon-code">👑</div>
-          <span class="feature-tag tag-new">v0.17.0 Core</span>
+          <span class="feature-tag tag-new">v0.19.0 Core</span>
           <h3 class="feature-title">Type-Safe Query Builder & SPI Engine</h3>
           <p class="feature-text">Fluent compile-time SQL AST with zero-string table proxies (<code>u.name</code>), compile-time schema introspection (<code>createTableFrom</code>), CTEs, window functions, UPSERT, and hardened SPI runtime with stream reducers.</p>
         </div>

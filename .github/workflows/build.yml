@@ -26,15 +26,31 @@ jobs:
         nimble -y refresh
         nimble -y install
 
-    - name: Build & Validate Extensions, Types, and Hooks
+    - name: Run Unit Tests
+      run: |
+        nim c -r --hints:off tests/test_base_types.nim
+
+    - name: Build & Validate Extensions, Custom Types, and Hooks
       run: |
         pgxtool
         pgxtool init
         pgxtool available-hooks
         pgxtool create-project test
         pgxtool create-hook emit_log
-        pgxtool create-type factorial
-        pgxtool build-extension test
+        pgxtool create-type factorial --base-type int
+        pgxtool create-type geo_coord --base-type float64
+        pgxtool create-type nickname --base-type string
+        pgxtool create-type is_active --base-type bool
         pgxtool build-extension emit_log
         pgxtool build-extension factorial
+        pgxtool build-extension geo_coord
+        pgxtool build-extension nickname
+        pgxtool build-extension is_active
+
+    - name: Run PostgreSQL Container Regression Tests
+      run: |
+        pgxtool test factorial --pg 16
+        pgxtool test geo_coord --pg 16
+        pgxtool test nickname --pg 16
+        pgxtool test is_active --pg 16
 

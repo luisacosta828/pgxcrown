@@ -5,8 +5,8 @@
 ### High-Performance, Memory-Safe Native PostgreSQL Extension Framework for Nim
 
 [![Nim Version](https://img.shields.io/badge/Nim-2.0%2B-FFE953?logo=nim&logoColor=white)](https://nim-lang.org/)
-[![PostgreSQL Support](https://img.shields.io/badge/PostgreSQL-12%20--%2017-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![Release](https://img.shields.io/badge/Release-v0.17.4-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
+[![PostgreSQL Support](https://img.shields.io/badge/PostgreSQL-14%20--%2017-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Release](https://img.shields.io/badge/Release-v0.19.0-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Memory Safety](https://img.shields.io/badge/Safety-Memory%20Safe-success)](#3-sql-volatility-pragmas--compile-time-safety)
 
@@ -25,7 +25,9 @@
 ## Key Highlights
 
 - **Zero-VM Native Performance**: Transpiles to native C shared libraries (`.so` / `.dll`) called directly by PostgreSQL with zero runtime overhead.
-- **Universal `type object` Support**: Pure Nim `object` types automatically generate `CREATE TYPE "Name" AS (...)` DDL with bidirectional binary marshaling (`tupleHeaderToObject`, `objectToDatum`).
+- **Universal `type object` & Composite Types**: Pure Nim `object` types automatically generate `CREATE TYPE "Name" AS (...)` DDL with bidirectional binary marshaling (`tupleHeaderToObject`, `objectToDatum`).
+- **Declarative Custom Base Types**: Declarative pragmas (`{.pgxType.}`, `{.pgxInput.}`, `{.pgxOutput.}`) supporting 15 flat scalar types (`int`, `int16`, `int32`, `int64`, `uint`, `uint16`, `uint32`, `uint64`, `float`, `float32`, `float64`, `char`, `string`, `cstring`, `bool`) with type-specific parsing and automatic DDL generation.
+- **Isolated Docker Container Test Harness**: Run regression tests in isolated sandboxes across the full PostgreSQL 14–17 matrix with colored diffing and golden snapshot blessing (`--bless`).
 - **Native Binary JSONB**: Direct engine-level representation with `JsonNode` mapped via PostgreSQL builtins (`jsonb_in` / `jsonb_out`).
 - **SQL Volatility & Parallelism**: Pragmas for `{.immutable.}`, `{.stable.}`, `{.volatile.}`, and `{.parallelSafe.}` with compile-time mathematical enforcement and automatic SQL DDL generation.
 - **Type-Safe SQL Query Builder**: Fluent SQL AST with table proxies (`u.name`), CTEs, Joins, Window Functions, Case When, and UPSERT (`onConflictDoUpdate`).
@@ -81,7 +83,16 @@ proc get_top_users*(minScore: float64): seq[User] {.stable.} =
   return q.fetch(User)
 ```
 
-### 4. Build & Install
+### 4. Test in Isolated Containers (PostgreSQL 14 to 17)
+```bash
+# Test against isolated container sandbox with zero host database mutation
+pgxtool test my_extension
+
+# Or test across the full multi-version matrix (14, 15, 16, 17)
+pgxtool test my_extension --all
+```
+
+### 5. Build & Install
 ```bash
 # Compiles binary, audits symbols, and generates .control and .sql files
 pgxtool build-extension my_extension
@@ -90,7 +101,7 @@ pgxtool build-extension my_extension
 sudo ./my_extension/src/install.sh
 ```
 
-### 5. Run in PostgreSQL (`psql`)
+### 6. Run in PostgreSQL (`psql`)
 ```sql
 CREATE EXTENSION my_extension;
 
@@ -294,10 +305,10 @@ SELECT proof_index_out_of_bounds(5);
 | **`create-project`** | `pgxtool create-project <name>` | Scaffolds a new extension project directory and `main.nim`. |
 | **`build-extension`** | `pgxtool build-extension <name>` | Compiles Nim to `.so`, audits security symbols, and generates `.control` and `.sql`. |
 | **`install`** | `pgxtool install <name>` | Generates the privileged `install.sh` installation script. |
-| **`create-type`** | `pgxtool create-type <name> --base-type <type>` | Generates a custom datatype template. |
+| **`create-type`** | `pgxtool create-type <name> --base-type <type>` | Generates a custom distinct datatype with dynamic parsing for 15 scalar types. |
 | **`create-hook`** | `pgxtool create-hook <hook_name>` | Scaffolds a Postgres kernel hook (`emit_log`, `post_parse_analyze`). |
 | **`path-finders`** | `pgxtool path-finders` | Inspects resolved PostgreSQL system paths (`pg_config`, `libdir`, `includedir`). |
-| **`test`** | `pgxtool test <name>` | Spawns a Docker container with PostgreSQL to build and test the extension. |
+| **`test`** | `pgxtool test <name> [--pg <v>] [--all] [--bless] [--keep]` | Spawns isolated Docker containers with PostgreSQL (14–17) to run SQL regression tests with diff reporting. |
 
 ---
 
@@ -308,14 +319,19 @@ SELECT proof_index_out_of_bounds(5);
 | `int32` / `int` | `INTEGER` | `int4` |
 | `int64` | `BIGINT` | `int8` |
 | `int16` | `SMALLINT` | `int2` |
+| `uint` / `uint32` | `OID` / `INTEGER` | `oid` |
+| `uint16` | `SMALLINT` | `int2` |
+| `uint64` | `BIGINT` | `int8` |
 | `float64` / `float` | `DOUBLE PRECISION` | `float8` |
 | `float32` | `REAL` | `float4` |
+| `char` | `"char"` | `char` |
 | `string` / `cstring` | `TEXT` | `Text` / `cstring` |
 | `bool` | `BOOLEAN` | `boolean` |
 | `JsonNode` | `JSONB` | `jsonb` |
 | `Option[T]` | Nullable type | `type DEFAULT NULL` |
 | `seq[T]` (Argument) | `T[]` | `int4[]`, `text[]`, `jsonb[]` |
 | `seq[T]` (Return) | `SETOF T` | `RETURNS SETOF <type>` |
+| `type T = distinct Base` | Custom Base Type (`pgxType`) | `CREATE TYPE "T" (INPUT = ..., OUTPUT = ..., LIKE = ...)` |
 | `type T = object` | Named Composite Type | `CREATE TYPE "T" AS (...)` |
 | `type T = enum` | PostgreSQL ENUM | `CREATE TYPE "T" AS ENUM (...)` |
 
