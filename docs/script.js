@@ -32,6 +32,24 @@ const codeSnippets = {
 
   <span class="syn-kw">return</span> $q`,
 
+  base_types: `<span class="syn-cmt"># Declarative Custom Base Types (15 Flat Scalar Types)</span>
+<span class="syn-kw">import</span> pgxcrown, std/strutils
+
+<span class="syn-cmt"># 1. Declare custom distinct base type</span>
+<span class="syn-kw">type</span>
+  Temperature* <span class="syn-pragma">{.pgxType: float64.}</span> = <span class="syn-kw">distinct</span> <span class="syn-type">float64</span>
+
+<span class="syn-cmt"># 2. Input parser & Output formatter routines</span>
+<span class="syn-kw">proc</span> <span class="syn-fn">parse_Temperature</span>*(s: <span class="syn-type">cstring</span>): <span class="syn-type">Temperature</span> <span class="syn-pragma">{.pgxInput, immutable, parallelSafe.}</span> =
+  <span class="syn-kw">return</span> Temperature(<span class="syn-fn">parseFloat</span>($s))
+
+<span class="syn-kw">proc</span> <span class="syn-fn">format_Temperature</span>*(val: <span class="syn-type">Temperature</span>): <span class="syn-type">string</span> <span class="syn-pragma">{.pgxOutput, immutable, parallelSafe.}</span> =
+  <span class="syn-kw">return</span> $(float64(val)) & <span class="syn-str">" °C"</span>
+
+<span class="syn-cmt"># 3. UDF receiving and returning the custom type</span>
+<span class="syn-kw">proc</span> <span class="syn-fn">to_fahrenheit</span>*(t: <span class="syn-type">Temperature</span>): <span class="syn-type">Temperature</span> <span class="syn-pragma">{.immutable, parallelSafe.}</span> =
+  <span class="syn-kw">return</span> Temperature(float64(t) * 1.8 + 32.0)`,
+
   objects: `<span class="syn-cmt"># Universal 'type object' & Named Composite Types (Auto CREATE TYPE)</span>
 <span class="syn-kw">import</span> pgxcrown, std/[options, json]
 
@@ -72,25 +90,18 @@ const codeSnippets = {
   <span class="syn-kw">let</span> u = <span class="syn-fn">table</span>(<span class="syn-str">"users"</span>, <span class="syn-str">"u"</span>)
   <span class="syn-kw">return</span> <span class="syn-fn">Select</span>(u.id, u.username).<span class="syn-fn">From</span>(u).<span class="syn-fn">Where</span>(u.id == id).<span class="syn-fn">fetchOne</span>(User)`,
 
-  ddl: `<span class="syn-cmt"># Schema Introspection & Entity SPI Insertion</span>
-<span class="syn-kw">import</span> pgxcrown, std/options
+  testing: `<span class="syn-cmt"># Isolated Docker Sandbox Testing (0 Host Mutation)</span>
+<span class="syn-cmt"># $ pgxtool test my_extension --all --bless</span>
 
-<span class="syn-kw">type</span>
-  UserRecord = <span class="syn-kw">object</span>
-    id: <span class="syn-type">int32</span>
-    username: <span class="syn-type">string</span>
-    reputation: <span class="syn-type">float64</span>
-    is_active: <span class="syn-type">bool</span>
-    skills: <span class="syn-type">seq[string]</span>
-    bio: <span class="syn-type">Option[string]</span>
+<span class="syn-cmt"># 1. SQL Test Case (tests/sql/01_basic.sql)</span>
+CREATE EXTENSION my_extension;
+SELECT to_fahrenheit('100'::temperature);
+SELECT make_user(1, 'Luis', 98.5);
 
-<span class="syn-cmt"># 1. Compile-Time CREATE TABLE DDL</span>
-<span class="syn-kw">let</span> ddl = <span class="syn-fn">createTableFrom</span>(UserRecord, tableName = <span class="syn-str">"users"</span>)
-<span class="syn-fn">discard</span> <span class="syn-fn">spiCreateTableFrom</span>(UserRecord, tableName = <span class="syn-str">"users"</span>)
-
-<span class="syn-cmt"># 2. Serialize & Insert Entity via SPI</span>
-<span class="syn-kw">let</span> user = UserRecord(id: 42, username: <span class="syn-str">"Ada"</span>, reputation: 99.8, is_active: true, skills: @[<span class="syn-str">"nim"</span>], bio: <span class="syn-fn">some</span>(<span class="syn-str">"Pioneer"</span>))
-<span class="syn-fn">discard</span> <span class="syn-fn">spiInsertFrom</span>(user, tableName = <span class="syn-str">"users"</span>)`,
+<span class="syn-cmt"># 2. Automated Golden Snapshot Diffing</span>
+<span class="syn-cmt"># • Compiles binary -> Injects into ephemeral Postgres container</span>
+<span class="syn-cmt"># • Runs test suite across PG 14, 15, 16, 17</span>
+<span class="syn-cmt"># • Generates/blesses tests/expected/01_basic.out</span>`,
 
   shield: `<span class="syn-cmt"># Automatic Panic & Exception Shield (0 SIGABRTs)</span>
 <span class="syn-kw">func</span> <span class="syn-fn">pgx_proof_integer_overflow</span>(): <span class="syn-type">Datum</span> <span class="syn-pragma">{.pgv1, trusted.}</span> =
@@ -147,6 +158,13 @@ const cliLogs = {
     { text: '  └─ Initialized entry point: ~/.pgxtool/my_extension/src/main.nim', type: 'info' },
     { text: '✓ Project "my_extension" scaffolded successfully!', type: 'success' }
   ],
+  'pgxtool create-type temperature --base-type float64': [
+    { text: '[pgxtool] Generating custom distinct scalar base type "temperature"...', type: 'info' },
+    { text: '  • Selected Base Type: float64 (mapped to parseFloat / float8)', type: 'info' },
+    { text: '  • Generated parse_temperature & format_temperature routines', type: 'success' },
+    { text: '  • Initialized test suite: tests/sql/01_basic.sql', type: 'success' },
+    { text: '✓ Custom type "temperature" generated cleanly!', type: 'success' }
+  ],
   'pgxtool create-hook emit_log': [
     { text: '[pgxtool] Scaffolding PostgreSQL hook interceptor: "emit_log"', type: 'info' },
     { text: '  └─ Initialized hook template: ~/.pgxtool/emit_log/src/main.nim', type: 'info' },
@@ -175,6 +193,15 @@ const cliLogs = {
     { text: '🧪 [4/4] Executing SQL regression tests...', type: 'info' },
     { text: '   • tests/sql/01_basic.sql ...... ✅ PASSED (14ms)', type: 'success' },
     { text: '🎉 PG 16 ALL TESTS PASSED (1/1)', type: 'success' }
+  ],
+  'pgxtool test my_extension --all': [
+    { text: '🔍 Container Engine: Docker (/usr/bin/docker)', type: 'info' },
+    { text: '🐘 Pgxcrown Multi-Version Test Matrix (PG 14, 15, 16, 17)', type: 'info' },
+    { text: '  ├─ [PG 14] tests/sql/01_basic.sql ...... ✅ PASSED (16ms)', type: 'success' },
+    { text: '  ├─ [PG 15] tests/sql/01_basic.sql ...... ✅ PASSED (15ms)', type: 'success' },
+    { text: '  ├─ [PG 16] tests/sql/01_basic.sql ...... ✅ PASSED (14ms)', type: 'success' },
+    { text: '  └─ [PG 17] tests/sql/01_basic.sql ...... ✅ PASSED (14ms)', type: 'success' },
+    { text: '🎉 ALL VERSIONS PASSED: 4/4 environments successful!', type: 'success' }
   ]
 };
 

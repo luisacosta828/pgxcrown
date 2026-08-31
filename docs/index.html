@@ -23,9 +23,9 @@
 
       <ul class="nav-links" id="navLinks">
         <li><a href="#features">Capabilities</a></li>
+        <li><a href="#comparison">Comparison</a></li>
         <li><a href="#query-builder">Query & SPI</a></li>
         <li><a href="#panic-shield">Panic Shield</a></li>
-        <li><a href="#types">Data Types</a></li>
         <li><a href="#cli">CLI Tooling</a></li>
         <li><a href="#quickstart">Quickstart</a></li>
       </ul>
@@ -60,8 +60,8 @@
           <a href="#quickstart" class="btn btn-primary">
             <span>⚡ Start Building (`nimble install pgxcrown`)</span>
           </a>
-          <a href="#features" class="btn btn-glass">
-            <span>🔍 Explore Features</span>
+          <a href="#comparison" class="btn btn-glass">
+            <span>🥊 Why Pgxcrown vs Rust / C</span>
           </a>
         </div>
 
@@ -91,10 +91,11 @@
           </div>
           <div class="code-tabs">
             <button class="tab-btn active" data-tab="sql">Query & SPI</button>
+            <button class="tab-btn" data-tab="base_types">Base Types</button>
             <button class="tab-btn" data-tab="objects">Objects & Types</button>
             <button class="tab-btn" data-tab="jsonb">Native JSONB</button>
-            <button class="tab-btn" data-tab="security">Volatility & Safety</button>
-            <button class="tab-btn" data-tab="ddl">Schema & DDL</button>
+            <button class="tab-btn" data-tab="security">Safety & Pragmas</button>
+            <button class="tab-btn" data-tab="testing">Docker Tests</button>
             <button class="tab-btn" data-tab="shield">Panic Shield</button>
           </div>
         </div>
@@ -242,12 +243,12 @@
     </div>
   </section>
 
-  <!-- Panic Shield Spotlight Showcase (v0.12.0) -->
+  <!-- Panic Shield Spotlight Showcase (v0.19.0) -->
   <section id="panic-shield" class="shield-section">
     <div class="container">
       <div class="section-header">
         <span class="badge badge-accent">Security Milestone</span>
-        <h2 class="section-title">v0.12.0 Interactive <span class="gradient-text">Panic Shield</span> Showcase</h2>
+        <h2 class="section-title">v0.19.0 Interactive <span class="gradient-text">Panic Shield</span> Showcase</h2>
         <p class="section-desc">See how Pgxcrown prevents PostgreSQL backend worker crashes during integer overflows and array out-of-bounds defects.</p>
       </div>
 
@@ -273,7 +274,7 @@
         <!-- Shielded Card -->
         <div class="shield-card glass-card shielded">
           <div class="shield-header">
-            <span class="shield-badge badge-success">Pgxcrown v0.12.0 Panic Shield</span>
+            <span class="shield-badge badge-success">Pgxcrown v0.19.0 Panic Shield</span>
             <h3>Crash-Proof Execution</h3>
           </div>
           <div class="shield-body">
@@ -313,10 +314,12 @@
         <div class="cli-presets">
           <button class="cli-btn active" data-cmd="pgxtool init">pgxtool init</button>
           <button class="cli-btn" data-cmd="pgxtool create-project my_extension">pgxtool create-project</button>
+          <button class="cli-btn" data-cmd="pgxtool create-type temperature --base-type float64">pgxtool create-type</button>
           <button class="cli-btn" data-cmd="pgxtool create-hook emit_log">pgxtool create-hook</button>
           <button class="cli-btn" data-cmd="pgxtool build-extension my_extension">pgxtool build-extension</button>
           <button class="cli-btn" data-cmd="pgxtool install my_extension">pgxtool install</button>
           <button class="cli-btn" data-cmd="pgxtool test my_extension">pgxtool test</button>
+          <button class="cli-btn" data-cmd="pgxtool test my_extension --all">pgxtool test --all</button>
         </div>
 
         <div class="terminal-body" id="terminalBody"></div>
