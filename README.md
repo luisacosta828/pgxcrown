@@ -6,7 +6,7 @@
 
 [![Nim Version](https://img.shields.io/badge/Nim-2.0%2B-FFE953?logo=nim&logoColor=white)](https://nim-lang.org/)
 [![PostgreSQL Support](https://img.shields.io/badge/PostgreSQL-14%20--%2017-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![Release](https://img.shields.io/badge/Release-v0.19.0-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
+[![Release](https://img.shields.io/badge/Release-v0.20.0-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Memory Safety](https://img.shields.io/badge/Safety-Memory%20Safe-success)](#3-sql-volatility-pragmas--compile-time-safety)
 
@@ -25,13 +25,13 @@
 ## Key Highlights
 
 - **Zero-VM Native Performance**: Transpiles to native C shared libraries (`.so` / `.dll`) called directly by PostgreSQL with zero runtime overhead.
+- **Fluent SPI Terminal Chain API**: Ergonomic, left-to-right query and DML execution (`.scalar()`, `.first()`, `.all()`, `.rows()`, `.run()`) with `RETURNING` support and zero `discard` boilerplate.
 - **Universal `type object` & Composite Types**: Pure Nim `object` types automatically generate `CREATE TYPE "Name" AS (...)` DDL with bidirectional binary marshaling (`tupleHeaderToObject`, `objectToDatum`).
 - **Declarative Custom Base Types**: Declarative pragmas (`{.pgxType.}`, `{.pgxInput.}`, `{.pgxOutput.}`) supporting 15 flat scalar types (`int`, `int16`, `int32`, `int64`, `uint`, `uint16`, `uint32`, `uint64`, `float`, `float32`, `float64`, `char`, `string`, `cstring`, `bool`) with type-specific parsing and automatic DDL generation.
 - **Isolated Docker Container Test Harness**: Run regression tests in isolated sandboxes across the full PostgreSQL 14–17 matrix with colored diffing and golden snapshot blessing (`--bless`).
 - **Native Binary JSONB**: Direct engine-level representation with `JsonNode` mapped via PostgreSQL builtins (`jsonb_in` / `jsonb_out`).
 - **SQL Volatility & Parallelism**: Pragmas for `{.immutable.}`, `{.stable.}`, `{.volatile.}`, and `{.parallelSafe.}` with compile-time mathematical enforcement and automatic SQL DDL generation.
 - **Type-Safe SQL Query Builder**: Fluent SQL AST with table proxies (`u.name`), CTEs, Joins, Window Functions, Case When, and UPSERT (`onConflictDoUpdate`).
-- **Hardened SPI Execution**: Execute in-database queries via PostgreSQL's Server Programming Interface with zero socket latency, object mapping (`fetch[T]`), and stream reducers.
 - **Automatic Panic Shield (`0 SIGABRTs`)**: Compiles automatic exception boundaries into every UDF—intercepting panics, overflows, and defects to safely abort transactions without crashing the backend process.
 
 ---
@@ -264,17 +264,19 @@ proc get_department_leaders*(minSalary: int = 80000): string =
   return $q
 ```
 
-#### In-Database SPI Operations
+#### In-Database Fluent SPI Operations
 ```nim
-# 1. Automatic table creation from Nim types
-discard spiCreateTableFrom[User]("users", ifNotExists = true, primaryKey = "id")
+# 1. Clean DML Execution (No 'discard' required!)
+InsertInto("users", "name", "score").Values("'luis_dev'", "98.5").run()
 
-# 2. Direct entity insertion
-discard spiInsertFrom(User(id: 1, username: "luis_dev", score: 98.5), "users")
+# 2. DML with Returning (Scalar, Entity, or Columns)
+let newId = InsertInto("users", "name").Values("'ada'").Returning("id").scalar(int32)
+let updated = Update("users").Set("score = 100").Where(u.id == newId).Returning(u.id, u.name).first(User)
 
-# 3. Typed entity fetching (.fetch[T] / .fetchOne[T])
-let users = Select(u.id, u.username, u.score).From(u).fetch(User)
-let singleUser = Select(u.id, u.username).From(u).Where(u.id == 1).fetchOne(User)
+# 3. Fluent Query Reading (.scalar, .first, .all, .rows)
+let count = Select(count(u.id)).From(u).scalar(int)
+let singleUser = Select(u.id, u.username).From(u).Where(u.id == 1).first(User)
+let topUsers = Select(u.id, u.username, u.score).From(u).OrderBy(u.score.desc).all(User)
 ```
 
 ---

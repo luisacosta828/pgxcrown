@@ -8,6 +8,7 @@ import std/[tables, options, strutils, json]
 export json, tables
 from datatypes/basic import PDatum, POid, NameData, Oid, oidvector
 from datatypes/heaptuples import HeapTuple, TupleDesc
+export HeapTuple, TupleDesc
 import query_builder
 
 {.emit: """/*INCLUDESECTION*/
@@ -220,6 +221,52 @@ proc fetchCount*(query: ExecutableQuery): int {.tags: [DbReadEffect].} =
   ## Executes fluent query and returns total processed count
   let rawRows = fetchRawRows($query)
   return rawRows.len
+
+# =============================================================================
+# Fluent Terminal Chain Methods (.scalar, .first, .all, .rows, .run, .execute)
+# =============================================================================
+
+proc scalar*[T](query: ExecutableQuery, _: typedesc[T]): T {.tags: [DbReadEffect].} =
+  ## Fetches a single scalar value by passing type as argument: query.scalar(float64)
+  fetchScalar[T](query)
+
+proc scalar*[T](query: ExecutableQuery): T {.tags: [DbReadEffect].} =
+  ## Fetches a single scalar value using generic parameter: query.scalar[float64]()
+  fetchScalar[T](query)
+
+proc first*[T: object](query: ExecutableQuery, _: typedesc[T]): Option[T] {.tags: [DbReadEffect].} =
+  ## Fetches the first row as an Option[T] by passing type as argument: query.first(User)
+  fetchOne[T](query)
+
+proc first*[T: object](query: ExecutableQuery): Option[T] {.tags: [DbReadEffect].} =
+  ## Fetches the first row as an Option[T] using generic parameter: query.first[User]()
+  fetchOne[T](query)
+
+proc all*[T: object](query: ExecutableQuery, _: typedesc[T]): seq[T] {.tags: [DbReadEffect].} =
+  ## Fetches all rows mapped to object T by passing type as argument: query.all(User)
+  fetch[T](query)
+
+proc all*[T: object](query: ExecutableQuery): seq[T] {.tags: [DbReadEffect].} =
+  ## Fetches all rows mapped to object T using generic parameter: query.all[User]()
+  fetch[T](query)
+
+proc rows*(query: ExecutableQuery): seq[Table[string, string]] {.tags: [DbReadEffect].} =
+  ## Fetches dynamic key-value rows: query.rows()
+  fetchRows(query)
+
+proc run*(query: ExecutableQuery): int {.discardable, tags: [DbWriteEffect].} =
+  ## Executes a DML statement (INSERT, UPDATE, DELETE) via SPI.
+  ## Returns affected rows. Marked {.discardable.} so 'discard' is never required.
+  var ret = 0
+  spi_init:
+    let rc = exec(const_string($query), 0)
+    if rc >= 0:
+      ret = int(SPI_processed)
+  return ret
+
+proc execute*(query: ExecutableQuery): int {.discardable, tags: [DbWriteEffect].} =
+  ## Alias for .run()
+  run(query)
 
 # =============================================================================
 # Stream Helpers & Reducers

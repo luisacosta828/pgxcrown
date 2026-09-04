@@ -1,6 +1,6 @@
 from datatypes/basic import Datum, Oid
 import datatypes/basic
-from spi import HeapTuple
+from datatypes/heaptuples import HeapTuple
 
 {.push header: "utils/syscache.h" .}
 

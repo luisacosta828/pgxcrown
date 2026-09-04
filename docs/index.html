@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pgxcrown 👑 v0.19.0 — Native PostgreSQL Extension Framework for Nim</title>
-  <meta name="description" content="Build ultra-fast, lightweight, crash-proof PostgreSQL C extensions in Nim. Features v0.19.0 Declarative Base Types, Isolated Docker Sandbox Testing, Universal Objects, Native Binary JSONB, and Hardened SPI Engine.">
+  <title>Pgxcrown 👑 v0.20.0 — Native PostgreSQL Extension Framework for Nim</title>
+  <meta name="description" content="Build ultra-fast, lightweight, crash-proof PostgreSQL C extensions in Nim. Features v0.20.0 Fluent SPI Terminal Chains, Declarative Base Types, Isolated Docker Sandbox Testing, Universal Objects, and Native Binary JSONB.">
   
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👑</text></svg>">
   <link rel="stylesheet" href="styles.css">
@@ -18,7 +18,7 @@
       <a href="#" class="nav-brand">
         <span class="crown-icon">👑</span>
         <span class="gradient-text">Pgxcrown</span>
-        <span class="version-badge">v0.19.0</span>
+        <span class="version-badge">v0.20.0</span>
       </a>
 
       <ul class="nav-links" id="navLinks">
@@ -53,7 +53,7 @@
         </h1>
 
         <p class="hero-desc">
-          Write lightning-fast PostgreSQL C dynamic libraries with <strong>zero VM overhead</strong>, <strong>v0.19.0 Isolated Docker Sandbox Testing</strong>, <strong>Declarative Base Types</strong>, type-safe <strong>SQL Query Builder AST</strong>, and hardened <strong>SPI execution</strong>.
+          Write lightning-fast PostgreSQL C dynamic libraries with <strong>zero VM overhead</strong>, <strong>v0.20.0 Fluent SPI Terminal Chain API</strong>, <strong>Declarative Base Types</strong>, type-safe <strong>SQL Query Builder AST</strong>, and hardened <strong>SPI execution</strong>.
         </p>
 
         <div class="hero-cta">
@@ -155,12 +155,12 @@
           <p class="feature-text">Declare function volatility directly in Nim (<code>{.immutable.}</code>, <code>{.stable.}</code>, <code>{.volatile.}</code>, <code>{.parallelSafe.}</code>). The compiler validates database operations at build time and generates matching PostgreSQL options.</p>
         </div>
 
-        <!-- Feature: Query Builder & SPI Spotlight -->
+        <!-- Feature: Fluent SPI Terminal Chain & Query Builder -->
         <div class="feature-card glass-card" id="query-builder">
           <div class="feature-icon icon-code">👑</div>
-          <span class="feature-tag tag-new">v0.19.0 Core</span>
-          <h3 class="feature-title">Type-Safe Query Builder & SPI Engine</h3>
-          <p class="feature-text">Fluent compile-time SQL AST with zero-string table proxies (<code>u.name</code>), compile-time schema introspection (<code>createTableFrom</code>), CTEs, window functions, UPSERT, and hardened SPI runtime with stream reducers.</p>
+          <span class="feature-tag tag-new">v0.20.0 Core</span>
+          <h3 class="feature-title">Fluent SPI Terminal Chain & Query Builder</h3>
+          <p class="feature-text">Ergonomic left-to-right query and DML execution (<code>.scalar()</code>, <code>.first()</code>, <code>.all()</code>, <code>.rows()</code>, <code>.run()</code>) with zero <code>discard</code> boilerplate, multi-column <code>RETURNING</code>, and data-modifying CTEs.</p>
         </div>
 
         <!-- Feature 00: SETOF Spotlight -->

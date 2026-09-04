@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Pgxcrown v0.19.0 - Product Showcase & Interactive Mechanics
+   Pgxcrown v0.20.0 - Product Showcase & Interactive Mechanics
    ========================================================================== */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -65,11 +65,10 @@ const codeSnippets = {
 <span class="syn-kw">proc</span> <span class="syn-fn">make_user</span>*(id: <span class="syn-type">int32</span>, name: <span class="syn-type">string</span>, score: <span class="syn-type">float64</span>): <span class="syn-type">User</span> <span class="syn-pragma">{.immutable, parallelSafe.}</span> =
   <span class="syn-kw">return</span> User(id: id, username: name, score: score, active: true, profile: %*{<span class="syn-str">"tier"</span>: <span class="syn-str">"pro"</span>})
 
-<span class="syn-cmt"># 2. Query Builder + SPI object mapping -> RETURNS SETOF "User"</span>
+<span class="syn-cmt"># 2. Query Builder + Fluent SPI object mapping -> RETURNS SETOF "User"</span>
 <span class="syn-kw">proc</span> <span class="syn-fn">get_top_users</span>*(minScore: <span class="syn-type">float64</span>): <span class="syn-type">seq[User]</span> <span class="syn-pragma">{.stable.}</span> =
   <span class="syn-kw">let</span> u = <span class="syn-fn">table</span>(<span class="syn-str">"users"</span>, <span class="syn-str">"u"</span>)
-  <span class="syn-kw">let</span> q = <span class="syn-fn">Select</span>(u.id, u.username, u.score, u.active, u.profile).<span class="syn-fn">From</span>(u).<span class="syn-fn">Where</span>(u.score >= minScore)
-  <span class="syn-kw">return</span> q.<span class="syn-fn">fetch</span>(User)`,
+  <span class="syn-kw">return</span> <span class="syn-fn">Select</span>(u.id, u.username, u.score, u.active, u.profile).<span class="syn-fn">From</span>(u).<span class="syn-fn">Where</span>(u.score >= minScore).<span class="syn-fn">all</span>(User)`,
 
   jsonb: `<span class="syn-cmt"># Native Binary JSONB (Direct PostgreSQL engine representation)</span>
 <span class="syn-kw">import</span> pgxcrown, std/json
@@ -88,7 +87,7 @@ const codeSnippets = {
 
 <span class="syn-kw">proc</span> <span class="syn-fn">find_user</span>*(id: <span class="syn-type">int32</span>): <span class="syn-type">Option[User]</span> <span class="syn-pragma">{.stable.}</span> =
   <span class="syn-kw">let</span> u = <span class="syn-fn">table</span>(<span class="syn-str">"users"</span>, <span class="syn-str">"u"</span>)
-  <span class="syn-kw">return</span> <span class="syn-fn">Select</span>(u.id, u.username).<span class="syn-fn">From</span>(u).<span class="syn-fn">Where</span>(u.id == id).<span class="syn-fn">fetchOne</span>(User)`,
+  <span class="syn-kw">return</span> <span class="syn-fn">Select</span>(u.id, u.username).<span class="syn-fn">From</span>(u).<span class="syn-fn">Where</span>(u.id == id).<span class="syn-fn">first</span>(User)`,
 
   testing: `<span class="syn-cmt"># Isolated Docker Sandbox Testing (0 Host Mutation)</span>
 <span class="syn-cmt"># $ pgxtool test my_extension --all --bless</span>
