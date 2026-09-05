@@ -242,6 +242,22 @@ proc asc*(id: SqlIdent): string = quoteIdent(string(id)) & " ASC"
 proc nullsFirst*(s: string): string = s & " NULLS FIRST"
 proc nullsLast*(s: string): string = s & " NULLS LAST"
 
+type
+  OrderExpr* = object
+    sql*: string
+
+proc `$`*(o: OrderExpr): string = o.sql
+
+converter toOrderExpr*(c: ColumnRef): OrderExpr =
+  ## If asc/desc is not specified, direction is omitted: "s"."col"
+  OrderExpr(sql: $c)
+
+converter toOrderExpr*(s: string): OrderExpr =
+  OrderExpr(sql: s)
+
+converter toOrderExpr*(id: SqlIdent): OrderExpr =
+  OrderExpr(sql: quoteIdent(string(id)))
+
 # SQL Aggregates
 proc count*(c: ColumnRef): ColumnExpr = ColumnExpr(expr: "COUNT(" & $c & ")", alias: "")
 proc count*(s: string): ColumnExpr = ColumnExpr(expr: "COUNT(" & (if s == "*": "*" else: quoteIdent(s)) & ")", alias: "")
@@ -586,8 +602,9 @@ proc Having*(step: GroupByStep, expr: SqlExpr): HavingStep =
   HavingStep(state: step.state)
 
 # ORDER BY
-proc OrderBy*(step: FromStep or WhereStep or GroupByStep or HavingStep, cols: varargs[string]): OrderByStep =
-  step.state.orderBys.add(cols.toSeq)
+proc OrderBy*(step: FromStep or WhereStep or GroupByStep or HavingStep, cols: varargs[OrderExpr, toOrderExpr]): OrderByStep =
+  for c in cols:
+    step.state.orderBys.add(c.sql)
   OrderByStep(state: step.state)
 
 # LIMIT & OFFSET

@@ -279,4 +279,23 @@ suite "pgxcrown v0.16.0 - Type-Safe SQL Query Builder & SPI Execution Suite":
     check cfg.extra.isSome
     check cfg.extra.get["debug"].getBool == false
 
+  test "OrderBy with ColumnRef, asc, desc and mixed omitted directions":
+    # 1. Omitted direction (defaults to column only)
+    let q1 = Select(u.id).From(u).OrderBy(u.name)
+    check "ORDER BY \"u\".\"name\"" in $q1
+    check "ASC" notin $q1
+    check "DESC" notin $q1
+
+    # 2. Explicit ASC
+    let q2 = Select(u.id).From(u).OrderBy(u.name.asc)
+    check "ORDER BY \"u\".\"name\" ASC" in $q2
+
+    # 3. Explicit DESC
+    let q3 = Select(u.id).From(u).OrderBy(u.salary.desc)
+    check "ORDER BY \"u\".\"salary\" DESC" in $q3
+
+    # 4. Mixed: one omitted, one DESC
+    let q4 = Select(u.id).From(u).OrderBy(u.dept, u.salary.desc)
+    check "ORDER BY \"u\".\"dept\", \"u\".\"salary\" DESC" in $q4
+
 
