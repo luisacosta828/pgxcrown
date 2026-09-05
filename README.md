@@ -6,7 +6,7 @@
 
 [![Nim Version](https://img.shields.io/badge/Nim-2.0%2B-FFE953?logo=nim&logoColor=white)](https://nim-lang.org/)
 [![PostgreSQL Support](https://img.shields.io/badge/PostgreSQL-14%20--%2017-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![Release](https://img.shields.io/badge/Release-v0.20.0-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
+[![Release](https://img.shields.io/badge/Release-v0.20.1-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Memory Safety](https://img.shields.io/badge/Safety-Memory%20Safe-success)](#3-sql-volatility-pragmas--compile-time-safety)
 
@@ -273,10 +273,15 @@ InsertInto("users", "name", "score").Values("'luis_dev'", "98.5").run()
 let newId = InsertInto("users", "name").Values("'ada'").Returning("id").scalar(int32)
 let updated = Update("users").Set("score = 100").Where(u.id == newId).Returning(u.id, u.name).first(User)
 
-# 3. Fluent Query Reading (.scalar, .first, .all, .rows)
+# 3. Fluent Query Reading (.scalar, .first, .all, .rows) with Polymorphic OrderBy
 let count = Select(count(u.id)).From(u).scalar(int)
 let singleUser = Select(u.id, u.username).From(u).Where(u.id == 1).first(User)
-let topUsers = Select(u.id, u.username, u.score).From(u).OrderBy(u.score.desc).all(User)
+
+# OrderBy supports omitted direction, explicit .asc/.desc, and mixed arguments:
+let orderedUsers = Select(u.id, u.username, u.score)
+  .From(u)
+  .OrderBy(u.dept, u.score.desc) # -> ORDER BY "u"."dept", "u"."score" DESC
+  .all(User)
 ```
 
 ---

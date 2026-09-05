@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Pgxcrown v0.20.0 - Product Showcase & Interactive Mechanics
+   Pgxcrown v0.20.1 - Product Showcase & Interactive Mechanics
    ========================================================================== */
 
 document.addEventListener('DOMContentLoaded', () => {
