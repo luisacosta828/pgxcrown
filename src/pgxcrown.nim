@@ -2,6 +2,7 @@ import pgxcrown/compiler
 import pgxcrown/datatypes/basic
 import pgxcrown/datatypes/heaptuples
 import pgxcrown/datatypes/arrays
+import pgxcrown/datatypes/jsonb
 include pgxcrown/pgxmacros
 import pgxcrown/reports/reports
 import pgxcrown/query_builder
@@ -114,5 +115,6 @@ export basic
 export reports
 export heaptuples
 export arrays
+export jsonb
 export query_builder
 export spi

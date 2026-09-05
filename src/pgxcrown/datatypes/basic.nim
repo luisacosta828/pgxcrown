@@ -257,29 +257,5 @@ converter NameToDatum*(value: Name): Datum = NameGetDatum(value)
 converter CstringToNimString*(value: cstring): string =
   if value == nil: "" else: $value
 converter StringToDatum*(value: string): Datum = CStringGetTextDatum(cstring(value))
-converter DatumToJsonNode*(x: Datum): JsonNode {.tags: [].} =
-  {.cast(noSideEffect).}:
-    {.cast(tags: []).}:
-      if x == 0: return newJNull()
-      let cstrDatum = DirectFunctionCall1(jsonb_out, x)
-      let cs = DatumToCString(cstrDatum)
-      if cs == nil or cs.len == 0:
-        return newJNull()
-      try:
-        return parseJson($cs)
-      except CatchableError:
-        return newJNull()
-
-converter JsonNodeToDatum*(j: JsonNode): Datum {.tags: [].} =
-  {.cast(noSideEffect).}:
-    {.cast(tags: []).}:
-      if isNil(j) or j.kind == JNull:
-        let csDatum = CStringToDatum("null")
-        return DirectFunctionCall1(jsonb_in, csDatum)
-      let csDatum = CStringToDatum(cstring($j))
-      return DirectFunctionCall1(jsonb_in, csDatum)
-
-template getJsonNode*(value: cuint): JsonNode =
-  DatumToJsonNode(getDatum(value))
 
 

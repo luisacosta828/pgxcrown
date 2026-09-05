@@ -1,5 +1,6 @@
 import basic
 import heaptuples
+import jsonb
 export heaptuples
 
 {.push header: "postgres.h".}

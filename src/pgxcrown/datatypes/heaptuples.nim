@@ -2,8 +2,9 @@ from basic import Oid, Datum, NameData, OidOutputFunctionCall, PointerGetDatum, 
   Int32GetDatum, Int64GetDatum, Float4GetDatum, Float8GetDatum, BoolGetDatum,
   CharGetDatum, ObjectIdGetDatum, CStringGetTextDatum, DatumToInt32, DatumToInt64,
   DatumGetFloat8, DatumGetChar, DatumGetObjectId, DatumToCString,
-  JsonNodeToDatum, DatumToJsonNode, DatumGetInt32, DatumGetInt64, DatumGetInt16,
-  DatumGetFloat4
+  DatumGetInt32, DatumGetInt64, DatumGetInt16, DatumGetFloat4
+
+from jsonb import JsonNodeToDatum, DatumToJsonNode
 
 import std/[options, json, strutils, typetraits]
 
