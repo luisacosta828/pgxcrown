@@ -12,3 +12,7 @@ tmp_*
 .agents/
 .gemini/
 nimcache/
+benchmarks/
+tests/test_base_types
+tests/test_pgvector
+tests/test_query_builder

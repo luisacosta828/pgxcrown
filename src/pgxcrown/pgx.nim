@@ -42,6 +42,12 @@ proc NimToSQLType(dt: string): string =
   of "seq[string]": "text[]"
   of "seq[bool]": "bool[]"
   of "seq[JsonNode]", "seq[Jsonb]", "seq[jsonb]": "jsonb[]"
+  of "PgVector[int32]", "PgVector[int]": "int4[]"
+  of "PgVector[int64]": "int8[]"
+  of "PgVector[int16]": "int2[]"
+  of "PgVector[float32]", "PgVector[float]": "float4[]"
+  of "PgVector[float64]": "float8[]"
+  of "PgVector[bool]": "bool[]"
   else:
     if cleanDt.startsWith("seq["):
       let inner = cleanDt[4 .. ^2].strip(chars = {'*'})

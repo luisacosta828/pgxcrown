@@ -69,6 +69,12 @@ template PgxToNim(dt: string): string =
   of "seq[float]", "seq[float32]", "seq[float64]": "getArrayFloat64"
   of "seq[bool]": "getArrayBool"
   of "seq[string]": "getArrayString"
+  of "PgVector[float64]": "getPgVectorFloat64"
+  of "PgVector[float32]", "PgVector[float]": "getPgVectorFloat32"
+  of "PgVector[int32]", "PgVector[int]": "getPgVectorInt32"
+  of "PgVector[int64]": "getPgVectorInt64"
+  of "PgVector[int16]": "getPgVectorInt16"
+  of "PgVector[bool]": "getPgVectorBool"
   else: 
     if dt.startsWith("seq["):
       "getArrayHeapTuples"
@@ -289,7 +295,7 @@ template move_nim_params_as_locals =
   for i in 1..fnparams_len:
     let identDef = fn.params[i]
     pvar = identDef[0].repr
-    let typeNode = identDef[^2]
+    var typeNode = identDef[^2]
     let defaultNode = identDef[^1]
 
     var isOptionParam = false
@@ -305,12 +311,48 @@ template move_nim_params_as_locals =
       innerTypeNode = typeNode
 
     ptype = innerTypeStr
+
+    let isNumericSeq = case ptype:
+      of "seq[float64]": true
+      of "seq[float32]", "seq[float]": true
+      of "seq[int32]", "seq[int]": true
+      of "seq[int64]": true
+      of "seq[int16]": true
+      of "seq[bool]": true
+      else: false
+
+    if isNumericSeq:
+      case ptype:
+      of "seq[float64]":
+        ptype = "PgVector[float64]"
+        innerTypeNode = newTree(nnkBracketExpr, ident("PgVector"), ident("float64"))
+      of "seq[float32]", "seq[float]":
+        ptype = "PgVector[float32]"
+        innerTypeNode = newTree(nnkBracketExpr, ident("PgVector"), ident("float32"))
+      of "seq[int32]", "seq[int]":
+        ptype = "PgVector[int32]"
+        innerTypeNode = newTree(nnkBracketExpr, ident("PgVector"), ident("int32"))
+      of "seq[int64]":
+        ptype = "PgVector[int64]"
+        innerTypeNode = newTree(nnkBracketExpr, ident("PgVector"), ident("int64"))
+      of "seq[int16]":
+        ptype = "PgVector[int16]"
+        innerTypeNode = newTree(nnkBracketExpr, ident("PgVector"), ident("int16"))
+      of "seq[bool]":
+        ptype = "PgVector[bool]"
+        innerTypeNode = newTree(nnkBracketExpr, ident("PgVector"), ident("bool"))
+      else: discard
+      if isOptionParam:
+        typeNode = newTree(nnkBracketExpr, ident("Option"), innerTypeNode)
+      else:
+        typeNode = innerTypeNode
+
     var f = PgxToNim(ptype)
     let argIdxVal = cuint(i - 1)
     var argIdxNode = newIntLitNode(i - 1)
     var rawFetch: NimNode
 
-    if ptype.startsWith("seq["):
+    if ptype.startsWith("seq[") or ptype.startsWith("PgVector["):
       rawFetch = newCall(ident(f), [newCall(ident("getDatum"), [argIdxNode])])
     elif ptype != "string":
       if isOptionParam:
@@ -352,6 +394,8 @@ template move_nim_params_as_locals =
         else:
           if ptype.startsWith("seq["):
             newTree(nnkPrefix, ident("@"), newTree(nnkBracket, newSeq[NimNode]()))
+          elif ptype.startsWith("PgVector["):
+            newTree(nnkObjConstr, typeNode)
           else:
             rawFetch
       if zeroVal != rawFetch:
@@ -369,11 +413,12 @@ template move_nim_params_as_locals =
 
     let isPrimitiveOrJson = ptype in ["int", "int32", "int16", "uint16", "int64", "char", "bool", "uint", "uint32", "float", "float32", "float64", "string", "cstring", "JsonNode", "Json", "json", "Jsonb", "jsonb"]
     let isPrimitiveSeq = ptype in ["seq[int]", "seq[int32]", "seq[int64]", "seq[float]", "seq[float32]", "seq[float64]", "seq[bool]", "seq[string]", "seq[JsonNode]", "seq[Jsonb]", "seq[jsonb]"]
+    let isPrimitiveVector = ptype.startsWith("PgVector[")
     var idx = $cacheIteration & "type"
     var enumVisited = enum_visited(idx)
 
     if isOptionParam:
-      if isPrimitiveOrJson or isPrimitiveSeq:
+      if isPrimitiveOrJson or isPrimitiveSeq or isPrimitiveVector:
         varSection.add(newIdentDefs(ident(pvar), typeNode, getValue))
       else:
         let rawOptFetch = newTree(nnkIfExpr,
@@ -386,7 +431,7 @@ template move_nim_params_as_locals =
           )
         )
         varSection.add(newIdentDefs(ident(pvar), typeNode, rawOptFetch))
-    elif isPrimitiveOrJson or isPrimitiveSeq:
+    elif isPrimitiveOrJson or isPrimitiveSeq or isPrimitiveVector:
       varSection.add(newIdentDefs(ident(pvar), typeNode, getValue))
     elif enumVisited:
       map_enums_params(pvar, ptype)
@@ -633,6 +678,12 @@ proc wrapOptionReturn(code: NimNode, innerTypeStr: string): NimNode =
     of "bool": "BoolGetDatum"
     of "string": "CStringGetTextDatum"
     of "JsonNode", "Json", "json", "Jsonb", "jsonb": "JsonNodeToDatum"
+    of "PgVector[float64]": "returnPgVectorFloat64"
+    of "PgVector[float32]", "PgVector[float]": "returnPgVectorFloat32"
+    of "PgVector[int32]", "PgVector[int]": "returnPgVectorInt32"
+    of "PgVector[int64]": "returnPgVectorInt64"
+    of "PgVector[int16]": "returnPgVectorInt16"
+    of "PgVector[bool]": "returnPgVectorBool"
     else: "objectToDatum"
 
   proc transformReturn(n: NimNode): NimNode =
@@ -797,12 +848,18 @@ proc wrapScalarReturn(code: NimNode, retTypeStr: string): NimNode =
     of "bool": "BoolGetDatum"
     of "string", "cstring": "CStringGetTextDatum"
     of "JsonNode", "Json", "json", "Jsonb", "jsonb": "JsonNodeToDatum"
+    of "PgVector[float64]": "returnPgVectorFloat64"
+    of "PgVector[float32]", "PgVector[float]": "returnPgVectorFloat32"
+    of "PgVector[int32]", "PgVector[int]": "returnPgVectorInt32"
+    of "PgVector[int64]": "returnPgVectorInt64"
+    of "PgVector[int16]": "returnPgVectorInt16"
+    of "PgVector[bool]": "returnPgVectorBool"
     else: "objectToDatum"
 
   proc transformReturn(n: NimNode): NimNode =
     if n.kind == nnkReturnStmt:
       let retExpr = if n[0].kind == nnkEmpty: ident("userResult") else: n[0]
-      if retExpr.kind == nnkCall and (retExpr[0].repr.endsWith("GetDatum") or retExpr[0].repr in ["JsonNodeToDatum", "objectToDatum"]):
+      if retExpr.kind == nnkCall and (retExpr[0].repr.endsWith("GetDatum") or retExpr[0].repr.startsWith("returnPgVector") or retExpr[0].repr in ["JsonNodeToDatum", "objectToDatum"]):
         return n
       elif retTypeStr == "cstring":
         if retExpr.kind == nnkCall and retExpr[0].repr == "CStringGetDatum":
