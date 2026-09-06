@@ -29,7 +29,7 @@ proc NimToSQLType(dt: string): string =
   of "uint8": "char"
   of "float", "float32": "float4"
   of "float64": "float8"
-  of "string": "Text"
+  of "string", "PgText": "Text"
   of "cstring": "cstring"
   of "char": "char"
   of "bool", "boolean": "boolean"

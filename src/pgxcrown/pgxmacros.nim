@@ -61,7 +61,7 @@ template PgxToNim(dt: string): string =
   of "uint", "uint32": "getUInt32"
   of "float", "float32": "getFloat4"
   of "float64": "getFloat8"
-  of "string": "TextDatumGetCString"
+  of "string", "PgText": "getPgText"
   of "cstring": "getCString" 
   of "JsonNode", "Json", "json", "Jsonb", "jsonb": "getJsonNode"
   of "seq[int]", "seq[int32]": "getArrayInt32"
@@ -347,12 +347,21 @@ template move_nim_params_as_locals =
       else:
         typeNode = innerTypeNode
 
+    let isStringType = (ptype == "string" or ptype == "PgText")
+    if isStringType:
+      ptype = "PgText"
+      innerTypeNode = ident("PgText")
+      if isOptionParam:
+        typeNode = newTree(nnkBracketExpr, ident("Option"), innerTypeNode)
+      else:
+        typeNode = innerTypeNode
+
     var f = PgxToNim(ptype)
     let argIdxVal = cuint(i - 1)
     var argIdxNode = newIntLitNode(i - 1)
     var rawFetch: NimNode
 
-    if ptype.startsWith("seq[") or ptype.startsWith("PgVector["):
+    if ptype.startsWith("seq[") or ptype.startsWith("PgVector[") or ptype == "PgText":
       rawFetch = newCall(ident(f), [newCall(ident("getDatum"), [argIdxNode])])
     elif ptype != "string":
       if isOptionParam:
@@ -386,6 +395,7 @@ template move_nim_params_as_locals =
     else:
       let zeroVal = case ptype
         of "string": newLit("")
+        of "PgText": newTree(nnkObjConstr, ident("PgText"))
         of "bool": newLit(false)
         of "int", "int32", "cint": newLit(int32(0))
         of "int64": newLit(int64(0))
@@ -411,7 +421,7 @@ template move_nim_params_as_locals =
       else:
         getValue = rawFetch
 
-    let isPrimitiveOrJson = ptype in ["int", "int32", "int16", "uint16", "int64", "char", "bool", "uint", "uint32", "float", "float32", "float64", "string", "cstring", "JsonNode", "Json", "json", "Jsonb", "jsonb"]
+    let isPrimitiveOrJson = ptype in ["int", "int32", "int16", "uint16", "int64", "char", "bool", "uint", "uint32", "float", "float32", "float64", "string", "cstring", "PgText", "JsonNode", "Json", "json", "Jsonb", "jsonb"]
     let isPrimitiveSeq = ptype in ["seq[int]", "seq[int32]", "seq[int64]", "seq[float]", "seq[float32]", "seq[float64]", "seq[bool]", "seq[string]", "seq[JsonNode]", "seq[Jsonb]", "seq[jsonb]"]
     let isPrimitiveVector = ptype.startsWith("PgVector[")
     var idx = $cacheIteration & "type"
@@ -676,7 +686,7 @@ proc wrapOptionReturn(code: NimNode, innerTypeStr: string): NimNode =
     of "float", "float32", "cfloat": "Float4GetDatum"
     of "float64", "cdouble": "Float8GetDatum"
     of "bool": "BoolGetDatum"
-    of "string": "CStringGetTextDatum"
+    of "string", "Text", "PgText": "returnPgText"
     of "JsonNode", "Json", "json", "Jsonb", "jsonb": "JsonNodeToDatum"
     of "PgVector[float64]": "returnPgVectorFloat64"
     of "PgVector[float32]", "PgVector[float]": "returnPgVectorFloat32"
@@ -691,7 +701,7 @@ proc wrapOptionReturn(code: NimNode, innerTypeStr: string): NimNode =
       let optVal = ident("optValTemp")
       let retExpr = if n[0].kind == nnkEmpty: ident("userResult") else: n[0]
       let convIdent = ident(datumConverter)
-      if innerTypeStr == "string":
+      if innerTypeStr in ["string", "Text", "PgText"]:
         return quote do:
           block:
             let `optVal` = `retExpr`
@@ -699,7 +709,7 @@ proc wrapOptionReturn(code: NimNode, innerTypeStr: string): NimNode =
               returnNull()
               return Datum(0)
             else:
-              return CStringGetTextDatum(cstring(`optVal`.get))
+              return returnPgText(`optVal`.get)
       else:
         return quote do:
           block:
@@ -720,7 +730,7 @@ proc wrapOptionReturn(code: NimNode, innerTypeStr: string): NimNode =
   if not hasReturn(transformed):
     result = transformed
     let convIdent = ident(datumConverter)
-    if innerTypeStr == "string":
+    if innerTypeStr in ["string", "Text", "PgText"]:
       result.add quote do:
         block:
           let optValTemp = userResult
@@ -728,7 +738,7 @@ proc wrapOptionReturn(code: NimNode, innerTypeStr: string): NimNode =
             returnNull()
             return Datum(0)
           else:
-            return CStringGetTextDatum(cstring(optValTemp.get))
+            return returnPgText(optValTemp.get)
     else:
       result.add quote do:
         block:
@@ -846,7 +856,7 @@ proc wrapScalarReturn(code: NimNode, retTypeStr: string): NimNode =
     of "float", "float32", "cfloat": "Float4GetDatum"
     of "float64", "cdouble": "Float8GetDatum"
     of "bool": "BoolGetDatum"
-    of "string", "cstring": "CStringGetTextDatum"
+    of "string", "cstring", "Text", "PgText": "returnPgText"
     of "JsonNode", "Json", "json", "Jsonb", "jsonb": "JsonNodeToDatum"
     of "PgVector[float64]": "returnPgVectorFloat64"
     of "PgVector[float32]", "PgVector[float]": "returnPgVectorFloat32"
@@ -859,18 +869,18 @@ proc wrapScalarReturn(code: NimNode, retTypeStr: string): NimNode =
   proc transformReturn(n: NimNode): NimNode =
     if n.kind == nnkReturnStmt:
       let retExpr = if n[0].kind == nnkEmpty: ident("userResult") else: n[0]
-      if retExpr.kind == nnkCall and (retExpr[0].repr.endsWith("GetDatum") or retExpr[0].repr.startsWith("returnPgVector") or retExpr[0].repr in ["JsonNodeToDatum", "objectToDatum"]):
+      if retExpr.kind == nnkCall and (retExpr[0].repr.endsWith("GetDatum") or retExpr[0].repr.startsWith("returnPgVector") or retExpr[0].repr in ["returnPgText", "JsonNodeToDatum", "objectToDatum"]):
         return n
       elif retTypeStr == "cstring":
         if retExpr.kind == nnkCall and retExpr[0].repr == "CStringGetDatum":
           return n
         else:
           return newTree(nnkReturnStmt, newCall(ident("CStringGetDatum"), newCall(ident("pstrdup"), newCall(ident("cstring"), retExpr))))
-      elif retTypeStr in ["string", "Text"]:
-        if retExpr.kind == nnkCall and retExpr[0].repr == "CStringGetTextDatum":
+      elif retTypeStr in ["string", "Text", "PgText"]:
+        if retExpr.kind == nnkCall and (retExpr[0].repr == "returnPgText" or retExpr[0].repr == "CStringGetTextDatum"):
           return n
         else:
-          return newTree(nnkReturnStmt, newCall(ident("CStringGetTextDatum"), newCall(ident("cstring"), retExpr)))
+          return newTree(nnkReturnStmt, newCall(ident("returnPgText"), retExpr))
       elif retTypeStr in ["JsonNode", "Json", "json", "Jsonb", "jsonb"]:
         if retExpr.kind == nnkCall and retExpr[0].repr == "JsonNodeToDatum":
           return n
@@ -906,8 +916,8 @@ proc wrapScalarReturn(code: NimNode, retTypeStr: string): NimNode =
   let transformed = transformReturn(code)
   if not hasReturn(transformed):
     result = transformed
-    if retTypeStr in ["string", "cstring"]:
-      result.add newTree(nnkReturnStmt, newCall(ident("CStringGetTextDatum"), newCall(ident("cstring"), ident("userResult"))))
+    if retTypeStr in ["string", "cstring", "Text", "PgText"]:
+      result.add newTree(nnkReturnStmt, newCall(ident("returnPgText"), ident("userResult")))
     elif retTypeStr in ["JsonNode", "Json", "json", "Jsonb", "jsonb"]:
       result.add newTree(nnkReturnStmt, newCall(ident("JsonNodeToDatum"), ident("userResult")))
     else:

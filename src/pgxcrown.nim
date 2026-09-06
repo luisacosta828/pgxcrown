@@ -3,6 +3,7 @@ import pgxcrown/datatypes/basic
 import pgxcrown/datatypes/heaptuples
 import pgxcrown/datatypes/arrays
 import pgxcrown/datatypes/jsonb
+import pgxcrown/datatypes/strings
 include pgxcrown/pgxmacros
 import pgxcrown/reports/reports
 import pgxcrown/query_builder
@@ -118,3 +119,4 @@ export arrays
 export jsonb
 export query_builder
 export spi
+export strings
