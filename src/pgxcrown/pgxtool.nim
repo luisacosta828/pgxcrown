@@ -1,4 +1,4 @@
-import std/[os, strutils, json, osproc]
+import std/[os, strutils, json, osproc, hashes, times, algorithm]
 import pathfinders
 import test_suite
 
@@ -62,6 +62,28 @@ proc generateTypeSource*(udf: string, baseType: string): (string, string) =
   let testSql = "SELECT " & testLiteral & "::" & udf & ";\n"
   return (src, testSql)
 
+proc build_extension_cli_helper() =
+  echo """
+Usage: pgxtool build-extension <name> [options]
+
+Compile a dynamic library (.so) for local PostgreSQL installation.
+
+Arguments:
+  <name>                  Name of the extension to build
+
+Options:
+  --force, -f             Force a full rebuild, bypassing incremental cache
+  --clean                 Clean previous build artifacts and cache before building
+  --verbose, -v           Show detailed compiler commands and build steps
+  --help, -h              Display this help message
+
+Examples:
+  * pgxtool build-extension my_ext
+  * pgxtool build-extension my_ext --force
+  * pgxtool build-extension my_ext --clean
+  * pgxtool build-extension my_ext --verbose
+"""
+
 proc cli_helper() =
   echo """
 Usage: pgxtool [command] [options] [target]
@@ -76,8 +98,14 @@ Commands:
   create-type: Create a template for defining new types
      * pgxtool create-type <name> --base-type nim_datatype
 
-  build-extension: Compile a dynamic library that can be loaded into Postgres (.so in Linux, .dll in Windows)
+  build-extension: Compile a dynamic library (.so) for local PostgreSQL installation
      * pgxtool build-extension <name>
+     * pgxtool build-extension <name> --force
+     * pgxtool build-extension <name> --clean
+     * pgxtool build-extension <name> --verbose
+
+  clean: Remove build cache (.pgx_build) and generated extension artifacts
+     * pgxtool clean <name>
 
   install: Automatically copy built extension files (.so, .control, .sql) to PostgreSQL directories
      * pgxtool install <name>
@@ -171,18 +199,24 @@ proc getCLibs(): string {.inline.} =
   else:
     " "
 
-proc nim_c*(module: string, targetPgVersion: int = 0): string {.inline.} =
+proc nim_c*(module: string, targetPgVersion: int = 0, nimcacheDir: string = ""): string {.inline.} =
   var extraDefines = ""
   if targetPgVersion > 0:
     extraDefines = " -d:pgTargetVersion=" & $targetPgVersion
-  "nim c --noMain --compileOnly -d:release --mm:orc --cc:" & getPlatformCompiler() & getPgxcrownPath() & getCIncludes() & extraDefines & " -d:entrypoint=" & wrap(module) & " " & wrap(module)
+  var cacheFlag = ""
+  if nimcacheDir.len > 0:
+    cacheFlag = " --nimcache:" & wrap(nimcacheDir)
+  "nim c --noMain --compileOnly -d:release --mm:orc --cc:" & getPlatformCompiler() & getPgxcrownPath() & getCIncludes() & cacheFlag & extraDefines & " -d:entrypoint=" & wrap(module) & " " & wrap(module)
 
-proc emit_pgx_c_extension*(module: string, targetPgVersion: int = 0): string {.inline.} =
+proc emit_pgx_c_extension*(module: string, targetPgVersion: int = 0, nimcacheDir: string = ""): string {.inline.} =
   var prj = module.splitPath.head
   var extraDefines = ""
   if targetPgVersion > 0:
     extraDefines = " -d:pgTargetVersion=" & $targetPgVersion
-  "nim c -d:release --mm:orc --cc:" & getPlatformCompiler() & getPgxcrownPath() & getCIncludes() & getCLibs() & extraDefines & " -d:entrypoint=" & wrap(module) & " --app:lib -o:" & wrap(prj.splitPath.head.splitPath.tail) & " --outdir:" & wrap(prj) & " " & wrap(module)
+  var cacheFlag = ""
+  if nimcacheDir.len > 0:
+    cacheFlag = " --nimcache:" & wrap(nimcacheDir)
+  "nim c -d:release --mm:orc --cc:" & getPlatformCompiler() & getPgxcrownPath() & getCIncludes() & getCLibs() & cacheFlag & extraDefines & " -d:entrypoint=" & wrap(module) & " --app:lib -o:" & wrap(prj.splitPath.head.splitPath.tail) & " --outdir:" & wrap(prj) & " " & wrap(module)
 
 template generate_tmp_file(input_file: string, kind: string = "") =
   var
@@ -294,38 +328,151 @@ proc cleanupGeneratedFiles*(dir: string, prjName: string, tmpFile: string) =
   for f in filesToDelete:
     if fileExists(f):
       removeFile(f)
+  let manifest = dir.parentDir / ".pgx_build" / "manifest.json"
+  if fileExists(manifest):
+    removeFile(manifest)
 
-proc compile2pgx*(input_file: string, targetPgVersion: int = 0) =
+proc computeSourceHash*(projectDir: string): string =
+  var combined = ""
+  let srcDir = projectDir / "src"
+  if dirExists(srcDir):
+    var files: seq[string] = @[]
+    for kind, path in walkDir(srcDir):
+      if kind == pcFile and path.endsWith(".nim") and not path.splitPath.tail.startsWith("tmp_"):
+        files.add(path)
+    files.sort()
+    for f in files:
+      try:
+        combined.add(readFile(f))
+      except CatchableError:
+        discard
+  let privateDir = projectDir / "private"
+  if dirExists(privateDir):
+    var files: seq[string] = @[]
+    for kind, path in walkDir(privateDir):
+      if kind == pcFile and path.endsWith(".nim"):
+        files.add(path)
+    files.sort()
+    for f in files:
+      try:
+        combined.add(readFile(f))
+      except CatchableError:
+        discard
+  result = toHex(hash(combined))
+
+proc ensureProjectGitignore*(projectDir: string) =
+  let gitignoreFile = projectDir / ".gitignore"
+  var current = if fileExists(gitignoreFile): readFile(gitignoreFile) else: ""
+  var modified = false
+  for entry in [".pgx_build/", "tmp_*", "*.so", "*.dll"]:
+    if entry notin current:
+      if current.len > 0 and not current.endsWith("\n"):
+        current.add("\n")
+      current.add(entry & "\n")
+      modified = true
+  if modified:
+    try:
+      writeFile(gitignoreFile, current)
+    except CatchableError:
+      discard
+
+proc clean_extension*(req: string) =
+  let prjDir = pgxtool_init_dir / req
+  let srcDir = prjDir / "src"
+  let buildDir = prjDir / ".pgx_build"
+  cleanupGeneratedFiles(srcDir, req, srcDir / "tmp_main.nim")
+  if dirExists(buildDir):
+    removeDir(buildDir)
+  echo "🧹 Cleaned build artifacts and cache for extension '", req, "'."
+
+proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = false, verbose: bool = false, cleanBefore: bool = false) =
   var (dir, file, _) = splitFile(input_file)
   let projectDir = dir.parentDir()
   let prjName = projectDir.splitFile().name
 
-  generate_tmp_file input_file
-  writeFile(tmp_file, tmp_content)
-
-  if execShellCmd(nim_c(tmp_file, targetPgVersion)) != 0:
-    cleanupGeneratedFiles(dir, prjName, tmp_file)
-    quit "Error executing: nim_c"
-
-  if execShellCmd(emit_pgx_c_extension(tmp_file, targetPgVersion)) != 0:
-    cleanupGeneratedFiles(dir, prjName, tmp_file)
-    quit "Error executing: emit_pgx_c_extension"
+  let buildDir = projectDir / ".pgx_build"
+  let cacheSubdir = if targetPgVersion > 0: "nimcache_pg" & $targetPgVersion else: "nimcache"
+  let nimcacheDir = buildDir / cacheSubdir
+  let manifestFile = buildDir / "manifest.json"
 
   let soFile = dir / prjName & ".so"
   let plainFile = dir / prjName
   var targetLib = if fileExists(soFile): soFile elif fileExists(plainFile): plainFile else: ""
-  
+
+  if cleanBefore:
+    cleanupGeneratedFiles(dir, prjName, dir / "tmp_main.nim")
+    if dirExists(buildDir):
+      removeDir(buildDir)
+    targetLib = ""
+
+  ensureProjectGitignore(projectDir)
+  createDir(buildDir)
+  createDir(nimcacheDir)
+
+  let currentSourceHash = computeSourceHash(projectDir)
+  const currentPgxcrownVersion = "0.22.0"
+
+  # Smart incremental check: if target library exists and sources haven't changed, skip build
+  if not force and not cleanBefore and targetLib.len > 0 and fileExists(targetLib) and fileExists(manifestFile):
+    try:
+      let manifest = parseJson(readFile(manifestFile))
+      let savedHash = manifest.getOrDefault("source_hash").getStr("")
+      let savedVer = manifest.getOrDefault("pgxcrown_version").getStr("")
+      let savedTargetVer = manifest.getOrDefault("target_pg_version").getInt(0)
+      if savedHash == currentSourceHash and savedVer == currentPgxcrownVersion and savedTargetVer == targetPgVersion:
+        echo "✨ Extension '", prjName, "' is up to date (no changes detected)."
+        echo "   Binary: ", targetLib
+        echo "   To force a rebuild, run: pgxtool build-extension ", prjName, " --force"
+        return
+    except CatchableError:
+      discard
+
+  generate_tmp_file input_file
+  # Only rewrite tmp_file if content changed to preserve mtime
+  if not fileExists(tmp_file) or readFile(tmp_file) != tmp_content:
+    writeFile(tmp_file, tmp_content)
+
+  let cmd1 = nim_c(tmp_file, targetPgVersion, nimcacheDir)
+  if verbose:
+    echo "  [pgxtool:pass1] ", cmd1
+  if execShellCmd(cmd1) != 0:
+    cleanupGeneratedFiles(dir, prjName, tmp_file)
+    if fileExists(manifestFile): removeFile(manifestFile)
+    quit "Error executing: nim_c (Pass 1 - DDL & AST generation)"
+
+  let cmd2 = emit_pgx_c_extension(tmp_file, targetPgVersion, nimcacheDir)
+  if verbose:
+    echo "  [pgxtool:pass2] ", cmd2
+  if execShellCmd(cmd2) != 0:
+    cleanupGeneratedFiles(dir, prjName, tmp_file)
+    if fileExists(manifestFile): removeFile(manifestFile)
+    quit "Error executing: emit_pgx_c_extension (Pass 2 - C compilation & linking)"
+
+  targetLib = if fileExists(soFile): soFile elif fileExists(plainFile): plainFile else: ""
+
   if targetLib.len > 0:
     if not auditBinarySymbols(targetLib):
       cleanupGeneratedFiles(dir, prjName, tmp_file)
+      if fileExists(manifestFile): removeFile(manifestFile)
       quit("❌ [SECURITY VIOLATION] Compilation aborted for extension '" & prjName & "' due to restricted C system calls.")
 
-  # clean up temporary wrapper file
+  # Clean up temporary wrapper file from src/ to keep src/ clean
   if fileExists(tmp_file):
     removeFile(tmp_file)
   var exe = tmp_file.splitFile()
   if fileExists(exe.dir / exe.name):
     removeFile(exe.dir / exe.name)
+
+  # Write build manifest for smart incremental caching
+  var manifestObj = %*{
+    "extension": prjName,
+    "source_hash": currentSourceHash,
+    "pgxcrown_version": currentPgxcrownVersion,
+    "target_pg_version": targetPgVersion,
+    "last_build_time": $now(),
+    "binary_path": targetLib
+  }
+  writeFile(manifestFile, pretty(manifestObj))
 
 proc compile2hook*(input_file: string, targetPgVersion: int = 0) =
   run emit_pgx_c_extension(input_file, targetPgVersion)
@@ -460,19 +607,57 @@ proc check_command(pc: int) =
     validate_second_arg(pc)
     req = paramStr(2)
     if req in ["--help", "-h", "help"]:
-      cli_helper()
+      build_extension_cli_helper()
       return
+
+    var forceBuild = false
+    var cleanBuild = false
+    var verboseBuild = false
+
+    var idx = 3
+    while idx <= pc:
+      let flag = paramStr(idx)
+      if flag in ["--help", "-h"]:
+        build_extension_cli_helper()
+        return
+      elif flag in ["--force", "-f"]:
+        forceBuild = true
+        idx += 1
+      elif flag == "--clean":
+        cleanBuild = true
+        idx += 1
+      elif flag in ["--verbose", "-v"]:
+        verboseBuild = true
+        idx += 1
+      else:
+        echo "⚠️  Unknown option: ", flag
+        idx += 1
+
     var entry_point = pgxtool_init_dir / req / "src" / "main.nim"
     if fileExists(entry_point):
       if req in available_hooks:
         compile2hook(entry_point)
       else:
-        compile2pgx(entry_point)
+        compile2pgx(entry_point, force = forceBuild, verbose = verboseBuild, cleanBefore = cleanBuild)
         var script_path = generate_install_script(req)
         echo "Build completed for extension: ", req
         echo "Install script generated at: ", script_path
         echo "To install into PostgreSQL, run:"
         echo "  sudo ", script_path
+    else:
+      quit("Error: Main file not found at " & entry_point)
+
+  of "clean":
+    validate_second_arg(pc)
+    req = paramStr(2)
+    if req in ["--help", "-h", "help"]:
+      echo """
+Usage: pgxtool clean <name>
+
+Clean build artifacts (.so, .sql, .control, install.sh) and the build cache (.pgx_build) for an extension.
+"""
+      return
+    clean_extension(req)
 
   of "install":
     validate_second_arg(pc)
