@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pgxcrown 👑 v0.20.1 — Native PostgreSQL Extension Framework for Nim</title>
-  <meta name="description" content="Build ultra-fast, lightweight, crash-proof PostgreSQL C extensions in Nim. Features v0.20.1 Fluent SPI Terminal Chains, Declarative Base Types, Isolated Docker Sandbox Testing, Universal Objects, and Native Binary JSONB.">
+  <title>Pgxcrown 👑 v0.23.0 — Native PostgreSQL Extension Framework for Nim</title>
+  <meta name="description" content="Build ultra-fast, memory-safe, crash-proof PostgreSQL C extensions in Nim. Features v0.23.0 PgText & PgVector zero-copy views, Sub-15ms Incremental Builds, PG_TRY SQLSTATE Panic Shield, and Fluent In-Database SPI.">
   
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👑</text></svg>">
   <link rel="stylesheet" href="styles.css">
@@ -22,9 +22,8 @@
       </a>
 
       <ul class="nav-links" id="navLinks">
-        <li><a href="#features">Capabilities</a></li>
-        <li><a href="#comparison">Comparison</a></li>
-        <li><a href="#query-builder">Query & SPI</a></li>
+        <li><a href="#capabilities">Capabilities</a></li>
+        <li><a href="#architecture">Architecture</a></li>
         <li><a href="#panic-shield">Panic Shield</a></li>
         <li><a href="#cli">CLI Tooling</a></li>
         <li><a href="#quickstart">Quickstart</a></li>
@@ -53,30 +52,30 @@
         </h1>
 
         <p class="hero-desc">
-          Write lightning-fast PostgreSQL C dynamic libraries with <strong>zero VM overhead</strong>, <strong>v0.20.1 Fluent SPI & Query Builder</strong>, <strong>Declarative Base Types</strong>, type-safe <strong>SQL Query Builder AST</strong>, and hardened <strong>SPI execution</strong>.
+          Write lightning-fast PostgreSQL C dynamic libraries with <strong>zero VM overhead</strong>, zero-copy <strong>PgText &amp; PgVector[T]</strong> views, <strong>sub-15ms incremental builds</strong>, fluent <strong>SPI Terminal Chains</strong>, and hardened <strong>PG_TRY SQLSTATE panic protection</strong>.
         </p>
 
         <div class="hero-cta">
           <a href="#quickstart" class="btn btn-primary">
             <span>⚡ Start Building (`nimble install pgxcrown`)</span>
           </a>
-          <a href="#comparison" class="btn btn-glass">
-            <span>🥊 Why Pgxcrown vs Rust / C</span>
+          <a href="#capabilities" class="btn btn-glass">
+            <span>🔍 Explore Capabilities</span>
           </a>
         </div>
 
         <div class="hero-stats">
           <div class="stat-card glass-card">
-            <span class="stat-num gradient-amber">~500 KB</span>
-            <span class="stat-label">Tiny C Binary Size</span>
+            <span class="stat-num gradient-cyan">&lt; 15 ms</span>
+            <span class="stat-label">Smart Rebuild Cache</span>
           </div>
           <div class="stat-card glass-card">
-            <span class="stat-num gradient-cyan">&lt; 1 sec</span>
-            <span class="stat-label">Fast Codegen</span>
+            <span class="stat-num gradient-amber">Zero-Copy</span>
+            <span class="stat-label">PgText &amp; PgVector[T]</span>
           </div>
           <div class="stat-card glass-card">
             <span class="stat-num gradient-green">0 Crash</span>
-            <span class="stat-label">Panic Shield Protection</span>
+            <span class="stat-label">PG_TRY Panic Shield</span>
           </div>
         </div>
       </div>
@@ -90,13 +89,12 @@
             <span class="dot dot-green"></span>
           </div>
           <div class="code-tabs">
-            <button class="tab-btn active" data-tab="sql">Query & SPI</button>
-            <button class="tab-btn" data-tab="base_types">Base Types</button>
-            <button class="tab-btn" data-tab="objects">Objects & Types</button>
-            <button class="tab-btn" data-tab="jsonb">Native JSONB</button>
-            <button class="tab-btn" data-tab="security">Safety & Pragmas</button>
-            <button class="tab-btn" data-tab="testing">Docker Tests</button>
+            <button class="tab-btn active" data-tab="pgtext">Zero-Copy PgText</button>
+            <button class="tab-btn" data-tab="pgvector">PgVector[T]</button>
+            <button class="tab-btn" data-tab="sql">Query &amp; SPI</button>
+            <button class="tab-btn" data-tab="base_types">Custom Types</button>
             <button class="tab-btn" data-tab="shield">Panic Shield</button>
+            <button class="tab-btn" data-tab="testing">Docker Tests</button>
           </div>
         </div>
 
@@ -105,150 +103,144 @@
     </div>
   </section>
 
-  <!-- Feature Showcase Grid -->
-  <section id="features" class="features-section">
+  <!-- Interactive Capabilities Studio -->
+  <section id="capabilities" class="capabilities-section">
     <div class="container">
       <div class="section-header">
-        <span class="badge">Comprehensive Capabilities</span>
-        <h2 class="section-title">Every Feature of <span class="gradient-text">Pgxcrown</span></h2>
-        <p class="section-desc">Designed from the ground up to bring modern language ergonomics and enterprise security to PostgreSQL C extensions.</p>
+        <span class="badge">Architectural Capabilities</span>
+        <h2 class="section-title">Core Pillars of <span class="gradient-text">Pgxcrown</span></h2>
+        <p class="section-desc">Explore the engineering pillars powering high-performance, memory-safe in-database computation.</p>
       </div>
 
-      <div class="features-grid">
-        <!-- Feature: Isolated Docker Sandbox Test Engine -->
-        <div class="feature-card glass-card">
-          <div class="feature-icon icon-box">🐳</div>
-          <span class="feature-tag tag-new">v0.19.0 Core</span>
-          <h3 class="feature-title">Isolated Docker Sandbox Test Harness</h3>
-          <p class="feature-text">Execute SQL regression tests in isolated ephemeral Docker containers across the entire PostgreSQL 14–17 multi-version matrix with zero host mutation, visual diffing, and golden snapshot blessing (<code>--bless</code>).</p>
+      <!-- Interactive Pillar Navigation Switcher -->
+      <div class="pillar-nav">
+        <button class="pillar-tab active" data-pillar="zerocopy">
+          <span>⚡ Zero-Copy Core</span>
+        </button>
+        <button class="pillar-tab" data-pillar="shield">
+          <span>🛡️ Fail-Safe Shield</span>
+        </button>
+        <button class="pillar-tab" data-pillar="spi">
+          <span>👑 Fluent SPI &amp; AST</span>
+        </button>
+        <button class="pillar-tab" data-pillar="types">
+          <span>📦 Declarative Types</span>
+        </button>
+        <button class="pillar-tab" data-pillar="tooling">
+          <span>🚀 Lightning Toolchain</span>
+        </button>
+      </div>
+
+      <!-- Interactive Split Showcase Card -->
+      <div id="pillarCard" class="pillar-card glass-card">
+        <div class="pillar-info">
+          <span id="pillarBadge" class="pillar-badge">⚡ Zero-Copy Native Core (v0.23.0)</span>
+          <h3 id="pillarTitle" class="pillar-title">Zero-Copy Memory-Mapped Views</h3>
+          <p id="pillarDesc" class="pillar-desc">
+            Direct pointer-slice views over PostgreSQL varlena and array buffers eliminate intermediate memory allocations, strlen overhead, and garbage collection pauses.
+          </p>
+          <ul id="pillarList" class="pillar-checklist"></ul>
+          <div id="pillarTags" class="pillar-tags"></div>
         </div>
 
-        <!-- Feature: Declarative Custom Base Types -->
-        <div class="feature-card glass-card">
-          <div class="feature-icon icon-tag">🏷️</div>
-          <span class="feature-tag tag-new">v0.19.0 Core</span>
-          <h3 class="feature-title">Declarative Custom Base Types</h3>
-          <p class="feature-text">Easily define distinct domain types with <code>{.pgxType.}</code>, <code>{.pgxInput.}</code>, and <code>{.pgxOutput.}</code> pragmas. Dynamic parser generation across 15 flat scalar types (<code>int</code>, <code>float64</code>, <code>string</code>, <code>bool</code>, etc.).</p>
-        </div>
-
-        <!-- Feature: Universal Objects Spotlight -->
-        <div class="feature-card glass-card">
-          <div class="feature-icon icon-box">📦</div>
-          <span class="feature-tag tag-new">v0.19.0 Core</span>
-          <h3 class="feature-title">Universal `type object` & Named Types</h3>
-          <p class="feature-text">Define pure Nim objects and automatically generate <code>CREATE TYPE "Name" AS (...)</code> DDL with zero runtime reflection. Supports <code>Option[Object]</code>, <code>seq[Object]</code>, and direct SPI mapping without requiring <code>AS (...)</code> column aliases.</p>
-        </div>
-
-        <!-- Feature: Native Binary JSONB Spotlight -->
-        <div class="feature-card glass-card">
-          <div class="feature-icon icon-tag">⚡</div>
-          <span class="feature-tag tag-new">v0.19.0 Core</span>
-          <h3 class="feature-title">Native Binary JSON & JSONB Support</h3>
-          <p class="feature-text">Direct zero-overhead conversion between Nim <code>JsonNode</code> and PostgreSQL's binary <code>jsonb</code> engine representation using internal <code>jsonb_in</code> and <code>jsonb_out</code> handlers with full literal DDL support.</p>
-        </div>
-
-        <!-- Feature: SQL Volatility & Safety Spotlight -->
-        <div class="feature-card glass-card">
-          <div class="feature-icon icon-shield">🛡️</div>
-          <span class="feature-tag tag-new">v0.19.0 Core</span>
-          <h3 class="feature-title">SQL Volatility & Compile-Time Safety</h3>
-          <p class="feature-text">Declare function volatility directly in Nim (<code>{.immutable.}</code>, <code>{.stable.}</code>, <code>{.volatile.}</code>, <code>{.parallelSafe.}</code>). The compiler validates database operations at build time and generates matching PostgreSQL options.</p>
-        </div>
-
-        <!-- Feature: Fluent SPI Terminal Chain & Query Builder -->
-        <div class="feature-card glass-card" id="query-builder">
-          <div class="feature-icon icon-code">👑</div>
-          <span class="feature-tag tag-new">v0.20.1 Core</span>
-          <h3 class="feature-title">Fluent SPI Terminal Chain & Query Builder</h3>
-          <p class="feature-text">Ergonomic left-to-right query and DML execution (<code>.scalar()</code>, <code>.first()</code>, <code>.all()</code>, <code>.rows()</code>, <code>.run()</code>) with polymorphic <code>OrderBy</code>, zero <code>discard</code> boilerplate, multi-column <code>RETURNING</code>, and data-modifying CTEs.</p>
-        </div>
-
-        <!-- Feature 00: SETOF Spotlight -->
-        <div class="feature-card glass-card">
-          <div class="feature-icon icon-table">📊</div>
-          <h3 class="feature-title">Set Returning Functions (SETOF)</h3>
-          <p class="feature-text">Returning native Nim sequences (<code>seq[T]</code>) automatically generates <code>RETURNS SETOF &lt;type&gt;</code> in DDL and executes via PostgreSQL's <code>FuncCallContext</code> state machine.</p>
-        </div>
-
-        <!-- Feature 0: Panic Shield -->
-        <div class="feature-card glass-card">
-          <div class="feature-icon icon-shield">🛡️</div>
-          <h3 class="feature-title">Automatic Panic Shield (0 SIGABRTs)</h3>
-          <p class="feature-text">Intercepts integer overflows, array out-of-bounds, nil dereferences, and defects at compile time, converting panics to safe <code>ereport(ERROR)</code> transaction aborts.</p>
-        </div>
-
-        <!-- Feature 2: Native C Codegen -->
-        <div class="feature-card glass-card">
-          <div class="feature-icon icon-zap">⚡</div>
-          <h3 class="feature-title">Zero-VM Native C Codegen</h3>
-          <p class="feature-text">Compiles directly into dynamic C shared libraries (<code>.so</code> / <code>.dll</code>). Zero virtual machine or interpreter overhead for maximum raw CPU execution performance.</p>
-        </div>
-
-        <!-- Feature 3: Tiny Binaries -->
-        <div class="feature-card glass-card">
-          <div class="feature-icon icon-feather">🪶</div>
-          <h3 class="feature-title">~500KB Shared Libraries</h3>
-          <p class="feature-text">Produces ultra-compact binary footprints (~500 KB - 2 MB), avoiding language runtime bloat and accelerating cloud container image distribution.</p>
-        </div>
-
-        <!-- Feature 4: Auto-Generated SQL -->
-        <div class="feature-card glass-card">
-          <div class="feature-icon icon-magic">🪄</div>
-          <h3 class="feature-title">Auto-Generated SQL Bindings</h3>
-          <p class="feature-text">Automatically inspects your Nim functions and datatypes to produce clean <code>CREATE FUNCTION</code> SQL scripts and <code>.control</code> manifests at build time.</p>
-        </div>
-
-        <!-- Feature 5: Kernel Hooks -->
-        <div class="feature-card glass-card">
-          <div class="feature-icon icon-anchor">⚓</div>
-          <h3 class="feature-title">PostgreSQL Kernel Engine Hooks</h3>
-          <p class="feature-text">First-class support to intercept PostgreSQL kernel event streams including <code>emit_log</code> (log filtering & audit logging) and <code>post_parse_analyze</code> (query analysis).</p>
-        </div>
-
-        <!-- Feature 6: Primitive Datatypes -->
-        <div class="feature-card glass-card">
-          <div class="feature-icon icon-code">🔢</div>
-          <h3 class="feature-title">Bidirectional Primitive Conversion</h3>
-          <p class="feature-text">Seamless conversion between native Nim types (<code>int32</code>, <code>int64</code>, <code>float</code>, <code>string</code>, <code>cstring</code>, <code>bool</code>) and PostgreSQL engine <code>Datum</code>.</p>
-        </div>
-
-        <!-- Feature 7: Enum Types -->
-        <div class="feature-card glass-card">
-          <div class="feature-icon icon-tag">🏷️</div>
-          <h3 class="feature-title">PostgreSQL Enum Mapping</h3>
-          <p class="feature-text">Automatically converts PostgreSQL <code>ENUM</code> OIDs into strongly-typed Nim enums and emits matching <code>CREATE TYPE ... AS ENUM</code> definitions.</p>
-        </div>
-
-        <!-- Feature 8: Composite Records & Tuples -->
-        <div class="feature-card glass-card">
-          <div class="feature-icon icon-box">📦</div>
-          <h3 class="feature-title">Composite Record & Tuple Reader</h3>
-          <p class="feature-text">Inspect and extract PostgreSQL <code>HeapTupleHeader</code> fields directly into Nim <code>tuple</code> and <code>object</code> types with automatic ref counting.</p>
-        </div>
-
-        <!-- Feature 9: Automated CLI -->
-        <div class="feature-card glass-card">
-          <div class="feature-icon icon-tool">🛠️</div>
-          <h3 class="feature-title">`pgxtool` Automated CLI Suite</h3>
-          <p class="feature-text">Complete CLI tool to initialize workspace environments, scaffold UDFs, types, and hooks, build release binaries, auto-install into Postgres, and run Docker tests.</p>
-        </div>
-
-        <!-- Feature 10: Compile-Time IO Guard -->
-        <div class="feature-card glass-card">
-          <div class="feature-icon icon-lock">🚫</div>
-          <h3 class="feature-title">Compile-Time IO Safety Guard</h3>
-          <p class="feature-text">Statically analyzes compiled functions to guarantee they operate in-memory, disallowing unauthorized OS file or network socket operations by design.</p>
+        <div class="pillar-code-pane">
+          <div class="pillar-code-header">
+            <span id="pillarCodeHeader">src/main.nim (Zero-Copy Engine)</span>
+            <span>Nim 2.0+ / PostgreSQL 14–17</span>
+          </div>
+          <pre class="pillar-code-body"><code id="pillarCode"></code></pre>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- Panic Shield Spotlight Showcase (v0.19.0) -->
+  <!-- Modern Bento Architecture Highlights -->
+  <section id="architecture" class="bento-section">
+    <div class="container">
+      <div class="section-header">
+        <span class="badge badge-accent">Engine Architecture</span>
+        <h2 class="section-title">Engineered for <span class="gradient-cyan">Zero-Overhead</span> Execution</h2>
+        <p class="section-desc">Key architectural principles delivering bare-metal speed and enterprise stability.</p>
+      </div>
+
+      <div class="bento-grid">
+        <!-- Bento 1: Zero-Copy Performance -->
+        <div class="bento-card glass-card">
+          <div>
+            <div class="bento-header">
+              <div class="bento-icon bento-icon-gold">⚡</div>
+              <h3 class="bento-title">Zero-Copy Memory Slices</h3>
+            </div>
+            <p class="bento-text">
+              <code>PgText</code> and <code>PgVector[T]</code> operate directly over PostgreSQL engine varlena and contiguous array buffers without intermediate heap allocation, strlen calls, or garbage collector overhead.
+            </p>
+          </div>
+          <div class="bento-footer">
+            <span class="bento-metric">0 Allocations | Direct Varlena Slicing</span>
+            <span class="bento-pill">Performance</span>
+          </div>
+        </div>
+
+        <!-- Bento 2: Fail-Safe Protection -->
+        <div class="bento-card glass-card">
+          <div>
+            <div class="bento-header">
+              <div class="bento-icon bento-icon-emerald">🛡️</div>
+              <h3 class="bento-title">Fail-Safe PG_TRY Shield</h3>
+            </div>
+            <p class="bento-text">
+              All exported UDFs are enclosed in compiled <code>PG_TRY</code> / <code>PG_CATCH</code> safety boundaries. Unhandled integer overflows, defects, and panics cleanly abort the transaction without killing PostgreSQL backend workers.
+            </p>
+          </div>
+          <div class="bento-footer">
+            <span class="bento-metric">0 Backend Worker Crashes | SQLSTATE</span>
+            <span class="bento-pill">Reliability</span>
+          </div>
+        </div>
+
+        <!-- Bento 3: Incremental Tooling -->
+        <div class="bento-card glass-card">
+          <div>
+            <div class="bento-header">
+              <div class="bento-icon bento-icon-cyan">🚀</div>
+              <h3 class="bento-title">Sub-15ms Incremental Builds</h3>
+            </div>
+            <p class="bento-text">
+              <code>pgxtool</code> computes deterministic SHA-256 source manifests to skip redundant compilations. Incremental rebuild times drop from 2.65 seconds down to 0.012 seconds with isolated per-project <code>.pgx_build/nimcache</code>.
+            </p>
+          </div>
+          <div class="bento-footer">
+            <span class="bento-metric">&lt; 15ms Cache Hit | Isolated Nimcache</span>
+            <span class="bento-pill">Productivity</span>
+          </div>
+        </div>
+
+        <!-- Bento 4: Multi-Version Docker Matrix -->
+        <div class="bento-card glass-card">
+          <div>
+            <div class="bento-header">
+              <div class="bento-icon bento-icon-purple">🐳</div>
+              <h3 class="bento-title">Multi-Version Docker Sandboxes</h3>
+            </div>
+            <p class="bento-text">
+              Run SQL regression tests in ephemeral Docker containers across PostgreSQL 14, 15, 16, and 17. Features colored visual diffing and automated golden snapshot blessing (<code>--bless</code>) with zero host database mutation.
+            </p>
+          </div>
+          <div class="bento-footer">
+            <span class="bento-metric">PostgreSQL 14–17 Matrix | Diff Engine</span>
+            <span class="bento-pill">Quality</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Interactive Panic Shield Showcase -->
   <section id="panic-shield" class="shield-section">
     <div class="container">
       <div class="section-header">
-        <span class="badge badge-accent">Security Milestone</span>
-        <h2 class="section-title">v0.19.0 Interactive <span class="gradient-text">Panic Shield</span> Showcase</h2>
+        <span class="badge badge-accent">Crash Prevention</span>
+        <h2 class="section-title">Interactive <span class="gradient-text">Panic Shield</span> Showcase</h2>
         <p class="section-desc">See how Pgxcrown prevents PostgreSQL backend worker crashes during integer overflows and array out-of-bounds defects.</p>
       </div>
 
@@ -265,7 +257,7 @@
               <span class="status-icon">❌</span>
               <div>
                 <strong>connection to server was lost</strong>
-                <p>SIGABRT panic crash terminated PostgreSQL backend worker process</p>
+                <p>SIGABRT panic crash terminated PostgreSQL backend worker process.</p>
               </div>
             </div>
           </div>
@@ -274,7 +266,7 @@
         <!-- Shielded Card -->
         <div class="shield-card glass-card shielded">
           <div class="shield-header">
-            <span class="shield-badge badge-success">Pgxcrown v0.19.0 Panic Shield</span>
+            <span class="shield-badge badge-success">Pgxcrown v0.23.0 Panic Shield</span>
             <h3>Crash-Proof Execution</h3>
           </div>
           <div class="shield-body">
@@ -283,7 +275,7 @@
               <span class="status-icon">🛡️</span>
               <div>
                 <strong>ERROR: Extension Defect [OverflowDefect]: over- or underflow</strong>
-                <p>Transaction aborted safely. PostgreSQL server remains 100% operational!</p>
+                <p>Transaction aborted safely with SQLSTATE 22003. Server remains 100% operational!</p>
               </div>
             </div>
           </div>
@@ -312,14 +304,13 @@
         </div>
 
         <div class="cli-presets">
-          <button class="cli-btn active" data-cmd="pgxtool init">pgxtool init</button>
-          <button class="cli-btn" data-cmd="pgxtool create-project my_extension">pgxtool create-project</button>
-          <button class="cli-btn" data-cmd="pgxtool create-type temperature --base-type float64">pgxtool create-type</button>
-          <button class="cli-btn" data-cmd="pgxtool create-hook emit_log">pgxtool create-hook</button>
-          <button class="cli-btn" data-cmd="pgxtool build-extension my_extension">pgxtool build-extension</button>
-          <button class="cli-btn" data-cmd="pgxtool install my_extension">pgxtool install</button>
-          <button class="cli-btn" data-cmd="pgxtool test my_extension">pgxtool test</button>
-          <button class="cli-btn" data-cmd="pgxtool test my_extension --all">pgxtool test --all</button>
+          <button class="cli-btn active" data-cmd="pgxtool build-extension analytics">pgxtool build-extension</button>
+          <button class="cli-btn" data-cmd="pgxtool clean analytics">pgxtool clean</button>
+          <button class="cli-btn" data-cmd="pgxtool test analytics">pgxtool test</button>
+          <button class="cli-btn" data-cmd="pgxtool test analytics --all">pgxtool test --all</button>
+          <button class="cli-btn" data-cmd="pgxtool create-type nickname --base-type string">pgxtool create-type</button>
+          <button class="cli-btn" data-cmd="pgxtool create-project analytics">pgxtool create-project</button>
+          <button class="cli-btn" data-cmd="pgxtool init">pgxtool init</button>
         </div>
 
         <div class="terminal-body" id="terminalBody"></div>
@@ -341,25 +332,25 @@
             <div class="step-num">1</div>
             <div class="step-content">
               <h4>Install Framework via Nimble</h4>
-              <pre><code>nimble install pgxcrown</code></pre>
+              <pre><code>nimble install -y pgxcrown</code></pre>
             </div>
           </div>
 
           <div class="qs-step">
             <div class="step-num">2</div>
             <div class="step-content">
-              <h4>Scaffold & Build Extension</h4>
-              <pre><code>pgxtool init && pgxtool create-project my_ext
-pgxtool build-extension my_ext</code></pre>
+              <h4>Scaffold &amp; Build Extension</h4>
+              <pre><code>pgxtool init && pgxtool create-project analytics
+pgxtool build-extension analytics</code></pre>
             </div>
           </div>
 
           <div class="qs-step">
             <div class="step-num">3</div>
             <div class="step-content">
-              <h4>Install & Enable in PostgreSQL</h4>
-              <pre><code>sudo ./my_ext/src/install.sh
-psql -U postgres -c "CREATE EXTENSION my_ext;"</code></pre>
+              <h4>Install &amp; Enable in PostgreSQL</h4>
+              <pre><code>sudo ./analytics/src/install.sh
+psql -U postgres -c "CREATE EXTENSION analytics;"</code></pre>
             </div>
           </div>
         </div>
@@ -373,7 +364,7 @@ psql -U postgres -c "CREATE EXTENSION my_ext;"</code></pre>
       <div class="footer-brand">
         <span>👑</span>
         <span class="gradient-text">Pgxcrown</span>
-        <p>Open-source PostgreSQL Extension Framework for Nim. Released under MIT License.</p>
+        <p>High-Performance, Memory-Safe Native PostgreSQL Extension Framework for Nim. Released under MIT License.</p>
       </div>
       <div class="footer-links">
         <a href="https://github.com/luisacosta828/pgxcrown" target="_blank" rel="noopener">GitHub Repository</a>
