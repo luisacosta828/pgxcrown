@@ -254,3 +254,12 @@ proc returnPgText*(cs: cstring): Datum =
     return cast[Datum](res)
   let res = cstring_to_text_with_len(cast[pointer](cs), cint(cs.len))
   return cast[Datum](res)
+
+proc returnPgText*[T](s: T): Datum {.inline.} =
+  when compiles(string(s)):
+    return returnPgText(string(s))
+  elif compiles(cstring(s)):
+    return returnPgText(cstring(s))
+  elif compiles($s):
+    return returnPgText($s)
+

@@ -876,11 +876,16 @@ proc wrapScalarReturn(code: NimNode, retTypeStr: string): NimNode =
           return n
         else:
           return newTree(nnkReturnStmt, newCall(ident("CStringGetDatum"), newCall(ident("pstrdup"), newCall(ident("cstring"), retExpr))))
-      elif retTypeStr in ["string", "Text", "PgText"]:
-        if retExpr.kind == nnkCall and (retExpr[0].repr == "returnPgText" or retExpr[0].repr == "CStringGetTextDatum"):
+      elif retTypeStr == "PgText":
+        if retExpr.kind == nnkCall and retExpr[0].repr == "returnPgText":
           return n
         else:
           return newTree(nnkReturnStmt, newCall(ident("returnPgText"), retExpr))
+      elif retTypeStr in ["string", "Text"]:
+        if retExpr.kind == nnkCall and (retExpr[0].repr == "returnPgText" or retExpr[0].repr == "CStringGetTextDatum"):
+          return n
+        else:
+          return newTree(nnkReturnStmt, newCall(ident("returnPgText"), newCall(ident("string"), retExpr)))
       elif retTypeStr in ["JsonNode", "Json", "json", "Jsonb", "jsonb"]:
         if retExpr.kind == nnkCall and retExpr[0].repr == "JsonNodeToDatum":
           return n
@@ -916,7 +921,11 @@ proc wrapScalarReturn(code: NimNode, retTypeStr: string): NimNode =
   let transformed = transformReturn(code)
   if not hasReturn(transformed):
     result = transformed
-    if retTypeStr in ["string", "cstring", "Text", "PgText"]:
+    if retTypeStr == "PgText":
+      result.add newTree(nnkReturnStmt, newCall(ident("returnPgText"), ident("userResult")))
+    elif retTypeStr in ["string", "Text"]:
+      result.add newTree(nnkReturnStmt, newCall(ident("returnPgText"), newCall(ident("string"), ident("userResult"))))
+    elif retTypeStr in ["cstring"]:
       result.add newTree(nnkReturnStmt, newCall(ident("returnPgText"), ident("userResult")))
     elif retTypeStr in ["JsonNode", "Json", "json", "Jsonb", "jsonb"]:
       result.add newTree(nnkReturnStmt, newCall(ident("JsonNodeToDatum"), ident("userResult")))

@@ -181,3 +181,17 @@ suite "Pgxcrown - Zero-Cost Fast-Path PgText String Suite":
     check rep.align(6) == "   abc"
     check rep.alignLeft(6) == "abc   "
 
+  test "returnPgText supports distinct strings and custom base types":
+    type Nickname = distinct string
+    let nick = Nickname("postgres_pro")
+    let pt = toPgText("hello")
+    let str = "world"
+    let cs = cstring("nim")
+
+    # Verify compiles and executes
+    check compiles(returnPgText(nick))
+    check compiles(returnPgText(pt))
+    check compiles(returnPgText(str))
+    check compiles(returnPgText(cs))
+
+
