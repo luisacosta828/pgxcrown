@@ -1027,35 +1027,13 @@ proc explainWrapper(fn: NimNode): NimNode =
     newTree(nnkExceptBranch,
       newTree(nnkInfix, ident("as"), ident("Defect"), ident("e")),
       newTree(nnkStmtList,
-        newCall(ident("reportError"), 
-          newTree(nnkInfix, ident("&"), 
-            newTree(nnkInfix, ident("&"), 
-              newTree(nnkInfix, ident("&"), 
-                newLit("Extension Defect ["), 
-                newTree(nnkPrefix, ident("$"), newTree(nnkDotExpr, ident("e"), ident("name")))
-              ),
-              newLit("]: ")
-            ),
-            newTree(nnkDotExpr, ident("e"), ident("msg"))
-          )
-        )
+        newCall(ident("reportNimDefect"), ident("e"))
       )
     ),
     newTree(nnkExceptBranch,
       newTree(nnkInfix, ident("as"), ident("CatchableError"), ident("e")),
       newTree(nnkStmtList,
-        newCall(ident("reportError"), 
-          newTree(nnkInfix, ident("&"), 
-            newTree(nnkInfix, ident("&"), 
-              newTree(nnkInfix, ident("&"), 
-                newLit("Extension Error ["), 
-                newTree(nnkPrefix, ident("$"), newTree(nnkDotExpr, ident("e"), ident("name")))
-              ),
-              newLit("]: ")
-            ),
-            newTree(nnkDotExpr, ident("e"), ident("msg"))
-          )
-        )
+        newCall(ident("reportNimError"), ident("e"))
       )
     )
   )

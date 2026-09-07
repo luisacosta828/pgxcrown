@@ -10,6 +10,8 @@ from datatypes/basic import PDatum, POid, NameData, Oid, oidvector
 from datatypes/heaptuples import HeapTuple, TupleDesc
 export HeapTuple, TupleDesc
 import query_builder
+import reports/reports
+export reports
 
 {.emit: """/*INCLUDESECTION*/
 #include "postgres.h"
@@ -43,7 +45,7 @@ type
 
   TupleTable* {.importc: "SPITupleTable*".} = pointer
 
-  OK* {.pure.} = enum
+  SpiOK* {.pure.} = enum
     CONNECT = 1,
     FINISH, FETCH, UTILITY,
     SELECT, SELINTO, INSERT,
@@ -51,12 +53,13 @@ type
     INSERT_RETURNING, DELETE_RETURNING, UPDATE_RETURNING,
     REWRITTEN, REL_REGISTER, REL_UNREGISTER, TD_REGISTER
 
-  ERROR* {.pure.} = enum
+  SpiError* {.pure.} = enum
     CONNECT = 1,
     COPY, OPUNKNOWN, UNCONNECTED,
     ARGUMENT = 6,
     PARAM, TRANSACTION, NOATTRIBUTE, NOOUTFUNC,
     TYPEUNKNOWN, REL_DUPLICATE, REL_NOT_FOUND
+
 
 {.push header: "executor/spi.h".}
 proc connect*(): cint {.importc: "SPI_connect".}
@@ -135,29 +138,32 @@ var SPI_tuptable* {.importc: "SPI_tuptable".}: TupleTable
 
 template spi_init*(statements: untyped) =
   var connection_status {.used.} = connect()
-  statements
-  var finish_status {.used.} = finish()
+  try:
+    statements
+  finally:
+    var finish_status {.used.} = finish()
 
 template query*(c: const_string, obj: untyped) =
-  discard exec(const_string(c), 0)
   var obj {.inject.}: ResultSet = @[]
-  if SPI_tuptable != nil:
-    let tupdesc = getTupdesc(SPI_tuptable)
-    if tupdesc != nil:
-      let natts = int(getNatts(tupdesc))
-      if SPI_processed > 0 and natts > 0:
-        for rowIdx in 0 ..< int(SPI_processed):
-          let tup = getTuple(SPI_tuptable, uint64(rowIdx))
-          if tup != nil:
-            var row: Row = @[]
-            for colIdx in 1 .. natts:
-              let colname = fname(tupdesc, cint(colIdx))
-              let val = getvalue(tup, tupdesc, cint(colIdx))
-              let k = if colname != nil: $colname else: "col_" & $colIdx
-              let v = if val != nil: $val else: ""
-              row.add([(k, v)].toTable)
-            if row.len > 0:
-              obj.add(row)
+  pgTry:
+    discard exec(const_string(c), 0)
+    if SPI_tuptable != nil:
+      let tupdesc = getTupdesc(SPI_tuptable)
+      if tupdesc != nil:
+        let natts = int(getNatts(tupdesc))
+        if SPI_processed > 0 and natts > 0:
+          for rowIdx in 0 ..< int(SPI_processed):
+            let tup = getTuple(SPI_tuptable, uint64(rowIdx))
+            if tup != nil:
+              var row: Row = @[]
+              for colIdx in 1 .. natts:
+                let colname = fname(tupdesc, cint(colIdx))
+                let val = getvalue(tup, tupdesc, cint(colIdx))
+                let k = if colname != nil: $colname else: "col_" & $colIdx
+                let v = if val != nil: $val else: ""
+                row.add([(k, v)].toTable)
+              if row.len > 0:
+                obj.add(row)
 
 # =============================================================================
 # High-Level SPI Consumer Procs (Eager Fetch, Optionals, Reducers)
@@ -167,23 +173,24 @@ proc fetchRawRows*(sqlQuery: string): seq[Table[string, string]] {.tags: [DbRead
   ## Internal: Executes raw SQL via SPI and returns a flat seq of row tables
   result = @[]
   spi_init:
-    let rc = exec(const_string(sqlQuery), 0)
-    if rc >= 0 and SPI_tuptable != nil:
-      let tupdesc = getTupdesc(SPI_tuptable)
-      if tupdesc != nil:
-        let natts = int(getNatts(tupdesc))
-        if SPI_processed > 0 and natts > 0:
-          for rowIdx in 0 ..< int(SPI_processed):
-            let tup = getTuple(SPI_tuptable, uint64(rowIdx))
-            if tup != nil:
-              var rowTable = initTable[string, string]()
-              for colIdx in 1 .. natts:
-                let colname = fname(tupdesc, cint(colIdx))
-                let val = getvalue(tup, tupdesc, cint(colIdx))
-                let k = if colname != nil: $colname else: "col_" & $colIdx
-                let v = if val != nil: $val else: ""
-                rowTable[k] = v
-              result.add(rowTable)
+    pgTry:
+      let rc = exec(const_string(sqlQuery), 0)
+      if rc >= 0 and SPI_tuptable != nil:
+        let tupdesc = getTupdesc(SPI_tuptable)
+        if tupdesc != nil:
+          let natts = int(getNatts(tupdesc))
+          if SPI_processed > 0 and natts > 0:
+            for rowIdx in 0 ..< int(SPI_processed):
+              let tup = getTuple(SPI_tuptable, uint64(rowIdx))
+              if tup != nil:
+                var rowTable = initTable[string, string]()
+                for colIdx in 1 .. natts:
+                  let colname = fname(tupdesc, cint(colIdx))
+                  let val = getvalue(tup, tupdesc, cint(colIdx))
+                  let k = if colname != nil: $colname else: "col_" & $colIdx
+                  let v = if val != nil: $val else: ""
+                  rowTable[k] = v
+                result.add(rowTable)
 
 proc fetchRows*(query: ExecutableQuery): seq[Table[string, string]] {.tags: [DbReadEffect].} =
   ## Executes a fluent query via SPI and returns rows as key-value string tables
@@ -259,9 +266,10 @@ proc run*(query: ExecutableQuery): int {.discardable, tags: [DbWriteEffect].} =
   ## Returns affected rows. Marked {.discardable.} so 'discard' is never required.
   var ret = 0
   spi_init:
-    let rc = exec(const_string($query), 0)
-    if rc >= 0:
-      ret = int(SPI_processed)
+    pgTry:
+      let rc = exec(const_string($query), 0)
+      if rc >= 0:
+        ret = int(SPI_processed)
   return ret
 
 proc execute*(query: ExecutableQuery): int {.discardable, tags: [DbWriteEffect].} =
@@ -303,7 +311,8 @@ proc spiCreateTableFrom*[T: object](tableName: string = "", ifNotExists: bool = 
   let ddl = createTableFromType[T](tableName, ifNotExists, primaryKey)
   var ret = 0
   spi_init:
-    ret = int(exec(const_string(ddl), 0))
+    pgTry:
+      ret = int(exec(const_string(ddl), 0))
   return ret
 
 proc spiCreateTableFrom*[T: object](obj: T, tableName: string = "", ifNotExists: bool = true, primaryKey: string = "id"): int {.tags: [DbWriteEffect].} =
@@ -319,5 +328,6 @@ proc spiInsertFrom*[T: object](obj: T, tableName: string = ""): int {.tags: [DbW
   let q = insertFrom(obj, tableName)
   var ret = 0
   spi_init:
-    ret = int(exec(const_string($q), 0))
+    pgTry:
+      ret = int(exec(const_string($q), 0))
   return ret
