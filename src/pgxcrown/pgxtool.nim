@@ -62,6 +62,28 @@ proc generateTypeSource*(udf: string, baseType: string): (string, string) =
   let testSql = "SELECT " & testLiteral & "::" & udf & ";\n"
   return (src, testSql)
 
+proc generateWorkerSource*(name: string): (string, string) =
+  let src = "import pgxcrown\n\n" &
+    "# Background Worker entrypoint (pure Nim, zero Datum leaks)\n" &
+    "proc " & name & "_worker*() {.pgxWorker.} =\n" &
+    "  workerInit(\"postgres\")\n" &
+    "  runWorkerLoop(intervalMs = 5000):\n" &
+    "    workerTransaction:\n" &
+    "      pgNotice(\"Hello from background worker '" & name & "'!\")\n\n" &
+    "# SQL launcher function to dynamically start the worker\n" &
+    "proc start_" & name & "_worker*(): int32 {.volatile.} =\n" &
+    "  let cfg = bgWorker(\"" & name & "\"):\n" &
+    "    database \"postgres\"\n" &
+    "    restart 30\n" &
+    "  let handle = registerDynamicWorker(cfg)\n" &
+    "  if handle.isSome:\n" &
+    "    let (status, pid) = handle.get.waitForStartup()\n" &
+    "    if status == bgwStarted:\n" &
+    "      return pid.int32\n" &
+    "  return -1'i32\n"
+  let testSql = "SELECT start_" & name & "_worker() > 0 AS worker_started;\n"
+  return (src, testSql)
+
 proc build_extension_cli_helper() =
   echo """
 Usage: pgxtool build-extension <name> [options]
@@ -97,6 +119,9 @@ Commands:
 
   create-type: Create a template for defining new types
      * pgxtool create-type <name> --base-type nim_datatype
+
+  create-worker: Initialize a new project template for background workers
+     * pgxtool create-worker <name>
 
   build-extension: Compile a dynamic library (.so) for local PostgreSQL installation
      * pgxtool build-extension <name>
@@ -258,6 +283,10 @@ template build_project(req: string, kind: string) =
   elif "create-type" in kind:
     let baseType = kind.split(":")[^1]
     let (srcCode, testSql) = generateTypeSource(req, baseType)
+    writeFile(entry_point, srcCode)
+    writeFile(testsSql / "01_basic.sql", testSql)
+  elif "create-worker" in kind:
+    let (srcCode, testSql) = generateWorkerSource(req)
     writeFile(entry_point, srcCode)
     writeFile(testsSql / "01_basic.sql", testSql)
 
@@ -603,6 +632,13 @@ proc check_command(pc: int) =
     validate_create_type_args(pc)
     req = paramStr(2)
     build_project_template(req, arg & ":" & base_type)
+  of "create-worker":
+    validate_second_arg(pc)
+    req = paramStr(2)
+    if req in ["--help", "-h", "help"]:
+      echo "Usage: pgxtool create-worker <name>"
+      return
+    build_project_template(req, "create-worker")
   of "build-extension":
     validate_second_arg(pc)
     req = paramStr(2)
