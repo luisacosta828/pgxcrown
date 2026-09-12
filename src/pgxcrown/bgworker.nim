@@ -239,6 +239,12 @@ proc StartTransactionCommand*() {.importc, header: "access/xact.h".}
 proc CommitTransactionCommand*() {.importc, header: "access/xact.h".}
 proc AbortCurrentTransaction*() {.importc, header: "access/xact.h".}
 
+proc GetTransactionSnapshot*(): pointer {.importc, header: "utils/snapmgr.h".}
+proc PushActiveSnapshot*(snapshot: pointer) {.importc, header: "utils/snapmgr.h".}
+proc PopActiveSnapshot*() {.importc, header: "utils/snapmgr.h".}
+proc ActiveSnapshotSet*(): bool {.importc, header: "utils/snapmgr.h".}
+
+
 proc WaitLatch*(latch: pointer, wakeEvents: cint, timeout_ms: clong, wait_event_info: uint32): cint {.importc, header: "storage/latch.h".}
 proc ResetLatch*(latch: pointer) {.importc, header: "storage/latch.h".}
 proc SetLatch*(latch: pointer) {.importc, header: "storage/latch.h".}
@@ -283,15 +289,22 @@ proc workerExit*(code: int = 0) {.inline.} =
 template workerTransaction*(body: untyped) =
   SetCurrentStatementStartTimestamp()
   StartTransactionCommand()
+  PushActiveSnapshot(GetTransactionSnapshot())
   try:
     body
+    PopActiveSnapshot()
     CommitTransactionCommand()
   except CatchableError as e:
+    if ActiveSnapshotSet():
+      PopActiveSnapshot()
     AbortCurrentTransaction()
     raise e
   except Defect as e:
+    if ActiveSnapshotSet():
+      PopActiveSnapshot()
     AbortCurrentTransaction()
     raise e
+
 
 template runWorkerLoop*(intervalMs: int, body: untyped) =
   while volatileLoad(addr workerGotSigterm) == 0:

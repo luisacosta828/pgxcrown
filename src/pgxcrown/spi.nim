@@ -171,7 +171,7 @@ template query*(c: const_string, obj: untyped) =
 
 proc fetchRawRows*(sqlQuery: string): seq[Table[string, string]] {.tags: [DbReadEffect].} =
   ## Internal: Executes raw SQL via SPI and returns a flat seq of row tables
-  result = @[]
+  var rows = new(seq[Table[string, string]])
   spi_init:
     pgTry:
       let rc = exec(const_string(sqlQuery), 0)
@@ -190,7 +190,8 @@ proc fetchRawRows*(sqlQuery: string): seq[Table[string, string]] {.tags: [DbRead
                   let k = if colname != nil: $colname else: "col_" & $colIdx
                   let v = if val != nil: $val else: ""
                   rowTable[k] = v
-                result.add(rowTable)
+                rows[].add(rowTable)
+  return rows[]
 
 proc fetchRows*(query: ExecutableQuery): seq[Table[string, string]] {.tags: [DbReadEffect].} =
   ## Executes a fluent query via SPI and returns rows as key-value string tables

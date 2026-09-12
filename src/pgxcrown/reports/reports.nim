@@ -9,7 +9,7 @@ export errcodes
 #include "postgres.h"
 #include "utils/elog.h"
 
-static inline void pgx_ereport_full(int elevel, int sqlerrcode, const char *msg, const char *detail, const char *hint) {
+void pgx_ereport_full(int elevel, int sqlerrcode, const char *msg, const char *detail, const char *hint) {
   ereport(elevel, (
     (sqlerrcode != 0 ? errcode(sqlerrcode) : 0),
     errmsg("%s", msg ? msg : ""),
@@ -24,11 +24,13 @@ typedef struct {
   char *detail;
   char *hint;
   char *context;
-} PgxCapturedError;
+} PgxCapturedError_C;
 
 typedef void (*pgx_guarded_fn)(void *data);
 
-static inline bool pgx_call_guarded(pgx_guarded_fn fn, void *data, PgxCapturedError *out_err) {
+bool pgx_call_guarded(pgx_guarded_fn fn, void *data, void *out_err_raw) {
+
+  PgxCapturedError_C *out_err = (PgxCapturedError_C*)out_err_raw;
   if (out_err != NULL) {
     out_err->sqlerrcode = 0;
     out_err->message = NULL;
@@ -62,7 +64,7 @@ static inline bool pgx_call_guarded(pgx_guarded_fn fn, void *data, PgxCapturedEr
 """.}
 
 type
-  PgxCapturedError* {.importc: "PgxCapturedError", nodecl.} = object
+  PgxCapturedError* {.bycopy.} = object
     sqlerrcode*: cint
     message*: cstring
     detail*: cstring

@@ -75,7 +75,13 @@ void CommitTransactionCommand(void) {}
 void AbortCurrentTransaction(void) {}
 void SetCurrentStatementStartTimestamp(void) {}
 void ProcessConfigFile(GucContext context) {}
+void PushActiveSnapshot(void *snapshot) {}
+void *GetTransactionSnapshot(void) { return NULL; }
+
+void PopActiveSnapshot(void) {}
+bool ActiveSnapshotSet(void) { return false; }
 void proc_exit(int code) {}
+
 """.}
 
 import ../src/pgxcrown/bgworker
