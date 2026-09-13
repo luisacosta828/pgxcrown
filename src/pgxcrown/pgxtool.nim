@@ -68,8 +68,9 @@ proc generateWorkerSource*(name: string): (string, string) =
     "proc " & name & "_worker*() {.pgxWorker.} =\n" &
     "  workerInit(\"postgres\")\n" &
     "  runWorkerLoop(intervalMs = 5000):\n" &
-    "    workerTransaction:\n" &
-    "      pgNotice(\"Hello from background worker '" & name & "'!\")\n\n" &
+    "    workerActivity(\"Processing worker cycle\"):\n" &
+    "      workerTransaction:\n" &
+    "        pgNotice(\"Hello from background worker '" & name & "'!\")\n\n" &
     "# SQL launcher function to dynamically start the worker\n" &
     "proc start_" & name & "_worker*(): int32 {.volatile.} =\n" &
     "  let cfg = bgWorker(\"" & name & "\"):\n" &
@@ -79,9 +80,18 @@ proc generateWorkerSource*(name: string): (string, string) =
     "  if handle.isSome:\n" &
     "    let (status, pid) = handle.get.waitForStartup()\n" &
     "    if status == bgwStarted:\n" &
+    "      trackWorkerStarted(\"" & name & "\", pid)\n" &
     "      return pid.int32\n" &
-    "  return -1'i32\n"
-  let testSql = "SELECT start_" & name & "_worker() > 0 AS worker_started;\n"
+    "  return -1'i32\n\n" &
+    "# SQL function to gracefully stop the worker\n" &
+    "proc stop_" & name & "_worker*(): bool {.volatile.} =\n" &
+    "  return stopWorkerByName(\"" & name & "\")\n\n" &
+    "# SQL function to query current worker status\n" &
+    "proc " & name & "_worker_status*(): string {.volatile.} =\n" &
+    "  return getWorkerStatusByName(\"" & name & "\")\n"
+  let testSql = "SELECT start_" & name & "_worker() > 0 AS worker_started;\n" &
+                "SELECT " & name & "_worker_status();\n" &
+                "SELECT stop_" & name & "_worker();\n"
   return (src, testSql)
 
 proc build_extension_cli_helper() =

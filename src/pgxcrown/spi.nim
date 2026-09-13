@@ -273,6 +273,53 @@ proc run*(query: ExecutableQuery): int {.discardable, tags: [DbWriteEffect].} =
         ret = int(SPI_processed)
   return ret
 
+# =============================================================================
+# Subtransactions & Savepoints (Internal Nested Transactions)
+# =============================================================================
+
+proc BeginInternalSubTransaction*(name: cstring = nil) {.importc, header: "access/xact.h".}
+proc ReleaseCurrentSubTransaction*() {.importc, header: "access/xact.h".}
+proc RollbackAndReleaseCurrentSubTransaction*() {.importc, header: "access/xact.h".}
+proc IsSubTransaction*(): bool {.importc, header: "access/xact.h".}
+
+template subTransaction*(body: untyped) =
+  ## Executes body inside an internal nested subtransaction (savepoint).
+  ## If an exception or defect occurs, changes within body are rolled back
+  ## without invalidating the parent transaction, and the error is re-raised.
+  BeginInternalSubTransaction(nil)
+  try:
+    pgTry:
+      body
+    ReleaseCurrentSubTransaction()
+  except CatchableError as e:
+    RollbackAndReleaseCurrentSubTransaction()
+    raise e
+  except Defect as e:
+    RollbackAndReleaseCurrentSubTransaction()
+    raise e
+
+template savepoint*(body: untyped, onError: untyped) =
+  ## Executes body inside an isolated subtransaction.
+  ## If an error occurs, the subtransaction is rolled back, the error is caught,
+  ## and onError is invoked with `err` injected, allowing parent transactions
+  ## (or batch loops) to continue undisturbed.
+  BeginInternalSubTransaction(nil)
+  var caughtEx: ref CatchableError = nil
+  try:
+    pgTry:
+      body
+    ReleaseCurrentSubTransaction()
+  except CatchableError as e:
+    RollbackAndReleaseCurrentSubTransaction()
+    caughtEx = e
+  except Defect as e:
+    RollbackAndReleaseCurrentSubTransaction()
+    caughtEx = (ref CatchableError)(msg: e.msg)
+
+  if caughtEx != nil:
+    let err {.inject.} = caughtEx
+    onError
+
 proc execute*(query: ExecutableQuery): int {.discardable, tags: [DbWriteEffect].} =
   ## Alias for .run()
   run(query)

@@ -210,6 +210,143 @@ proc terminate*(handle: WorkerHandle) =
 
 import std/volatile
 import ./reports/reports
+import ./query_builder
+import ./spi
+export spi.subTransaction, spi.savepoint
+
+type
+  BackendState* {.size: sizeof(cint).} = enum
+    stateUndefined = 0
+    stateIdle = 1
+    stateRunning = 2
+    stateIdleInTransaction = 3
+    stateFastpath = 4
+    stateIdleInTransactionAborted = 5
+    stateDisabled = 6
+
+proc pgstat_report_activity*(state: BackendState, cmd_str: cstring) {.importc, header: "utils/backend_status.h".}
+
+proc setWorkerActivity*(activity: string, state: BackendState = stateRunning) =
+  ## Updates the current worker activity in pg_stat_activity (query and state columns)
+  if activity.len == 0:
+    pgstat_report_activity(state, nil)
+  else:
+    pgstat_report_activity(state, cstring(activity))
+
+proc setWorkerIdle*(msg: string = "idle (waiting)") =
+  ## Marks the worker as idle in pg_stat_activity
+  pgstat_report_activity(stateIdle, cstring(msg))
+
+template workerActivity*(activity: string, body: untyped) =
+  ## Scoped block: sets worker activity in pg_stat_activity while executing body,
+  ## and restores idle status upon completion.
+  setWorkerActivity(activity, stateRunning)
+  try:
+    body
+  finally:
+    setWorkerIdle()
+
+template workerSavepoint*(body: untyped, onError: untyped) =
+  ## Alias for savepoint in worker transaction loops
+  savepoint(body, onError)
+
+# =============================================================================
+# Worker Registry & Catalog Tracking (pgxcrown_workers)
+# =============================================================================
+
+proc ensureWorkersCatalog*() =
+  ## Ensures the tracking table pgxcrown_workers exists
+  spi_init:
+    pgTry:
+      let ddl = "CREATE TABLE IF NOT EXISTS pgxcrown_workers (" &
+                "name TEXT PRIMARY KEY, " &
+                "pid INT NOT NULL, " &
+                "started_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(), " &
+                "status TEXT NOT NULL, " &
+                "last_seen TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp());"
+      discard exec(const_string(ddl), 0)
+
+proc trackWorkerStarted*(name: string, pid: int) =
+  ## Registers or updates the worker in pgxcrown_workers
+  ensureWorkersCatalog()
+  spi_init:
+    pgTry:
+      let q = "INSERT INTO pgxcrown_workers (name, pid, started_at, status, last_seen) " &
+              "VALUES (" & quoteLiteral(name) & ", " & $pid & ", clock_timestamp(), 'running', clock_timestamp()) " &
+              "ON CONFLICT (name) DO UPDATE SET " &
+              "pid = EXCLUDED.pid, started_at = EXCLUDED.started_at, " &
+              "status = 'running', last_seen = clock_timestamp();"
+      discard exec(const_string(q), 0)
+
+proc trackWorkerStopped*(name: string) =
+  ## Marks the worker as stopped in pgxcrown_workers
+  ensureWorkersCatalog()
+  spi_init:
+    pgTry:
+      let q = "UPDATE pgxcrown_workers SET status = 'stopped', last_seen = clock_timestamp() " &
+              "WHERE name = " & quoteLiteral(name) & ";"
+      discard exec(const_string(q), 0)
+
+proc stopWorkerByName*(name: string): bool =
+  ## Terminates a worker by name via pg_terminate_backend and marks it stopped
+  ensureWorkersCatalog()
+  var targetPid = 0
+  spi_init:
+    pgTry:
+      let findQ = "SELECT pid FROM pgxcrown_workers WHERE name = " & quoteLiteral(name) & " AND status = 'running';"
+      if exec(const_string(findQ), 0) >= 0 and SPI_processed > 0:
+        let rows = fetchRawRows(findQ)
+        if rows.len > 0 and "pid" in rows[0]:
+          try:
+            targetPid = parseInt(rows[0]["pid"])
+          except ValueError:
+            targetPid = 0
+
+  if targetPid > 0:
+    spi_init:
+      pgTry:
+        let termQ = "SELECT pg_terminate_backend(" & $targetPid & ");"
+        discard exec(const_string(termQ), 0)
+    trackWorkerStopped(name)
+    return true
+  return false
+
+proc getWorkerStatusByName*(name: string): string =
+  ## Returns the live status of the worker ('running', 'stopped', or 'not_registered')
+  ensureWorkersCatalog()
+  var recordedStatus = ""
+  var targetPid = 0
+  spi_init:
+    pgTry:
+      let q = "SELECT pid, status FROM pgxcrown_workers WHERE name = " & quoteLiteral(name) & ";"
+      if exec(const_string(q), 0) >= 0 and SPI_processed > 0:
+        let rows = fetchRawRows(q)
+        if rows.len > 0:
+          recordedStatus = rows[0].getOrDefault("status", "")
+          try:
+            targetPid = parseInt(rows[0].getOrDefault("pid", "0"))
+          except ValueError:
+            targetPid = 0
+
+  if recordedStatus == "":
+    return "not_registered"
+  if recordedStatus == "stopped":
+    return "stopped"
+
+  # If recorded as running, check if process is actually alive in pg_stat_activity
+  var isAlive = false
+  if targetPid > 0:
+    spi_init:
+      pgTry:
+        let checkQ = "SELECT 1 FROM pg_stat_activity WHERE pid = " & $targetPid & ";"
+        if exec(const_string(checkQ), 0) >= 0 and SPI_processed > 0:
+          isAlive = true
+
+  if isAlive:
+    return "running"
+  else:
+    trackWorkerStopped(name)
+    return "stopped"
 
 const
   WL_LATCH_SET* = 1'i32 shl 0          # 0x01
@@ -319,6 +456,7 @@ template runWorkerLoop*(intervalMs: int, body: untyped) =
       pgWarning("BgWorker defect: " & defect.msg)
     if volatileLoad(addr workerGotSigterm) != 0:
       break
+    setWorkerIdle("waiting for next cycle (" & $intervalMs & "ms)")
     let rc = WaitLatch(MyLatch, WL_LATCH_SET or WL_TIMEOUT or WL_POSTMASTER_DEATH, clong(intervalMs), PG_WAIT_EXTENSION)
     ResetLatch(MyLatch)
     if (rc and WL_POSTMASTER_DEATH) != 0:

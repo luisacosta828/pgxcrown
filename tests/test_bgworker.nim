@@ -82,6 +82,31 @@ void PopActiveSnapshot(void) {}
 bool ActiveSnapshotSet(void) { return false; }
 void proc_exit(int code) {}
 
+void pgstat_report_activity(int state, const char *cmd_str) {}
+void BeginInternalSubTransaction(const char *name) {}
+void ReleaseCurrentSubTransaction(void) {}
+void RollbackAndReleaseCurrentSubTransaction(void) {}
+bool IsSubTransaction(void) { return false; }
+
+int SPI_connect(void) { return 0; }
+int SPI_finish(void) { return 0; }
+int SPI_exec(const char *cmd, long count) { return 0; }
+uint64 SPI_processed = 0;
+void *SPI_tuptable = NULL;
+
+sigjmp_buf *PG_exception_stack = NULL;
+ErrorContextCallback *error_context_stack = NULL;
+
+bool errstart(int elevel, const char *domain) { return false; }
+void errfinish(const char *filename, int lineno, const char *funcname) {}
+int errcode(int sqlerrcode) { return 0; }
+int errmsg(const char *fmt, ...) { return 0; }
+int errdetail(const char *fmt, ...) { return 0; }
+int errhint(const char *fmt, ...) { return 0; }
+ErrorData *CopyErrorData(void) { return NULL; }
+void FlushErrorState(void) {}
+void FreeErrorData(ErrorData *edata) {}
+char *pstrdup(const char *in) { return in ? strdup(in) : NULL; }
 """.}
 
 import ../src/pgxcrown/bgworker
@@ -163,12 +188,45 @@ suite "Pgxcrown - PostgreSQL Background Worker (BGWorker) Suite":
     check pid == -1
     check nilHandle.waitForShutdown() == bgwStopped
 
+  test "Worker activity reporting & idle helpers":
+    var executed = false
+    workerActivity("Archiving test batch"):
+      executed = true
+    check executed
+
+  test "Subtransaction and worker savepoint isolation semantics":
+    # Successful subtransaction
+    var step1Done = false
+    subTransaction:
+      step1Done = true
+    check step1Done
+
+    # Savepoint error isolation: outer execution continues despite failure
+    var itemsProcessed = 0
+    var errorLogged = ""
+    for i in 1 .. 3:
+      workerSavepoint:
+        if i == 2:
+          raise newException(ValueError, "Simulated batch failure on item 2")
+        itemsProcessed.inc
+      do:
+        errorLogged = err.msg
+
+    check itemsProcessed == 2
+    check "Simulated batch failure on item 2" in errorLogged
+
   test "pgxtool generateWorkerSource scaffolding verification":
     let (srcCode, testSql) = generateWorkerSource("telemetry")
     check "proc telemetry_worker*() {.pgxWorker.}" in srcCode
     check "workerInit(\"postgres\")" in srcCode
     check "runWorkerLoop(intervalMs = 5000):" in srcCode
+    check "workerActivity(\"Processing worker cycle\"):" in srcCode
     check "workerTransaction:" in srcCode
     check "let cfg = bgWorker(\"telemetry\"):" in srcCode
     check "registerDynamicWorker(cfg)" in srcCode
+    check "trackWorkerStarted(\"telemetry\", pid)" in srcCode
+    check "proc stop_telemetry_worker*(): bool" in srcCode
+    check "proc telemetry_worker_status*(): string" in srcCode
     check "SELECT start_telemetry_worker() > 0 AS worker_started;" in testSql
+    check "SELECT telemetry_worker_status();" in testSql
+    check "SELECT stop_telemetry_worker();" in testSql
