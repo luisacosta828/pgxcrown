@@ -92,6 +92,7 @@
             <button class="tab-btn active" data-tab="pgtext">Zero-Copy PgText</button>
             <button class="tab-btn" data-tab="pgvector">PgVector[T]</button>
             <button class="tab-btn" data-tab="sql">Query &amp; SPI</button>
+            <button class="tab-btn" data-tab="bgworker">BGWorkers 🤖</button>
             <button class="tab-btn" data-tab="base_types">Custom Types</button>
             <button class="tab-btn" data-tab="shield">Panic Shield</button>
             <button class="tab-btn" data-tab="testing">Docker Tests</button>
@@ -116,6 +117,9 @@
       <div class="pillar-nav">
         <button class="pillar-tab active" data-pillar="zerocopy">
           <span>⚡ Zero-Copy Core</span>
+        </button>
+        <button class="pillar-tab" data-pillar="bgworker">
+          <span>🤖 BGWorkers</span>
         </button>
         <button class="pillar-tab" data-pillar="shield">
           <span>🛡️ Fail-Safe Shield</span>
@@ -231,6 +235,23 @@
             <span class="bento-pill">Quality</span>
           </div>
         </div>
+
+        <!-- Bento 5: Autonomous Background Workers -->
+        <div class="bento-card glass-card">
+          <div>
+            <div class="bento-header">
+              <div class="bento-icon bento-icon-gold">🤖</div>
+              <h3 class="bento-title">Autonomous Background Workers</h3>
+            </div>
+            <p class="bento-text">
+              Launch in-database daemons dynamically with sub-1ms signal notifications (<code>MyProcPid</code>), nested savepoints (<code>workerSavepoint</code>) isolating batch errors, live <code>pg_stat_activity</code> telemetry, and automatic <code>pgxcrown_workers</code> catalog tracking.
+            </p>
+          </div>
+          <div class="bento-footer">
+            <span class="bento-metric">Sub-1ms Dynamic IPC | Savepoint Isolation</span>
+            <span class="bento-pill">Autonomy</span>
+          </div>
+        </div>
       </div>
     </div>
   </section>
@@ -308,6 +329,7 @@
           <button class="cli-btn" data-cmd="pgxtool clean analytics">pgxtool clean</button>
           <button class="cli-btn" data-cmd="pgxtool test analytics">pgxtool test</button>
           <button class="cli-btn" data-cmd="pgxtool test analytics --all">pgxtool test --all</button>
+          <button class="cli-btn" data-cmd="pgxtool create-worker order_archiver">pgxtool create-worker</button>
           <button class="cli-btn" data-cmd="pgxtool create-type nickname --base-type string">pgxtool create-type</button>
           <button class="cli-btn" data-cmd="pgxtool create-project analytics">pgxtool create-project</button>
           <button class="cli-btn" data-cmd="pgxtool init">pgxtool init</button>

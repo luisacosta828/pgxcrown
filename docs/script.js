@@ -54,6 +54,27 @@ const heroCodeSnippets = {
     .<span class="syn-fn">OrderBy</span>(e.salary.<span class="syn-fn">desc</span>.<span class="syn-fn">nullsLast</span>)
   <span class="syn-kw">return</span> $q`,
 
+  bgworker: `<span class="syn-cmt"># Autonomous In-Database Background Worker Daemon (pgxWorker)</span>
+<span class="syn-kw">import</span> pgxcrown
+
+<span class="syn-kw">proc</span> <span class="syn-fn">order_archiver_worker</span>*() <span class="syn-pragma">{.pgxWorker.}</span> =
+  <span class="syn-fn">workerInit</span>(<span class="syn-str">"postgres"</span>)
+  <span class="syn-kw">let</span> orders = <span class="syn-fn">table</span>(<span class="syn-str">"orders"</span>)
+
+  <span class="syn-fn">runWorkerLoop</span>(intervalMs = 5000):
+    <span class="syn-fn">workerActivity</span>(<span class="syn-str">"Checking expired orders"</span>):
+      <span class="syn-fn">workerTransaction</span>:
+        <span class="syn-kw">let</span> expired = <span class="syn-fn">Select</span>(orders.id, orders.status).<span class="syn-fn">From</span>(orders).<span class="syn-fn">Where</span>(orders.status == <span class="syn-str">"expired"</span>).<span class="syn-fn">all</span>(OrderRecord)
+        <span class="syn-kw">for</span> order <span class="syn-kw">in</span> expired:
+          <span class="syn-cmt"># Internal savepoint: isolated per-item failure handling</span>
+          <span class="syn-fn">workerSavepoint</span>:
+            <span class="syn-fn">InsertInto</span>(<span class="syn-str">"orders_history"</span>, <span class="syn-str">"id"</span>, <span class="syn-str">"status"</span>).<span class="syn-fn">Values</span>($order.id, <span class="syn-str">"archived"</span>).<span class="syn-fn">run</span>()
+            <span class="syn-fn">DeleteFrom</span>(<span class="syn-str">"orders"</span>).<span class="syn-fn">Where</span>(orders.id == order.id).<span class="syn-fn">run</span>()
+          <span class="syn-kw">do</span>:
+            <span class="syn-fn">pgWarning</span>(<span class="syn-str">"Failed to archive order "</span> & $order.id & <span class="syn-str">": "</span> & err.msg)
+  <span class="syn-kw">do</span>:
+    <span class="syn-fn">pgNotice</span>(<span class="syn-str">"OrderArchiver cleanly stopped."</span>)`,
+
   base_types: `<span class="syn-cmt"># Declarative Custom Base Types (15 Flat Scalar Types)</span>
 <span class="syn-kw">import</span> pgxcrown, std/strutils
 
@@ -143,6 +164,36 @@ const pillarData = {
 <span class="syn-kw">proc</span> <span class="syn-fn">dot_product</span>*(a, b: <span class="syn-type">PgVector[float64]</span>): <span class="syn-type">float64</span> <span class="syn-pragma">{.immutable, parallelSafe.}</span> =
   <span class="syn-kw">for</span> i <span class="syn-kw">in</span> 0 ..< a.len:
     <span class="syn-kw">result</span> += a[i] * b[i]`
+  },
+
+  bgworker: {
+    badge: '🤖 In-Database Autonomy (v0.23.0)',
+    title: 'Autonomous Background Workers & Daemons',
+    desc: 'Run persistent, multi-tenant background daemons directly inside the PostgreSQL engine with sub-1ms dynamic launch, real-time pg_stat_activity monitoring, nested subtransaction savepoints, and automatic catalog tracking.',
+    checklist: [
+      '<strong>Zero-Lock Observability</strong>: Real-time query/state telemetry reported directly in <code>pg_stat_activity</code> via <code>workerActivity</code>.',
+      '<strong>Internal Subtransaction Savepoints</strong>: Isolate per-record failures with <code>workerSavepoint</code> without aborting batch transaction pipelines.',
+      '<strong>Dynamic Startup & Fast IPC</strong>: Sub-1ms startup notifications via <code>MyProcPid</code> and <code>SIGUSR1</code> with automatic catalog registration in <code>pgxcrown_workers</code>.',
+      '<strong>Graceful Shutdown & Signal Handling</strong>: Cleanly intercepts <code>SIGTERM</code>/<code>SIGHUP</code> and auto-reconciles worker status before process exit.'
+    ],
+    tags: ['bgworker', 'pgxWorker', 'pg_stat_activity', 'Savepoints', 'pgxcrown_workers', 'Dynamic Workers'],
+    codeHeader: 'src/main.nim (Autonomous Background Worker)',
+    code: `<span class="syn-kw">import</span> pgxcrown
+
+<span class="syn-kw">proc</span> <span class="syn-fn">order_archiver_worker</span>*() <span class="syn-pragma">{.pgxWorker.}</span> =
+  <span class="syn-fn">workerInit</span>(<span class="syn-str">"postgres"</span>)
+  <span class="syn-kw">let</span> orders = <span class="syn-fn">table</span>(<span class="syn-str">"orders"</span>)
+
+  <span class="syn-fn">runWorkerLoop</span>(intervalMs = 5000):
+    <span class="syn-fn">workerActivity</span>(<span class="syn-str">"Checking expired orders"</span>):
+      <span class="syn-fn">workerTransaction</span>:
+        <span class="syn-kw">let</span> expired = <span class="syn-fn">Select</span>(orders.id, orders.status).<span class="syn-fn">From</span>(orders).<span class="syn-fn">Where</span>(orders.status == <span class="syn-str">"expired"</span>).<span class="syn-fn">all</span>(OrderRecord)
+        <span class="syn-kw">for</span> order <span class="syn-kw">in</span> expired:
+          <span class="syn-fn">workerSavepoint</span>:
+            <span class="syn-fn">InsertInto</span>(<span class="syn-str">"orders_history"</span>, <span class="syn-str">"id"</span>, <span class="syn-str">"status"</span>).<span class="syn-fn">Values</span>($order.id, <span class="syn-str">"archived"</span>).<span class="syn-fn">run</span>()
+            <span class="syn-fn">DeleteFrom</span>(<span class="syn-str">"orders"</span>).<span class="syn-fn">Where</span>(orders.id == order.id).<span class="syn-fn">run</span>()
+          <span class="syn-kw">do</span>:
+            <span class="syn-fn">pgWarning</span>(<span class="syn-str">"Failed to archive order "</span> & $order.id & <span class="syn-str">": "</span> & err.msg)`
   },
 
   shield: {
@@ -326,6 +377,14 @@ const cliLogs = {
     { text: '  ├─ Created directory: ~/.pgxtool/analytics/tests/sql', type: 'info' },
     { text: '  └─ Initialized entry point: ~/.pgxtool/analytics/src/main.nim', type: 'info' },
     { text: '✓ Project "analytics" scaffolded successfully!', type: 'success' }
+  ],
+  'pgxtool create-worker order_archiver': [
+    { text: '[pgxtool] Scaffolding autonomous Background Worker project: "order_archiver"', type: 'info' },
+    { text: '  ├─ Generated daemon entrypoint: order_archiver_worker() {.pgxWorker.}', type: 'success' },
+    { text: '  ├─ Created dynamic SQL controls: start_order_archiver_worker() / stop / status', type: 'success' },
+    { text: '  ├─ Wired real-time pg_stat_activity reporting: workerActivity(...)', type: 'info' },
+    { text: '  └─ Initialized SQL regression test: tests/sql/01_basic.sql', type: 'success' },
+    { text: '✓ Background Worker "order_archiver" scaffolded successfully!', type: 'success' }
   ],
   'pgxtool create-type nickname --base-type string': [
     { text: '[pgxtool] Generating custom distinct scalar base type "nickname"...', type: 'info' },
