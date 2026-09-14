@@ -301,22 +301,17 @@ proc stopWorkerByName*(name: string): bool =
   ## Terminates a worker by name via pg_terminate_backend and marks it stopped
   ensureWorkersCatalog()
   var targetPid = 0
-  spi_init:
-    pgTry:
-      let findQ = "SELECT pid FROM pgxcrown_workers WHERE name = " & quoteLiteral(name) & " AND status = 'running';"
-      if exec(const_string(findQ), 0) >= 0 and SPI_processed > 0:
-        let rows = fetchRawRows(findQ)
-        if rows.len > 0 and "pid" in rows[0]:
-          try:
-            targetPid = parseInt(rows[0]["pid"])
-          except ValueError:
-            targetPid = 0
+  let findQ = "SELECT pid FROM pgxcrown_workers WHERE name = " & quoteLiteral(name) & " AND status = 'running';"
+  let rows = fetchRawRows(findQ)
+  if rows.len > 0 and "pid" in rows[0]:
+    try:
+      targetPid = parseInt(rows[0]["pid"])
+    except ValueError:
+      targetPid = 0
 
   if targetPid > 0:
-    spi_init:
-      pgTry:
-        let termQ = "SELECT pg_terminate_backend(" & $targetPid & ");"
-        discard exec(const_string(termQ), 0)
+    let termQ = "SELECT pg_terminate_backend(" & $targetPid & ");"
+    discard fetchRawRows(termQ)
     trackWorkerStopped(name)
     return true
   return false
@@ -326,17 +321,14 @@ proc getWorkerStatusByName*(name: string): string =
   ensureWorkersCatalog()
   var recordedStatus = ""
   var targetPid = 0
-  spi_init:
-    pgTry:
-      let q = "SELECT pid, status FROM pgxcrown_workers WHERE name = " & quoteLiteral(name) & ";"
-      if exec(const_string(q), 0) >= 0 and SPI_processed > 0:
-        let rows = fetchRawRows(q)
-        if rows.len > 0:
-          recordedStatus = rows[0].getOrDefault("status", "")
-          try:
-            targetPid = parseInt(rows[0].getOrDefault("pid", "0"))
-          except ValueError:
-            targetPid = 0
+  let q = "SELECT pid, status FROM pgxcrown_workers WHERE name = " & quoteLiteral(name) & ";"
+  let rows = fetchRawRows(q)
+  if rows.len > 0:
+    recordedStatus = rows[0].getOrDefault("status", "")
+    try:
+      targetPid = parseInt(rows[0].getOrDefault("pid", "0"))
+    except ValueError:
+      targetPid = 0
 
   if recordedStatus == "":
     return "not_registered"
@@ -346,11 +338,10 @@ proc getWorkerStatusByName*(name: string): string =
   # If recorded as running, check if process is actually alive in pg_stat_activity
   var isAlive = false
   if targetPid > 0:
-    spi_init:
-      pgTry:
-        let checkQ = "SELECT 1 FROM pg_stat_activity WHERE pid = " & $targetPid & ";"
-        if exec(const_string(checkQ), 0) >= 0 and SPI_processed > 0:
-          isAlive = true
+    let checkQ = "SELECT 1 FROM pg_stat_activity WHERE pid = " & $targetPid & ";"
+    let checkRows = fetchRawRows(checkQ)
+    if checkRows.len > 0:
+      isAlive = true
 
   if isAlive:
     return "running"
@@ -454,6 +445,8 @@ template workerTransaction*(body: untyped) =
 
 
 template runWorkerLoop*(intervalMs: int, body: untyped, shutdownHandler: untyped) =
+  if MyLatch != nil:
+    ResetLatch(MyLatch)
   while volatileLoad(addr workerGotSigterm) == 0:
     if volatileLoad(addr workerGotSighup) != 0:
       volatileStore(addr workerGotSighup, 0)
@@ -467,8 +460,11 @@ template runWorkerLoop*(intervalMs: int, body: untyped, shutdownHandler: untyped
     if volatileLoad(addr workerGotSigterm) != 0:
       break
     setWorkerIdle("waiting for next cycle (" & $intervalMs & "ms)")
+    if MyLatch != nil:
+      ResetLatch(MyLatch)
     let rc = WaitLatch(MyLatch, WL_LATCH_SET or WL_TIMEOUT or WL_POSTMASTER_DEATH, clong(intervalMs), PG_WAIT_EXTENSION)
-    ResetLatch(MyLatch)
+    if MyLatch != nil:
+      ResetLatch(MyLatch)
     if (rc and WL_POSTMASTER_DEATH) != 0:
       workerExit(1)
 

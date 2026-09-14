@@ -288,8 +288,7 @@ template subTransaction*(body: untyped) =
   ## without invalidating the parent transaction, and the error is re-raised.
   BeginInternalSubTransaction(nil)
   try:
-    pgTry:
-      body
+    body
     ReleaseCurrentSubTransaction()
   except CatchableError as e:
     RollbackAndReleaseCurrentSubTransaction()
@@ -306,8 +305,7 @@ template savepoint*(body: untyped, onError: untyped) =
   BeginInternalSubTransaction(nil)
   var caughtEx: ref CatchableError = nil
   try:
-    pgTry:
-      body
+    body
     ReleaseCurrentSubTransaction()
   except CatchableError as e:
     RollbackAndReleaseCurrentSubTransaction()

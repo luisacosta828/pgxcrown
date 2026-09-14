@@ -119,14 +119,24 @@ template report*(log_strategy, msg: typed) =
 # PG_TRY Guard for Safe PostgreSQL C & SPI Calls
 # -----------------------------------------------------------------------------
 type
-  RawClosure = object
-    p: pointer
-    env: pointer
+  RawClosure* = object
+    p*: pointer
+    env*: pointer
+
+  PgxRunnerData* = object
+    rc*: RawClosure
+    nimEx*: ref CatchableError
+    nimDefect*: ref Defect
 
 proc cdeclRunner(data: pointer) {.cdecl.} =
-  let r = cast[ptr RawClosure](data)
-  let fn = cast[proc(env: pointer) {.nimcall.}](r.p)
-  fn(r.env)
+  let d = cast[ptr PgxRunnerData](data)
+  let fn = cast[proc(env: pointer) {.nimcall.}](d.rc.p)
+  try:
+    fn(d.rc.env)
+  except CatchableError as e:
+    d.nimEx = e
+  except Defect as e:
+    d.nimDefect = e
 
 template pgTry*(body: untyped): untyped =
   ## Executes code within PostgreSQL's PG_TRY / PG_CATCH block.
@@ -136,9 +146,13 @@ template pgTry*(body: untyped): untyped =
     type ActionClosure = proc() {.closure.}
     var actionToRun: ActionClosure = proc() =
       body
-    var rc = cast[RawClosure](actionToRun)
+    var rdata = PgxRunnerData(rc: cast[RawClosure](actionToRun), nimEx: nil, nimDefect: nil)
     var captured: PgxCapturedError
-    let ok = pgxCallGuarded(cdeclRunner, addr rc, addr captured)
+    let ok = pgxCallGuarded(cdeclRunner, addr rdata, addr captured)
+    if rdata.nimDefect != nil:
+      raise rdata.nimDefect
+    if rdata.nimEx != nil:
+      raise rdata.nimEx
     if not ok:
       var err = newException(PostgresError, if captured.message != nil: $captured.message else: "PostgreSQL execution error")
       err.sqlerrcode = captured.sqlerrcode
