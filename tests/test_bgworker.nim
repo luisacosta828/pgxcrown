@@ -14,6 +14,7 @@ import std/[unittest, strutils]
 static struct Latch mockLatch;
 struct Latch *MyLatch = &mockLatch;
 int MyProcPid = 4242;
+BackgroundWorker *MyBgworkerEntry = NULL;
 #undef vsnprintf
 
 #undef snprintf
@@ -230,3 +231,20 @@ suite "Pgxcrown - PostgreSQL Background Worker (BGWorker) Suite":
     check "SELECT start_telemetry_worker() > 0 AS worker_started;" in testSql
     check "SELECT telemetry_worker_status();" in testSql
     check "SELECT stop_telemetry_worker();" in testSql
+
+  test "Worker introspection & graceful shutdown verification":
+    # Default without entry should be empty string
+    check getWorkerName() == ""
+    check getWorkerType() == ""
+
+    # Simulated worker entry
+    var mockWorker: BackgroundWorker
+    for i, ch in "archiver_daemon":
+      mockWorker.bgw_name[i] = ch
+    for i, ch in "Archiver":
+      mockWorker.bgw_type[i] = ch
+
+    MyBgworkerEntry = addr mockWorker
+    check getWorkerName() == "archiver_daemon"
+    check getWorkerType() == "Archiver"
+    MyBgworkerEntry = nil

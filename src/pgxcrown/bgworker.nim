@@ -65,6 +65,16 @@ proc getWorkerExtra*(): string =
     return $cast[cstring](addr MyBgworkerEntry.bgw_extra[0])
   return ""
 
+proc getWorkerName*(): string =
+  if MyBgworkerEntry != nil and MyBgworkerEntry.bgw_name[0] != '\0':
+    return $cast[cstring](addr MyBgworkerEntry.bgw_name[0])
+  return ""
+
+proc getWorkerType*(): string =
+  if MyBgworkerEntry != nil and MyBgworkerEntry.bgw_type[0] != '\0':
+    return $cast[cstring](addr MyBgworkerEntry.bgw_type[0])
+  return ""
+
 type
   WorkerHandle* = object
     raw*: BackgroundWorkerHandlePtr
@@ -443,7 +453,7 @@ template workerTransaction*(body: untyped) =
     raise e
 
 
-template runWorkerLoop*(intervalMs: int, body: untyped) =
+template runWorkerLoop*(intervalMs: int, body: untyped, shutdownHandler: untyped) =
   while volatileLoad(addr workerGotSigterm) == 0:
     if volatileLoad(addr workerGotSighup) != 0:
       volatileStore(addr workerGotSighup, 0)
@@ -461,4 +471,26 @@ template runWorkerLoop*(intervalMs: int, body: untyped) =
     ResetLatch(MyLatch)
     if (rc and WL_POSTMASTER_DEATH) != 0:
       workerExit(1)
+
+  # Graceful shutdown: auto-update catalog and execute shutdown handler
+  let wName = getWorkerName()
+  if wName.len > 0:
+    try:
+      trackWorkerStopped(wName)
+    except CatchableError:
+      discard
+    except Defect:
+      discard
+
+  try:
+    shutdownHandler
+  except CatchableError as err:
+    pgWarning("BgWorker shutdown error: " & err.msg)
+  except Defect as defect:
+    pgWarning("BgWorker shutdown defect: " & defect.msg)
+  setWorkerIdle("stopped")
   workerExit(0)
+
+template runWorkerLoop*(intervalMs: int, body: untyped) =
+  runWorkerLoop(intervalMs, body):
+    discard
