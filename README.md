@@ -31,6 +31,7 @@
 - **Universal Objects & Composite Types**: Pure Nim `object` types automatically generate `CREATE TYPE "Name" AS (...)` DDL with bidirectional binary marshaling (`tupleHeaderToObject`, `objectToDatum`).
 - **Declarative Custom Base Types**: Declarative pragmas (`{.pgxType.}`, `{.pgxInput.}`, `{.pgxOutput.}`) supporting 15 flat scalar types with type-specific parsing and automatic DDL generation.
 - **Smart Incremental Toolchain (`pgxtool`)**: Sub-15ms incremental builds via SHA-256 source manifests, isolated `.pgx_build/nimcache`, and ephemeral Docker container testing across PostgreSQL 14–17 with golden snapshot diffing (`--bless`).
+- **Autonomous Background Workers (`pgxWorker`)**: In-database daemons with sub-1ms dynamic launch (`bgw_notify_pid`), zero-lock live observability (`workerActivity` in `pg_stat_activity`), nested subtransactions (`workerSavepoint`), automatic catalog tracking (`pgxcrown_workers`), and graceful signal shutdown (`onShutdown`).
 - **Compile-Time Effect Verification**: Static enforcement of SQL volatility (`{.immutable.}`, `{.stable.}`, `{.volatile.}`) preventing illegal database writes at compile time.
 
 ---
@@ -259,6 +260,104 @@ let topUsers  = Select(u.id, u.username, u.score).From(u).OrderBy(u.score.desc).
 
 ---
 
+### 6. Autonomous Background Workers (In-Database Daemons)
+
+Deploy persistent or dynamic background processes directly inside PostgreSQL using pure Nim—with zero `Datum` leaks, instant startup, real-time DBA observablity, and failure isolation:
+
+- **Declarative DSL (`bgWorker`)**: Configure entrypoints, target databases, and restart policies without handling raw C structs.
+- **Instant (~1ms) Dynamic Startup**: Module-level `MyProcPid` binding ensures instant `SIGUSR1` wake-up from the Postmaster.
+- **Zero-Lock Live Observability (`workerActivity`)**: Reports real-time status into `pg_stat_activity` (`query` and `state` columns) without table locks or performance degradation.
+- **Subtransactions & Savepoints (`workerSavepoint`)**: Isolate per-record failures during batch runs without aborting the parent transaction.
+- **Catalog Tracking & Lifecycle SQL**: Automatically registers PID and status in `pgxcrown_workers` and exposes `start_<name>_worker()`, `stop_<name>_worker()`, and `<name>_worker_status()` functions to SQL.
+- **Graceful Shutdown (`onShutdown`)**: Cleanly intercepts `SIGTERM` and auto-reconciles the catalog before process exit.
+
+```nim
+import pgxcrown
+
+type
+  OrderRecord* = object
+    id*: int
+    customer*: string
+    amount*: float
+    status*: string
+
+# Background Worker Daemon Entrypoint
+proc order_archiver_worker*() {.pgxWorker.} =
+  workerInit("postgres")
+
+  let orders = table("orders")
+  let vencidos = table("vencidos")
+
+  runWorkerLoop(intervalMs = 5000):
+    workerActivity("Checking expired orders"):
+      workerTransaction:
+        # Type-safe CTE pipeline
+        let expired = WithCte("vencidos",
+          Select(orders.id, orders.customer, orders.amount, orders.status)
+            .From(orders)
+            .Where(orders.status == "vencido")
+        )
+          .Select(vencidos.id, vencidos.customer, vencidos.amount, vencidos.status)
+          .From(vencidos)
+          .all(OrderRecord)
+
+        if expired.len > 0:
+          workerActivity("Archiving " & $expired.len & " expired orders"):
+            for exp in expired:
+              let order = exp
+              # Subtransaction savepoint: errors in one record do not fail the entire batch!
+              workerSavepoint:
+                InsertInto("orders_history", "id", "customer", "amount", "status")
+                  .Values($order.id, quoteLiteral(order.customer), $order.amount, quoteLiteral(order.status))
+                  .run()
+                DeleteFrom("orders").Where(orders.id == order.id).run()
+              do:
+                pgWarning("Failed to archive order " & $order.id & ": " & err.msg)
+  do:
+    pgNotice("OrderArchiver worker cleanly shut down.")
+
+# SQL Launcher Function (dynamically starts worker)
+proc start_order_archiver_worker*(): int32 {.volatile.} =
+  let cfg = bgWorker("order_archiver"):
+    database "postgres"
+    restart 30
+  let handle = registerDynamicWorker(cfg)
+  if handle.isSome:
+    let (status, pid) = handle.get.waitForStartup()
+    if status == bgwStarted:
+      trackWorkerStarted("order_archiver", pid)
+      return pid.int32
+  return -1'i32
+
+# SQL Graceful Stop Function
+proc stop_order_archiver_worker*(): bool {.volatile.} =
+  return stopWorkerByName("order_archiver")
+
+# SQL Live Status Function
+proc order_archiver_worker_status*(): string {.volatile.} =
+  return getWorkerStatusByName("order_archiver")
+```
+
+#### SQL Management & Live Monitoring:
+```sql
+-- Start worker and retrieve PID:
+SELECT start_order_archiver_worker();
+
+-- Live observability in pg_stat_activity:
+SELECT pid, state, query, wait_event 
+FROM pg_stat_activity 
+WHERE backend_type = 'order_archiver';
+
+-- Query catalog status:
+SELECT * FROM pgxcrown_workers;
+SELECT order_archiver_worker_status(); -- Returns 'running' or 'stopped'
+
+-- Stop worker cleanly via SQL:
+SELECT stop_order_archiver_worker();
+```
+
+---
+
 ## 💻 `pgxtool` CLI Reference
 
 `pgxtool` automates the entire PostgreSQL extension lifecycle:
@@ -267,6 +366,7 @@ let topUsers  = Select(u.id, u.username, u.score).From(u).OrderBy(u.score.desc).
 | :--- | :--- | :--- |
 | **`init`** | `pgxtool init` | Initializes the local extension workspace directory (`~/.pgxtool`). |
 | **`create-project`** | `pgxtool create-project <name>` | Scaffolds a new extension project directory, `main.nim`, and test templates. |
+| **`create-worker`** | `pgxtool create-worker <name>` | Scaffolds an autonomous background worker daemon with dynamic launcher and lifecycle functions. |
 | **`build-extension`** | `pgxtool build-extension <name> [options]` | Compiles Nim to `.so` shared library, runs security audit, and generates DDL. |
 | | `--clean` | Cleans previous build artifacts and cache before compiling. |
 | | `--force` (`-f`) | Ignores incremental cache and forces complete recompilation. |

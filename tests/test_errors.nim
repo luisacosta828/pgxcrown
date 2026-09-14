@@ -2,11 +2,28 @@
 import unittest
 import std/strutils
 import ../src/pgxcrown
-
 {.emit: """
+#include "postgres.h"
+#include "utils/elog.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include <stdlib.h>
+
+sigjmp_buf *PG_exception_stack = NULL;
+ErrorContextCallback *error_context_stack = NULL;
+
+bool errstart(int elevel, const char *domain) { return false; }
+void errfinish(const char *filename, int lineno, const char *funcname) {}
+int errcode(int sqlerrcode) { return 0; }
+int errmsg(const char *fmt, ...) { return 0; }
+int errdetail(const char *fmt, ...) { return 0; }
+int errhint(const char *fmt, ...) { return 0; }
+ErrorData *CopyErrorData(void) { return NULL; }
+void FlushErrorState(void) {}
+void FreeErrorData(ErrorData *edata) {}
+char *pstrdup(const char *in) { return in ? strdup(in) : NULL; }
+
 #undef sprintf
 #undef vsprintf
 #undef strerror

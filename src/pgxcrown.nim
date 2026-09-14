@@ -8,6 +8,7 @@ include pgxcrown/pgxmacros
 import pgxcrown/reports/reports
 import pgxcrown/query_builder
 import pgxcrown/spi
+import pgxcrown/bgworker
 
 template trusted*() {.pragma: [raises: [ValueError], forbids: [IOEffect, TimeEffect], tags: []].}
 template immutable*() {.pragma: [noSideEffect, trusted, forbids: [DbReadEffect, DbWriteEffect]].}
@@ -27,6 +28,11 @@ template pgxReceive*() {.pragma.}
 template pgxReceive*(customType: typed) {.pragma.}
 template pgxSend*() {.pragma.}
 template pgxSend*(customType: typed) {.pragma.}
+
+# Background Worker & Hook Pragmas
+template pgxWorker*() {.pragma.}
+template pgxWorker*(name: string) {.pragma.}
+template pgxInit*() {.pragma.}
 
 const pgTargetVersion* {.intdefine.}: int = 0
 
@@ -120,3 +126,4 @@ export jsonb
 export query_builder
 export spi
 export strings
+export bgworker

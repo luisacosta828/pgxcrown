@@ -571,7 +571,7 @@ proc analyze_node(code: NimNode): NimNode =
       result = newNimNode(code.kind)
       for child in code:
         result.add analyze_node(child)
-  of nnkTryStmt, nnkExceptBranch, nnkConstSection, nnkLetSection, nnkConstDef, nnkIdentDefs, nnkCast:
+  of nnkTryStmt, nnkExceptBranch, nnkConstSection, nnkLetSection, nnkConstDef, nnkIdentDefs, nnkCast, nnkVarTuple:
     for child in code:
       result.add analyze_node(child)
   else:

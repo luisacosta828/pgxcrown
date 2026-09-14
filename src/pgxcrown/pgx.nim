@@ -374,9 +374,88 @@ macro decorateMainFunctions*() =
         return true
     return false
 
+  proc isWorkerProc(fn: NimNode): bool =
+    if fn.pragma.kind != nnkEmpty:
+      for p in fn.pragma:
+        let pName = if p.kind == nnkExprColonExpr: p[0].repr.toLowerAscii else: p.repr.toLowerAscii
+        if pName in ["pgxworker", "pgx_worker", "bgworker"]:
+          return true
+    return false
+
+  proc isInitProc(fn: NimNode): bool =
+    let fnNameStr = fn.name.repr.strip(chars = {'*'})
+    if fnNameStr == "_PG_init":
+      return true
+    if fn.pragma.kind != nnkEmpty:
+      for p in fn.pragma:
+        let pName = if p.kind == nnkExprColonExpr: p[0].repr.toLowerAscii else: p.repr.toLowerAscii
+        if pName in ["pgxinit", "pgx_init"]:
+          return true
+    return false
+
   # Pass 2: Process function definitions
   for el in source:
     if el.kind in {nnkProcDef, nnkFuncDef}:
+      if isInitProc(el):
+        if el.pragma.kind == nnkEmpty:
+          el.pragma = newNimNode(nnkPragma)
+        el.pragma.add(newIdentNode("cdecl"))
+        el.pragma.add(newIdentNode("exportc"))
+        el.pragma.add(newIdentNode("dynlib"))
+        continue
+
+      if isWorkerProc(el):
+        if el.pragma.kind == nnkEmpty:
+          el.pragma = newNimNode(nnkPragma)
+        el.pragma.add(newIdentNode("cdecl"))
+        el.pragma.add(newIdentNode("exportc"))
+        el.pragma.add(newIdentNode("dynlib"))
+
+        var prepends = newTree(nnkStmtList)
+        let origParams = el.params
+
+        if origParams.len <= 1:
+          el.params = newTree(nnkFormalParams, newEmptyNode(),
+            newIdentDefs(newIdentNode("pgx_main_arg"), newIdentNode("Datum")))
+        elif origParams.len == 2:
+          let pName = origParams[1][0]
+          let pType = origParams[1][1].repr.strip
+          el.params = newTree(nnkFormalParams, newEmptyNode(),
+            newIdentDefs(newIdentNode("pgx_main_arg"), newIdentNode("Datum")))
+          if pType in ["string", "cstring"]:
+            prepends.add newLetStmt(pName, newCall(newIdentNode("getWorkerExtra")))
+          else:
+            prepends.add newLetStmt(pName, newTree(nnkCast, newIdentNode(pType), newIdentNode("pgx_main_arg")))
+        elif origParams.len >= 3:
+          let p1Name = origParams[1][0]
+          let p1Type = origParams[1][1].repr.strip
+          let p2Name = origParams[2][0]
+          el.params = newTree(nnkFormalParams, newEmptyNode(),
+            newIdentDefs(newIdentNode("pgx_main_arg"), newIdentNode("Datum")))
+          prepends.add newLetStmt(p1Name, newTree(nnkCast, newIdentNode(p1Type), newIdentNode("pgx_main_arg")))
+          prepends.add newLetStmt(p2Name, newCall(newIdentNode("getWorkerExtra")))
+
+        var workerBody = el.body
+        if prepends.len > 0:
+          prepends.add workerBody
+          workerBody = prepends
+
+        var exceptDefect = newTree(nnkExceptBranch,
+          newTree(nnkInfix, newIdentNode("as"), newIdentNode("Defect"), newIdentNode("e")),
+          newTree(nnkStmtList,
+            newCall(newIdentNode("pgWarning"), newTree(nnkInfix, newIdentNode("&"), newLit("Background Worker defect: "), newDotExpr(newIdentNode("e"), newIdentNode("msg")))),
+            newCall(newIdentNode("workerExit"), newLit(1))
+          )
+        )
+        var exceptCatchable = newTree(nnkExceptBranch,
+          newTree(nnkInfix, newIdentNode("as"), newIdentNode("CatchableError"), newIdentNode("e")),
+          newTree(nnkStmtList,
+            newCall(newIdentNode("pgWarning"), newTree(nnkInfix, newIdentNode("&"), newLit("Background Worker error: "), newDotExpr(newIdentNode("e"), newIdentNode("msg")))),
+            newCall(newIdentNode("workerExit"), newLit(1))
+          )
+        )
+        el.body = newTree(nnkTryStmt, workerBody, exceptCatchable, exceptDefect)
+        continue
       let (role, declaredTargetType) = getFnRole(el)
       let isExp = isExportedProc(el) or role.len > 0
       if not isImportc(el) and isExp:

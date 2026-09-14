@@ -1,3 +1,4 @@
+{.passC: "-I/usr/include/postgresql/14/server -I/usr/include/postgresql".}
 import std/[unittest, tables, options, strutils, json]
 import ../src/pgxcrown/query_builder
 import ../src/pgxcrown/spi
