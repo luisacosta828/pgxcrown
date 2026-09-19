@@ -9,41 +9,163 @@ import std/[strutils, sequtils, tables, macros, options, json]
 export json
 
 # =============================================================================
-# 1. Parameter Types & Safe Value Encoding
+# 1. Parameter Types & Safe Value Encoding (SQL Injection Defense)
 # =============================================================================
-type
-  ParamKind* = enum
-    pkInt, pkFloat, pkString, pkBool, pkNull, pkJson
+proc sanitizeLiteralString*(s: string): string =
+  ## Strips null bytes and escapes single quotes
+  var clean = newStringOfCap(s.len)
+  for ch in s:
+    if ch != '\0':
+      if ch == '\'':
+        clean.add("''")
+      else:
+        clean.add(ch)
+  clean
 
-  QueryParam* = object
-    case kind*: ParamKind
-    of pkInt: intVal*: int
-    of pkFloat: floatVal*: float
-    of pkString: strVal*: string
-    of pkBool: boolVal*: bool
-    of pkNull: discard
-    of pkJson: jsonVal*: JsonNode
+proc quoteLiteral*(s: string): string =
+  ## Safely escapes and quotes single quotes in string literals ('O''Reilly'),
+  ## and strips null bytes to protect against C string poisoning.
+  "'" & sanitizeLiteralString(s) & "'"
 
-proc toParam*(v: int): QueryParam = QueryParam(kind: pkInt, intVal: v)
-proc toParam*(v: float): QueryParam = QueryParam(kind: pkFloat, floatVal: v)
-proc toParam*(v: string): QueryParam = QueryParam(kind: pkString, strVal: v)
-proc toParam*(v: bool): QueryParam = QueryParam(kind: pkBool, boolVal: v)
-proc toParam*(v: JsonNode): QueryParam = QueryParam(kind: pkJson, jsonVal: v)
+proc sanitizeIdentifierString*(s: string): string =
+  ## Strips null bytes and escapes double quotes
+  var clean = newStringOfCap(s.len)
+  for ch in s:
+    if ch != '\0':
+      if ch == '"':
+        clean.add("\"\"")
+      else:
+        clean.add(ch)
+  clean
 
 proc quoteIdent*(s: string): string =
-  ## Safely quotes PostgreSQL table or column identifiers ("table"."col")
+  ## Safely quotes PostgreSQL table or column identifiers ("table"."col"),
+  ## and strips null bytes to prevent identifier injection.
   if s.len == 0: return ""
   if "." in s:
     var parts = s.split('.')
     for i in 0 ..< parts.len:
-      if parts[i] != "*": parts[i] = "\"" & parts[i].replace("\"", "\"\"") & "\""
+      if parts[i] != "*": parts[i] = "\"" & sanitizeIdentifierString(parts[i]) & "\""
     return parts.join(".")
   if s == "*": return "*"
-  return "\"" & s.replace("\"", "\"\"") & "\""
+  return "\"" & sanitizeIdentifierString(s) & "\""
 
-proc quoteLiteral*(s: string): string =
-  ## Safely escapes and quotes single quotes in string literals ('O''Reilly')
-  return "'" & s.replace("'", "''") & "'"
+proc isSafelyQuotedLiteral*(s: string): bool =
+  ## Checks if string is already a valid, safely escaped single-quoted SQL literal
+  if s.len < 2 or s[0] != '\'' or s[^1] != '\'':
+    return false
+  var i = 1
+  while i < s.len - 1:
+    if s[i] == '\0':
+      return false
+    elif s[i] == '\'':
+      if i + 1 < s.len - 1 and s[i + 1] == '\'':
+        i += 2
+      else:
+        return false # Unescaped quote inside literal -> unsafe!
+    else:
+      i += 1
+  return true
+
+proc isNumericLiteral*(s: string): bool =
+  ## Checks if string is a pure numeric literal (integer or float)
+  if s.len == 0: return false
+  var hasDigit = false
+  var hasDot = false
+  var start = 0
+  if s[0] in {'+', '-'}:
+    start = 1
+  if start >= s.len: return false
+  for j in start ..< s.len:
+    if s[j] in '0'..'9':
+      hasDigit = true
+    elif s[j] == '.' and not hasDot:
+      hasDot = true
+    else:
+      return false
+  return hasDigit
+
+proc isKeywordLiteral*(s: string): bool =
+  ## Checks if string is a safe SQL keyword literal
+  let lower = s.toLowerAscii
+  lower in ["true", "false", "null", "default"]
+
+proc isArrayLiteral*(s: string): bool =
+  ## Checks if string represents an ARRAY[...] literal (e.g. from formatSqlValue)
+  if s.len >= 7 and s.startsWith("ARRAY["):
+    if s.endsWith("]"): return true
+    if s.endsWith("]::jsonb[]") or s.endsWith("]::text[]") or s.endsWith("]::int[]") or s.endsWith("]::bigint[]"): return true
+  return false
+
+proc safeSqlValue*(s: string): string =
+  ## Automatically sanitizes any value for SQL query generation.
+  ## Preserves already-safe balanced SQL string literals ('...'), pure numeric literals,
+  ## standard keywords (TRUE, FALSE, NULL, DEFAULT), and PostgreSQL array literals (ARRAY[...]).
+  ## Any other value is strictly escaped and enclosed in single quotes.
+  if isSafelyQuotedLiteral(s):
+    quoteLiteral(s[1 .. ^2].replace("''", "'"))
+  elif isNumericLiteral(s) or isKeywordLiteral(s) or isArrayLiteral(s):
+    s
+  else:
+    quoteLiteral(s)
+
+type
+  RawSql* = distinct string
+
+proc raw*(s: string): RawSql = RawSql(s)
+proc `$`*(r: RawSql): string = string(r)
+
+type
+  ParamKind* = enum
+    pkInt, pkFloat, pkString, pkBool, pkNull, pkJson, pkRaw
+
+  QueryParam* = object
+    case kind*: ParamKind
+    of pkInt: intVal*: int64
+    of pkFloat: floatVal*: float64
+    of pkString: strVal*: string
+    of pkBool: boolVal*: bool
+    of pkNull: discard
+    of pkJson: jsonVal*: JsonNode
+    of pkRaw: rawVal*: string
+
+proc toParam*(v: int): QueryParam = QueryParam(kind: pkInt, intVal: v.int64)
+proc toParam*(v: int32): QueryParam = QueryParam(kind: pkInt, intVal: v.int64)
+proc toParam*(v: int64): QueryParam = QueryParam(kind: pkInt, intVal: v)
+proc toParam*(v: int16): QueryParam = QueryParam(kind: pkInt, intVal: v.int64)
+proc toParam*(v: int8): QueryParam = QueryParam(kind: pkInt, intVal: v.int64)
+proc toParam*(v: uint): QueryParam = QueryParam(kind: pkInt, intVal: v.int64)
+proc toParam*(v: uint32): QueryParam = QueryParam(kind: pkInt, intVal: v.int64)
+proc toParam*(v: uint64): QueryParam = QueryParam(kind: pkInt, intVal: cast[int64](v))
+proc toParam*(v: float): QueryParam = QueryParam(kind: pkFloat, floatVal: v)
+proc toParam*(v: float32): QueryParam = QueryParam(kind: pkFloat, floatVal: v.float64)
+proc toParam*(v: string): QueryParam = QueryParam(kind: pkString, strVal: v)
+proc toParam*(v: cstring): QueryParam = (if v == nil: QueryParam(kind: pkNull) else: QueryParam(kind: pkString, strVal: $v))
+proc toParam*(v: bool): QueryParam = QueryParam(kind: pkBool, boolVal: v)
+proc toParam*(v: JsonNode): QueryParam = (if v.isNil or v.kind == JNull: QueryParam(kind: pkNull) else: QueryParam(kind: pkJson, jsonVal: v))
+proc toParam*(r: RawSql): QueryParam = QueryParam(kind: pkRaw, rawVal: string(r))
+proc toParam*(p: QueryParam): QueryParam = p
+proc toParam*[T](o: Option[T]): QueryParam = (if o.isSome: toParam(o.get) else: QueryParam(kind: pkNull))
+
+converter toQueryParam*(v: int): QueryParam = toParam(v)
+converter toQueryParam*(v: int32): QueryParam = toParam(v)
+converter toQueryParam*(v: int64): QueryParam = toParam(v)
+converter toQueryParam*(v: float): QueryParam = toParam(v)
+converter toQueryParam*(v: float32): QueryParam = toParam(v)
+converter toQueryParam*(v: bool): QueryParam = toParam(v)
+converter toQueryParam*(v: string): QueryParam = toParam(v)
+converter toQueryParam*(v: JsonNode): QueryParam = toParam(v)
+converter toQueryParam*(r: RawSql): QueryParam = toParam(r)
+
+proc `$`*(p: QueryParam): string =
+  case p.kind
+  of pkInt: $p.intVal
+  of pkFloat: $p.floatVal
+  of pkString: safeSqlValue(p.strVal)
+  of pkBool: (if p.boolVal: "TRUE" else: "FALSE")
+  of pkNull: "NULL"
+  of pkJson: quoteLiteral($p.jsonVal)
+  of pkRaw: p.rawVal
 
 # =============================================================================
 # 2. Table & Column Identifiers (Zero-string Table Proxies)
@@ -59,11 +181,10 @@ type
     rawCol*: string
 
   SqlIdent* = distinct string
-  RawSql* = distinct string
 
 proc table*(name: string, alias: string = ""): TableRef =
   ## Creates a Table Proxy for zero-string column access (e.g. `let u = table("users", "u")`)
-  TableRef(rawTable: name, rawAlias: alias)
+  TableRef(rawTable: sanitizeIdentifierString(name), rawAlias: sanitizeIdentifierString(alias))
 
 template `.`*(t: TableRef, field: untyped): ColumnRef =
   ## Dot-access for table proxies: `u.name` -> ColumnRef(table: "u", col: "name")
@@ -72,7 +193,6 @@ template `.`*(t: TableRef, field: untyped): ColumnRef =
 proc sqlIdent*(s: string): SqlIdent = SqlIdent(s)
 proc sqlId*(s: string): SqlIdent = SqlIdent(s)
 proc ident*(s: string): ColumnRef = ColumnRef(rawCol: s)
-proc raw*(s: string): RawSql = RawSql(s)
 
 proc `$`*(c: ColumnRef): string =
   let prefix = if c.rawAlias.len > 0: c.rawAlias else: c.rawTable
@@ -82,7 +202,6 @@ proc `$`*(c: ColumnRef): string =
     quoteIdent(c.rawCol)
 
 proc `$`*(id: SqlIdent): string = quoteIdent(string(id))
-proc `$`*(r: RawSql): string = string(r)
 
 # =============================================================================
 # 3. Expressions, Window Functions, and Case Statements
@@ -110,22 +229,50 @@ proc `!=`*(a: ColumnRef, b: ColumnRef): SqlExpr = SqlExpr(sql: $a & " != " & $b)
 # Column to Value comparison (automatically escaped / parameterized)
 proc `==`*(c: ColumnRef, val: string): SqlExpr = SqlExpr(sql: $c & " = " & quoteLiteral(val))
 proc `==`*(c: ColumnRef, val: int): SqlExpr = SqlExpr(sql: $c & " = " & $val)
+proc `==`*(c: ColumnRef, val: int32): SqlExpr = SqlExpr(sql: $c & " = " & $val)
+proc `==`*(c: ColumnRef, val: int64): SqlExpr = SqlExpr(sql: $c & " = " & $val)
 proc `==`*(c: ColumnRef, val: float): SqlExpr = SqlExpr(sql: $c & " = " & $val)
 proc `==`*(c: ColumnRef, val: bool): SqlExpr = SqlExpr(sql: $c & " = " & (if val: "TRUE" else: "FALSE"))
+proc `==`*(c: ColumnRef, val: QueryParam): SqlExpr = SqlExpr(sql: $c & " = " & $val)
+proc `==`*(c: ColumnRef, val: JsonNode): SqlExpr = SqlExpr(sql: $c & " = " & quoteLiteral($val))
 
 proc `!=`*(c: ColumnRef, val: string): SqlExpr = SqlExpr(sql: $c & " != " & quoteLiteral(val))
 proc `!=`*(c: ColumnRef, val: int): SqlExpr = SqlExpr(sql: $c & " != " & $val)
+proc `!=`*(c: ColumnRef, val: int32): SqlExpr = SqlExpr(sql: $c & " != " & $val)
+proc `!=`*(c: ColumnRef, val: int64): SqlExpr = SqlExpr(sql: $c & " != " & $val)
+proc `!=`*(c: ColumnRef, val: float): SqlExpr = SqlExpr(sql: $c & " != " & $val)
+proc `!=`*(c: ColumnRef, val: bool): SqlExpr = SqlExpr(sql: $c & " != " & (if val: "TRUE" else: "FALSE"))
+proc `!=`*(c: ColumnRef, val: QueryParam): SqlExpr = SqlExpr(sql: $c & " != " & $val)
 
 proc `>=`*(c: ColumnRef, val: int): SqlExpr = SqlExpr(sql: $c & " >= " & $val)
+proc `>=`*(c: ColumnRef, val: int32): SqlExpr = SqlExpr(sql: $c & " >= " & $val)
+proc `>=`*(c: ColumnRef, val: int64): SqlExpr = SqlExpr(sql: $c & " >= " & $val)
 proc `>=`*(c: ColumnRef, val: float): SqlExpr = SqlExpr(sql: $c & " >= " & $val)
+proc `>=`*(c: ColumnRef, val: string): SqlExpr = SqlExpr(sql: $c & " >= " & quoteLiteral(val))
+
 proc `<=`*(c: ColumnRef, val: int): SqlExpr = SqlExpr(sql: $c & " <= " & $val)
+proc `<=`*(c: ColumnRef, val: int32): SqlExpr = SqlExpr(sql: $c & " <= " & $val)
+proc `<=`*(c: ColumnRef, val: int64): SqlExpr = SqlExpr(sql: $c & " <= " & $val)
 proc `<=`*(c: ColumnRef, val: float): SqlExpr = SqlExpr(sql: $c & " <= " & $val)
+proc `<=`*(c: ColumnRef, val: string): SqlExpr = SqlExpr(sql: $c & " <= " & quoteLiteral(val))
+
 proc `>`*(c: ColumnRef, val: int): SqlExpr = SqlExpr(sql: $c & " > " & $val)
+proc `>`*(c: ColumnRef, val: int32): SqlExpr = SqlExpr(sql: $c & " > " & $val)
+proc `>`*(c: ColumnRef, val: int64): SqlExpr = SqlExpr(sql: $c & " > " & $val)
+proc `>`*(c: ColumnRef, val: float): SqlExpr = SqlExpr(sql: $c & " > " & $val)
+proc `>`*(c: ColumnRef, val: string): SqlExpr = SqlExpr(sql: $c & " > " & quoteLiteral(val))
+
 proc `<`*(c: ColumnRef, val: int): SqlExpr = SqlExpr(sql: $c & " < " & $val)
+proc `<`*(c: ColumnRef, val: int32): SqlExpr = SqlExpr(sql: $c & " < " & $val)
+proc `<`*(c: ColumnRef, val: int64): SqlExpr = SqlExpr(sql: $c & " < " & $val)
+proc `<`*(c: ColumnRef, val: float): SqlExpr = SqlExpr(sql: $c & " < " & $val)
+proc `<`*(c: ColumnRef, val: string): SqlExpr = SqlExpr(sql: $c & " < " & quoteLiteral(val))
 
 # String helper operators
 proc like*(c: ColumnRef, pattern: string): SqlExpr = SqlExpr(sql: $c & " LIKE " & quoteLiteral(pattern))
 proc ilike*(c: ColumnRef, pattern: string): SqlExpr = SqlExpr(sql: $c & " ILIKE " & quoteLiteral(pattern))
+proc notLike*(c: ColumnRef, pattern: string): SqlExpr = SqlExpr(sql: $c & " NOT LIKE " & quoteLiteral(pattern))
+proc notIlike*(c: ColumnRef, pattern: string): SqlExpr = SqlExpr(sql: $c & " NOT ILIKE " & quoteLiteral(pattern))
 
 # NULL helpers
 proc isNull*(c: ColumnRef): SqlExpr = SqlExpr(sql: $c & " IS NULL")
@@ -133,16 +280,44 @@ proc isNotNull*(c: ColumnRef): SqlExpr = SqlExpr(sql: $c & " IS NOT NULL")
 
 # IN list helper
 proc inList*(c: ColumnRef, items: openArray[string]): SqlExpr =
+  if items.len == 0: return SqlExpr(sql: "FALSE")
   let quoted = items.mapIt(quoteLiteral(it)).join(", ")
   SqlExpr(sql: $c & " IN (" & quoted & ")")
 
 proc inList*(c: ColumnRef, items: openArray[int]): SqlExpr =
+  if items.len == 0: return SqlExpr(sql: "FALSE")
   let strItems = items.mapIt($it).join(", ")
   SqlExpr(sql: $c & " IN (" & strItems & ")")
+
+proc inList*(c: ColumnRef, items: openArray[int32]): SqlExpr =
+  if items.len == 0: return SqlExpr(sql: "FALSE")
+  let strItems = items.mapIt($it).join(", ")
+  SqlExpr(sql: $c & " IN (" & strItems & ")")
+
+proc inList*(c: ColumnRef, items: openArray[int64]): SqlExpr =
+  if items.len == 0: return SqlExpr(sql: "FALSE")
+  let strItems = items.mapIt($it).join(", ")
+  SqlExpr(sql: $c & " IN (" & strItems & ")")
+
+proc notInList*(c: ColumnRef, items: openArray[string]): SqlExpr =
+  if items.len == 0: return SqlExpr(sql: "TRUE")
+  let quoted = items.mapIt(quoteLiteral(it)).join(", ")
+  SqlExpr(sql: $c & " NOT IN (" & quoted & ")")
+
+proc notInList*(c: ColumnRef, items: openArray[int]): SqlExpr =
+  if items.len == 0: return SqlExpr(sql: "TRUE")
+  let strItems = items.mapIt($it).join(", ")
+  SqlExpr(sql: $c & " NOT IN (" & strItems & ")")
 
 # BETWEEN helper
 proc between*(c: ColumnRef, minVal, maxVal: int): SqlExpr =
   SqlExpr(sql: $c & " BETWEEN " & $minVal & " AND " & $maxVal)
+
+proc between*(c: ColumnRef, minVal, maxVal: float): SqlExpr =
+  SqlExpr(sql: $c & " BETWEEN " & $minVal & " AND " & $maxVal)
+
+proc between*(c: ColumnRef, minVal, maxVal: string): SqlExpr =
+  SqlExpr(sql: $c & " BETWEEN " & quoteLiteral(minVal) & " AND " & quoteLiteral(maxVal))
 
 # ColumnExpr comparisons (for HAVING or JSON extractions)
 proc `>`*(c: ColumnExpr, val: int): SqlExpr = SqlExpr(sql: c.expr & " > " & $val)
@@ -651,11 +826,17 @@ proc Except*[T1: ExecutableQuery, T2: ExecutableQuery](q1: T1, q2: T2): SelectSt
 # 9. PostgreSQL Standalone VALUES & Rows
 # =============================================================================
 proc Values*(rows: varargs[seq[string]]): ValuesStep =
-  let st = QueryState(kind: skValues, valuesRows: rows.toSeq, limitVal: -1, offsetVal: -1)
+  var sanitizedRows: seq[seq[string]] = @[]
+  for row in rows:
+    sanitizedRows.add(row.mapIt(safeSqlValue(it)))
+  let st = QueryState(kind: skValues, valuesRows: sanitizedRows, limitVal: -1, offsetVal: -1)
   ValuesStep(state: st)
 
-proc Row*(items: varargs[string]): seq[string] =
-  items.toSeq
+proc Row*(params: varargs[QueryParam, toQueryParam]): seq[string] =
+  var res: seq[string] = @[]
+  for p in params:
+    res.add($p)
+  res
 
 # =============================================================================
 # 10. INSERT, PostgreSQL UPSERT (ON CONFLICT), UPDATE, DELETE Steps
@@ -663,25 +844,73 @@ proc Row*(items: varargs[string]): seq[string] =
 proc InsertInto*(table: string, cols: varargs[string]): InsertStep =
   InsertStep(state: QueryState(kind: skInsert, table: quoteIdent(table), insertCols: cols.mapIt(quoteIdent(it))))
 
-proc Values*(step: InsertStep or InsertValuesStep, vals: varargs[string]): InsertValuesStep =
-  step.state.insertRows.add(vals.toSeq)
+proc InsertInto*(t: TableRef, cols: varargs[string]): InsertStep =
+  InsertInto(t.rawTable, cols)
+
+proc InsertInto*(t: TableRef, cols: varargs[ColumnRef]): InsertStep =
+  InsertStep(state: QueryState(kind: skInsert, table: quoteIdent(t.rawTable), insertCols: cols.mapIt(quoteIdent(it.rawCol))))
+
+proc InsertInto*(table: string, cols: varargs[ColumnRef]): InsertStep =
+  InsertStep(state: QueryState(kind: skInsert, table: quoteIdent(table), insertCols: cols.mapIt(quoteIdent(it.rawCol))))
+
+proc Values*(step: InsertStep or InsertValuesStep, params: varargs[QueryParam, toQueryParam]): InsertValuesStep =
+  var formattedRow: seq[string] = @[]
+  for p in params:
+    formattedRow.add($p)
+  step.state.insertRows.add(formattedRow)
+  InsertValuesStep(state: step.state)
+
+proc Values*(step: InsertStep or InsertValuesStep, vals: openArray[string]): InsertValuesStep =
+  var formattedRow: seq[string] = @[]
+  for v in vals:
+    formattedRow.add(safeSqlValue(v))
+  step.state.insertRows.add(formattedRow)
   InsertValuesStep(state: step.state)
 
 proc OnConflict*(step: InsertValuesStep, cols: varargs[string]): ConflictStep =
   step.state.conflictCols = cols.mapIt(quoteIdent(it))
   ConflictStep(state: step.state)
 
+proc OnConflict*(step: InsertValuesStep, cols: varargs[ColumnRef]): ConflictStep =
+  step.state.conflictCols = cols.mapIt(quoteIdent(it.rawCol))
+  ConflictStep(state: step.state)
+
 proc DoNothing*(step: ConflictStep): InsertValuesStep =
   step.state.conflictAction = cakDoNothing
   InsertValuesStep(state: step.state)
 
+proc cleanSetExpr*(sql: string): string =
+  ## Strips table qualifier in SET clauses (e.g. "u"."name" = val -> "name" = val)
+  if sql.len > 0 and sql[0] == '"':
+    let dotPos = sql.find("\".\"")
+    let eqPos = sql.find('=')
+    if dotPos != -1 and eqPos != -1 and dotPos < eqPos:
+      return sql[dotPos + 2 .. ^1]
+  return sql
+
+proc DoUpdate*(step: ConflictStep, exprs: varargs[SqlExpr]): InsertValuesStep =
+  step.state.conflictAction = cakDoUpdate
+  for e in exprs:
+    step.state.conflictUpdates.add(cleanSetExpr(e.sql))
+  InsertValuesStep(state: step.state)
+
+proc DoUpdate*(step: ConflictStep, col: ColumnRef, val: QueryParam): InsertValuesStep =
+  step.state.conflictAction = cakDoUpdate
+  step.state.conflictUpdates.add(quoteIdent(col.rawCol) & " = " & $val)
+  InsertValuesStep(state: step.state)
+
 proc DoUpdate*(step: ConflictStep, sets: varargs[string]): InsertValuesStep =
   step.state.conflictAction = cakDoUpdate
-  step.state.conflictUpdates = sets.toSeq
+  for s in sets:
+    step.state.conflictUpdates.add(cleanSetExpr(s))
   InsertValuesStep(state: step.state)
 
 proc Returning*(step: InsertValuesStep or ConflictStep, cols: varargs[string]): InsertValuesStep =
   step.state.returningCols = cols.mapIt(ColumnExpr(expr: quoteIdent(it), alias: ""))
+  InsertValuesStep(state: step.state)
+
+proc Returning*(step: InsertValuesStep or ConflictStep, cols: varargs[ColumnRef]): InsertValuesStep =
+  step.state.returningCols = cols.mapIt(ColumnExpr(expr: $it, alias: ""))
   InsertValuesStep(state: step.state)
 
 proc Returning*(step: InsertValuesStep or ConflictStep, cols: varargs[ColumnExpr]): InsertValuesStep =
@@ -692,8 +921,21 @@ proc Returning*(step: InsertValuesStep or ConflictStep, cols: varargs[ColumnExpr
 proc Update*(table: string): UpdateStep =
   UpdateStep(state: QueryState(kind: skUpdate, table: quoteIdent(table)))
 
-proc Set*(step: UpdateStep, sets: varargs[string]): UpdateSetStep =
-  step.state.updateSets = sets.toSeq
+proc Update*(t: TableRef): UpdateStep =
+  Update(t.rawTable)
+
+proc Set*(step: UpdateStep or UpdateSetStep, exprs: varargs[SqlExpr]): UpdateSetStep =
+  for e in exprs:
+    step.state.updateSets.add(cleanSetExpr(e.sql))
+  UpdateSetStep(state: step.state)
+
+proc Set*(step: UpdateStep or UpdateSetStep, col: ColumnRef, val: QueryParam): UpdateSetStep =
+  step.state.updateSets.add(quoteIdent(col.rawCol) & " = " & $val)
+  UpdateSetStep(state: step.state)
+
+proc Set*(step: UpdateStep or UpdateSetStep, sets: varargs[string]): UpdateSetStep =
+  for s in sets:
+    step.state.updateSets.add(cleanSetExpr(s))
   UpdateSetStep(state: step.state)
 
 proc Where*(step: UpdateSetStep, expr: SqlExpr): UpdateWhereStep =
@@ -704,6 +946,10 @@ proc Returning*(step: UpdateSetStep or UpdateWhereStep, cols: varargs[string]): 
   step.state.returningCols = cols.mapIt(ColumnExpr(expr: quoteIdent(it), alias: ""))
   step
 
+proc Returning*(step: UpdateSetStep or UpdateWhereStep, cols: varargs[ColumnRef]): ExecutableQuery =
+  step.state.returningCols = cols.mapIt(ColumnExpr(expr: $it, alias: ""))
+  step
+
 proc Returning*(step: UpdateSetStep or UpdateWhereStep, cols: varargs[ColumnExpr]): ExecutableQuery =
   step.state.returningCols = cols.toSeq
   step
@@ -712,12 +958,19 @@ proc Returning*(step: UpdateSetStep or UpdateWhereStep, cols: varargs[ColumnExpr
 proc DeleteFrom*(table: string): DeleteStep =
   DeleteStep(state: QueryState(kind: skDelete, table: quoteIdent(table)))
 
+proc DeleteFrom*(t: TableRef): DeleteStep =
+  DeleteFrom(t.rawTable)
+
 proc Where*(step: DeleteStep, expr: SqlExpr): DeleteWhereStep =
   step.state.whereExpr = expr.sql
   DeleteWhereStep(state: step.state)
 
 proc Returning*(step: DeleteStep or DeleteWhereStep, cols: varargs[string]): ExecutableQuery =
   step.state.returningCols = cols.mapIt(ColumnExpr(expr: quoteIdent(it), alias: ""))
+  step
+
+proc Returning*(step: DeleteStep or DeleteWhereStep, cols: varargs[ColumnRef]): ExecutableQuery =
+  step.state.returningCols = cols.mapIt(ColumnExpr(expr: $it, alias: ""))
   step
 
 proc Returning*(step: DeleteStep or DeleteWhereStep, cols: varargs[ColumnExpr]): ExecutableQuery =

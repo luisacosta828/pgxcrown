@@ -299,4 +299,74 @@ suite "pgxcrown v0.16.0 - Type-Safe SQL Query Builder & SPI Execution Suite":
     let q4 = Select(u.id).From(u).OrderBy(u.dept, u.salary.desc)
     check "ORDER BY \"u\".\"dept\", \"u\".\"salary\" DESC" in $q4
 
+  test "Comprehensive SQL Injection Hardening & Automatic Parameterization":
+    let injectionPayload = "admin' OR '1'='1' --"
+    let qWhere = Select(u.id).From(u).Where(u.name == injectionPayload)
+    check "WHERE \"u\".\"name\" = 'admin'' OR ''1''=''1'' --'" in $qWhere
+
+    # Null byte stripping in literals and identifiers
+    let nullPayload = "user\0name"
+    check quoteLiteral(nullPayload) == "'username'"
+    check quoteIdent("users\0_table") == "\"users_table\""
+
+    # INSERT with TableRef and ColumnRef proxies
+    let qInsert = InsertInto(u, u.name, u.role)
+      .Values("hacker'); DROP TABLE users;--", "admin")
+      .Returning(u.id)
+    let insertSql = $qInsert
+    check "INSERT INTO \"users\" (\"name\", \"role\")" in insertSql
+    check "('hacker''); DROP TABLE users;--', 'admin')" in insertSql
+    check "RETURNING \"u\".\"id\"" in insertSql
+
+    # INSERT with typed heterogenous QueryParam values
+    let qTypedValues = InsertInto(u, u.name, u.age, u.salary, u.active, u.data)
+      .Values("bob", 28, 4500.50, true, %*{"dark_mode": true})
+    let typedSql = $qTypedValues
+    check "('bob', 28, 4500.5, TRUE, '{\"dark_mode\":true}')" in typedSql
+
+    # UPDATE with TableRef, ColumnRef and typed Set
+    let qUpdate = Update(u)
+      .Set(u.name, "hacker'--")
+      .Set(u.age, 30)
+      .Where(u.id == 1)
+      .Returning(u.id)
+    let updateSql = $qUpdate
+    check "UPDATE \"users\"" in updateSql
+    check "SET \"name\" = 'hacker''--', \"age\" = 30" in updateSql
+    check "WHERE \"u\".\"id\" = 1" in updateSql
+
+    # UPDATE with SqlExpr in Set
+    let qUpdateExpr = Update(u)
+      .Set(u.name == "safe_name", u.age == 31)
+      .Where(u.id == 2)
+    let updateExprSql = $qUpdateExpr
+    check "SET \"name\" = 'safe_name', \"age\" = 31" in updateExprSql
+
+    # DELETE with TableRef
+    let qDelete = DeleteFrom(u).Where(u.name == "bad_user' OR '1'='1")
+    let deleteSql = $qDelete
+    check "DELETE FROM \"users\"" in deleteSql
+    check "WHERE \"u\".\"name\" = 'bad_user'' OR ''1''=''1'" in deleteSql
+
+    # inList and notInList with empty sequence edge cases
+    let emptyStrList: seq[string] = @[]
+    let emptyIntList: seq[int] = @[]
+    check (u.name.inList(emptyStrList)).sql == "FALSE"
+    check (u.name.notInList(emptyStrList)).sql == "TRUE"
+    check (u.id.inList(emptyIntList)).sql == "FALSE"
+    check (u.id.notInList(emptyIntList)).sql == "TRUE"
+
+    # inList with injection strings
+    let maliciousList = @["alice", "bob'); DROP TABLE users;--"]
+    let inListExpr = u.name.inList(maliciousList)
+    check "IN ('alice', 'bob''); DROP TABLE users;--')" in inListExpr.sql
+
+    # between with injection strings
+    let betweenExpr = u.name.between("a", "z'; DROP TABLE users;--")
+    check "BETWEEN 'a' AND 'z''; DROP TABLE users;--'" in betweenExpr.sql
+
+  test "SPI defense: Null-byte query execution prevention":
+    expect(ValueError):
+      validateNoNullBytes("SELECT * FROM users\0; DROP TABLE users;")
+
 

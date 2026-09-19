@@ -169,8 +169,14 @@ template query*(c: const_string, obj: untyped) =
 # High-Level SPI Consumer Procs (Eager Fetch, Optionals, Reducers)
 # =============================================================================
 
+proc validateNoNullBytes*(sql: string) =
+  ## Intercepts and rejects any SQL statement containing prohibited null bytes (SQL injection defense)
+  if '\0' in sql:
+    raise newException(ValueError, "SQL query contains prohibited null byte character (SQL injection defense)")
+
 proc fetchRawRows*(sqlQuery: string): seq[Table[string, string]] {.tags: [DbReadEffect].} =
   ## Internal: Executes raw SQL via SPI and returns a flat seq of row tables
+  validateNoNullBytes(sqlQuery)
   var rows = new(seq[Table[string, string]])
   spi_init:
     pgTry:
@@ -265,10 +271,12 @@ proc rows*(query: ExecutableQuery): seq[Table[string, string]] {.tags: [DbReadEf
 proc run*(query: ExecutableQuery): int {.discardable, tags: [DbWriteEffect].} =
   ## Executes a DML statement (INSERT, UPDATE, DELETE) via SPI.
   ## Returns affected rows. Marked {.discardable.} so 'discard' is never required.
+  let sql = $query
+  validateNoNullBytes(sql)
   var ret = 0
   spi_init:
     pgTry:
-      let rc = exec(const_string($query), 0)
+      let rc = exec(const_string(sql), 0)
       if rc >= 0:
         ret = int(SPI_processed)
   return ret
@@ -355,6 +363,7 @@ proc all*[T](items: openArray[T], predicate: proc(x: T): bool {.closure.}): bool
 proc spiCreateTableFrom*[T: object](tableName: string = "", ifNotExists: bool = true, primaryKey: string = "id"): int {.tags: [DbWriteEffect].} =
   ## Inspects properties of object type T, generates CREATE TABLE DDL, and executes it via SPI
   let ddl = createTableFromType[T](tableName, ifNotExists, primaryKey)
+  validateNoNullBytes(ddl)
   var ret = 0
   spi_init:
     pgTry:
@@ -372,8 +381,10 @@ proc spiCreateTableFrom*[T: object](t: typedesc[T], tableName: string = "", ifNo
 proc spiInsertFrom*[T: object](obj: T, tableName: string = ""): int {.tags: [DbWriteEffect].} =
   ## Inspects object instance, generates INSERT statement, and executes it via SPI
   let q = insertFrom(obj, tableName)
+  let sql = $q
+  validateNoNullBytes(sql)
   var ret = 0
   spi_init:
     pgTry:
-      ret = int(exec(const_string($q), 0))
+      ret = int(exec(const_string(sql), 0))
   return ret
