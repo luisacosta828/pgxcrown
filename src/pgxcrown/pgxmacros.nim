@@ -1048,7 +1048,8 @@ proc explainWrapper(fn: NimNode): NimNode =
   )
 
   pgx_proc.body = shieldedBody
-  echo pgx_proc.repr
+  when defined(pgxDebug):
+    echo pgx_proc.repr
   
   result = pgx_proc
   fnIdx += 1

@@ -107,6 +107,7 @@ Options:
   --force, -f             Force a full rebuild, bypassing incremental cache
   --clean                 Clean previous build artifacts and cache before building
   --verbose, -v           Show detailed compiler commands and build steps
+  --debug, -d             Enable pgxDebug compile-time AST and DDL debug output
   --help, -h              Display this help message
 
 Examples:
@@ -114,6 +115,7 @@ Examples:
   * pgxtool build-extension my_ext --force
   * pgxtool build-extension my_ext --clean
   * pgxtool build-extension my_ext --verbose
+  * pgxtool build-extension my_ext --debug
 """
 
 proc cli_helper() =
@@ -138,6 +140,7 @@ Commands:
      * pgxtool build-extension <name> --force
      * pgxtool build-extension <name> --clean
      * pgxtool build-extension <name> --verbose
+     * pgxtool build-extension <name> --debug
 
   clean: Remove build cache (.pgx_build) and generated extension artifacts
      * pgxtool clean <name>
@@ -157,6 +160,7 @@ Commands:
   test: Run regression tests in isolated Docker containers (PostgreSQL 14 to 17)
      * pgxtool test <name>
      * pgxtool test <name> --verbose
+     * pgxtool test <name> --debug
      * pgxtool test <name> --pg 16
      * pgxtool test <name> --all
      * pgxtool test <name> --bless
@@ -176,6 +180,7 @@ Arguments:
 
 Options:
   --verbose, -v           Display the full SQL script and raw PostgreSQL query response table
+  --debug, -d             Enable pgxDebug compile-time AST and DDL debug output
   --pg <version>          Specify target PostgreSQL version (14, 15, 16, 17, or 'latest')
                           Defaults to host PostgreSQL version (if detected) or 17
   --all, --all-versions   Execute test suite across the full matrix of supported PostgreSQL versions (14 to 17)
@@ -186,6 +191,7 @@ Options:
 Examples:
   * pgxtool test my_ext
   * pgxtool test my_ext --verbose
+  * pgxtool test my_ext --debug
   * pgxtool test my_ext --pg 16
   * pgxtool test my_ext --all
   * pgxtool test my_ext --bless
@@ -234,20 +240,24 @@ proc getCLibs(): string {.inline.} =
   else:
     " "
 
-proc nim_c*(module: string, targetPgVersion: int = 0, nimcacheDir: string = ""): string {.inline.} =
+proc nim_c*(module: string, targetPgVersion: int = 0, nimcacheDir: string = "", debug: bool = false): string {.inline.} =
   var extraDefines = ""
   if targetPgVersion > 0:
-    extraDefines = " -d:pgTargetVersion=" & $targetPgVersion
+    extraDefines.add " -d:pgTargetVersion=" & $targetPgVersion
+  if debug:
+    extraDefines.add " -d:pgxDebug"
   var cacheFlag = ""
   if nimcacheDir.len > 0:
     cacheFlag = " --nimcache:" & wrap(nimcacheDir)
   "nim c --noMain --compileOnly -d:release --mm:orc --cc:" & getPlatformCompiler() & getPgxcrownPath() & getCIncludes() & cacheFlag & extraDefines & " -d:entrypoint=" & wrap(module) & " " & wrap(module)
 
-proc emit_pgx_c_extension*(module: string, targetPgVersion: int = 0, nimcacheDir: string = ""): string {.inline.} =
+proc emit_pgx_c_extension*(module: string, targetPgVersion: int = 0, nimcacheDir: string = "", debug: bool = false): string {.inline.} =
   var prj = module.splitPath.head
   var extraDefines = ""
   if targetPgVersion > 0:
-    extraDefines = " -d:pgTargetVersion=" & $targetPgVersion
+    extraDefines.add " -d:pgTargetVersion=" & $targetPgVersion
+  if debug:
+    extraDefines.add " -d:pgxDebug"
   var cacheFlag = ""
   if nimcacheDir.len > 0:
     cacheFlag = " --nimcache:" & wrap(nimcacheDir)
@@ -424,7 +434,7 @@ proc clean_extension*(req: string) =
     removeDir(buildDir)
   echo "🧹 Cleaned build artifacts and cache for extension '", req, "'."
 
-proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = false, verbose: bool = false, cleanBefore: bool = false) =
+proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = false, verbose: bool = false, cleanBefore: bool = false, debug: bool = false) =
   var (dir, file, _) = splitFile(input_file)
   let projectDir = dir.parentDir()
   let prjName = projectDir.splitFile().name
@@ -451,8 +461,8 @@ proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = fa
   let currentSourceHash = computeSourceHash(projectDir)
   const currentPgxcrownVersion = "0.23.0"
 
-  # Smart incremental check: if target library exists and sources haven't changed, skip build
-  if not force and not cleanBefore and targetLib.len > 0 and fileExists(targetLib) and fileExists(manifestFile):
+  # Smart incremental check: if target library exists and sources haven't changed, skip build (unless debug or force)
+  if not force and not cleanBefore and not debug and targetLib.len > 0 and fileExists(targetLib) and fileExists(manifestFile):
     try:
       let manifest = parseJson(readFile(manifestFile))
       let savedHash = manifest.getOrDefault("source_hash").getStr("")
@@ -471,16 +481,16 @@ proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = fa
   if not fileExists(tmp_file) or readFile(tmp_file) != tmp_content:
     writeFile(tmp_file, tmp_content)
 
-  let cmd1 = nim_c(tmp_file, targetPgVersion, nimcacheDir)
-  if verbose:
+  let cmd1 = nim_c(tmp_file, targetPgVersion, nimcacheDir, debug = debug)
+  if verbose or debug:
     echo "  [pgxtool:pass1] ", cmd1
   if execShellCmd(cmd1) != 0:
     cleanupGeneratedFiles(dir, prjName, tmp_file)
     if fileExists(manifestFile): removeFile(manifestFile)
     quit "Error executing: nim_c (Pass 1 - DDL & AST generation)"
 
-  let cmd2 = emit_pgx_c_extension(tmp_file, targetPgVersion, nimcacheDir)
-  if verbose:
+  let cmd2 = emit_pgx_c_extension(tmp_file, targetPgVersion, nimcacheDir, debug = debug)
+  if verbose or debug:
     echo "  [pgxtool:pass2] ", cmd2
   if execShellCmd(cmd2) != 0:
     cleanupGeneratedFiles(dir, prjName, tmp_file)
@@ -659,6 +669,7 @@ proc check_command(pc: int) =
     var forceBuild = false
     var cleanBuild = false
     var verboseBuild = false
+    var debugBuild = false
 
     var idx = 3
     while idx <= pc:
@@ -675,6 +686,9 @@ proc check_command(pc: int) =
       elif flag in ["--verbose", "-v"]:
         verboseBuild = true
         idx += 1
+      elif flag in ["--debug", "-d"]:
+        debugBuild = true
+        idx += 1
       else:
         echo "⚠️  Unknown option: ", flag
         idx += 1
@@ -684,7 +698,7 @@ proc check_command(pc: int) =
       if req in available_hooks:
         compile2hook(entry_point)
       else:
-        compile2pgx(entry_point, force = forceBuild, verbose = verboseBuild, cleanBefore = cleanBuild)
+        compile2pgx(entry_point, force = forceBuild, verbose = verboseBuild, cleanBefore = cleanBuild, debug = debugBuild)
         var script_path = generate_install_script(req)
         echo "Build completed for extension: ", req
         echo "Install script generated at: ", script_path
@@ -741,6 +755,7 @@ Clean build artifacts (.so, .sql, .control, install.sh) and the build cache (.pg
     var allVersions = false
     var keepContainer = false
     var verbose = false
+    var debugBuild = false
 
     var idx = 3
     while idx <= pc:
@@ -750,6 +765,9 @@ Clean build artifacts (.so, .sql, .control, install.sh) and the build cache (.pg
         return
       elif flag in ["--verbose", "-v"]:
         verbose = true
+        idx += 1
+      elif flag in ["--debug", "-d"]:
+        debugBuild = true
         idx += 1
       elif flag == "--pg" and idx + 1 <= pc:
         pgVersionStr = paramStr(idx + 1)
@@ -772,7 +790,7 @@ Clean build artifacts (.so, .sql, .control, install.sh) and the build cache (.pg
       if isHook:
         compile2hook(entryPoint, targetVersion)
       else:
-        compile2pgx(entryPoint, targetVersion)
+        compile2pgx(entryPoint, targetVersion, debug = debugBuild)
 
     let exitCode = serveTestEnv(
       pgxtool_init_dir = pgxtool_init_dir,

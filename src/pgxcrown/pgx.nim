@@ -530,4 +530,8 @@ macro decorateMainFunctions*() =
   res.add source[0..^1]
   writeFile(entrypoint, res.repr)
 
+  when defined(pgxDebug):
+    echo "[pgxDebug] Generated SQL DDL for extension '", prjName, "':\n", sql_scripts
+    echo "[pgxDebug] Decorated Entrypoint AST for '", prjName, "':\n", res.repr
+
 decorateMainFunctions()

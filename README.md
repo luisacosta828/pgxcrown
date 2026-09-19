@@ -371,11 +371,12 @@ SELECT stop_order_archiver_worker();
 | | `--clean` | Cleans previous build artifacts and cache before compiling. |
 | | `--force` (`-f`) | Ignores incremental cache and forces complete recompilation. |
 | | `--verbose` (`-v`) | Displays verbose compiler invocations and compilation flags. |
+| | `--debug` (`-d`) | Enables `pgxDebug` compile-time AST and DDL debug output. |
 | **`clean`** | `pgxtool clean <name>` | Removes build cache (`.pgx_build`) and generated artifacts (`.so`, `.sql`, `.control`). |
 | **`install`** | `pgxtool install <name>` | Automatically copies `.so`, `.control`, and `.sql` to PostgreSQL directories. |
 | **`create-type`** | `pgxtool create-type <name> --base-type <type>` | Generates a custom distinct base type with dynamic parsing for 15 scalar types. |
 | **`create-hook`** | `pgxtool create-hook <name>` | Scaffolds a Postgres kernel hook template (`emit_log`, `post_parse_analyze`). |
-| **`test`** | `pgxtool test <name> [--pg <v>] [--all] [--bless]` | Spawns isolated Docker containers (PG 14–17) to run SQL regression tests. |
+| **`test`** | `pgxtool test <name> [--debug] [--pg <v>] [--all] [--bless]` | Spawns isolated Docker containers (PG 14–17) to run SQL regression tests. |
 
 ---
 
