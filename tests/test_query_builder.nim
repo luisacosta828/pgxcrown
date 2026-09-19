@@ -369,4 +369,81 @@ suite "pgxcrown v0.16.0 - Type-Safe SQL Query Builder & SPI Execution Suite":
     expect(ValueError):
       validateNoNullBytes("SELECT * FROM users\0; DROP TABLE users;")
 
+  test "PostgreSQL Empty Array Serialization & Type-Casting":
+    let emptyStrings: seq[string] = @[]
+    let emptyInts: seq[int] = @[]
+    let emptyBigInts: seq[int64] = @[]
+    let emptyFloats: seq[float] = @[]
+    let emptyBools: seq[bool] = @[]
+    let emptyJsons: seq[JsonNode] = @[]
+
+    check formatSqlValue(emptyStrings) == "ARRAY[]::text[]"
+    check formatSqlValue(emptyInts) == "ARRAY[]::integer[]"
+    check formatSqlValue(emptyBigInts) == "ARRAY[]::bigint[]"
+    check formatSqlValue(emptyFloats) == "ARRAY[]::double precision[]"
+    check formatSqlValue(emptyBools) == "ARRAY[]::boolean[]"
+    check formatSqlValue(emptyJsons) == "ARRAY[]::jsonb[]"
+
+    # Non-empty arrays still format cleanly without redundant casts
+    let nonEmpty = @["gaming", "hardware"]
+    check formatSqlValue(nonEmpty) == "ARRAY['gaming', 'hardware']"
+
+    # Safe array literal validation
+    check isArrayLiteral("ARRAY[]::text[]")
+    check isArrayLiteral("ARRAY['gaming', 'hardware']")
+    check isArrayLiteral("ARRAY[1, 2, 3]::integer[]")
+
+    # Rejection of malicious pseudo-array payloads in isArrayLiteral & safeSqlValue
+    check not isArrayLiteral("ARRAY['legit']; DROP TABLE users; --]")
+    check not isArrayLiteral("ARRAY[1]::text[]; DROP TABLE users;")
+    check safeSqlValue("ARRAY['legit']; DROP TABLE users; --]") == "'ARRAY[''legit'']; DROP TABLE users; --]'"
+
+  test "ColumnExpr full comparison suite, helpers, and GroupBy":
+    let category = u.data["category"]
+    let score = u.data["score"]
+    
+    # Comparisons with float, string, bool, and int
+    check (score > 10.5).sql == "\"u\".\"data\" -> 'score' > 10.5"
+    check (score <= 99.5).sql == "\"u\".\"data\" -> 'score' <= 99.5"
+    check (category == "electronics").sql == "\"u\".\"data\" -> 'category' = 'electronics'"
+    check (category != "books").sql == "\"u\".\"data\" -> 'category' != 'books'"
+    check (u.active == true).sql == "\"u\".\"active\" = TRUE"
+
+    # String operations (like, ilike, etc)
+    check (category.like("%elec%")).sql == "\"u\".\"data\" -> 'category' LIKE '%elec%'"
+    check (category.ilike("%Elec%")).sql == "\"u\".\"data\" -> 'category' ILIKE '%Elec%'"
+    check (category.notLike("%spam%")).sql == "\"u\".\"data\" -> 'category' NOT LIKE '%spam%'"
+
+    # Null checks and inList
+    check (category.isNull).sql == "\"u\".\"data\" -> 'category' IS NULL"
+    check (category.isNotNull).sql == "\"u\".\"data\" -> 'category' IS NOT NULL"
+    check (category.inList(@["tv", "radio"])).sql == "\"u\".\"data\" -> 'category' IN ('tv', 'radio')"
+    check (score.between(10, 50)).sql == "\"u\".\"data\" -> 'score' BETWEEN 10 AND 50"
+
+    # GroupBy and OrderBy with ColumnExpr
+    let q = Select(category as "cat", count("*") as "cnt")
+      .From(u)
+      .GroupBy(category)
+      .OrderBy(category.asc, count("*").desc)
+    let sql = $q
+    check "GROUP BY \"u\".\"data\" -> 'category'" in sql
+    check "ORDER BY \"u\".\"data\" -> 'category' ASC, COUNT(*) DESC" in sql
+
+    # cleanSetExpr handles qualified names (both quoted and unquoted)
+    check cleanSetExpr("\"users\".\"name\" = 'Alice'") == "\"name\" = 'Alice'"
+    check cleanSetExpr("users.name = 'Alice'") == "name = 'Alice'"
+
+  test "SPI PostgreSQL Array Parser and typed mapping":
+    check parsePgArray("{a,b,c}") == @["a", "b", "c"]
+    check parsePgArray("{\"hello, world\",\"normal\"}") == @["hello, world", "normal"]
+    check parsePgArray("{}") == newSeq[string]()
+    check parsePgArray("") == newSeq[string]()
+
+    # parseValue for seq[string] and seq[int]
+    check parseValue[seq[string]]("{alpha,beta,gamma}") == @["alpha", "beta", "gamma"]
+    check parseValue[seq[int]]("{10,20,30}") == @[10, 20, 30]
+    check parseValue[seq[float]]("{1.5,2.5}") == @[1.5, 2.5]
+    check parseValue[seq[string]]("{}") == newSeq[string]()
+    check parseValue[uint64]("9876543210") == 9876543210'u64
+
 

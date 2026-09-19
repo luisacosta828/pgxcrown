@@ -359,15 +359,101 @@ proc between*(c: ColumnRef, minVal, maxVal: float): SqlExpr =
 proc between*(c: ColumnRef, minVal, maxVal: string): SqlExpr =
   SqlExpr(sql: $c & " BETWEEN " & quoteLiteral(minVal) & " AND " & quoteLiteral(maxVal))
 
-# ColumnExpr comparisons (for HAVING or JSON extractions)
+# ColumnExpr comparisons (for HAVING, JSON extractions, or computed columns)
 proc `>`*(c: ColumnExpr, val: int): SqlExpr = SqlExpr(sql: c.expr & " > " & $val)
+proc `>`*(c: ColumnExpr, val: int32): SqlExpr = SqlExpr(sql: c.expr & " > " & $val)
+proc `>`*(c: ColumnExpr, val: int64): SqlExpr = SqlExpr(sql: c.expr & " > " & $val)
+proc `>`*(c: ColumnExpr, val: float): SqlExpr = SqlExpr(sql: c.expr & " > " & $val)
+proc `>`*(c: ColumnExpr, val: string): SqlExpr = SqlExpr(sql: c.expr & " > " & quoteLiteral(val))
+
 proc `<`*(c: ColumnExpr, val: int): SqlExpr = SqlExpr(sql: c.expr & " < " & $val)
+proc `<`*(c: ColumnExpr, val: int32): SqlExpr = SqlExpr(sql: c.expr & " < " & $val)
+proc `<`*(c: ColumnExpr, val: int64): SqlExpr = SqlExpr(sql: c.expr & " < " & $val)
+proc `<`*(c: ColumnExpr, val: float): SqlExpr = SqlExpr(sql: c.expr & " < " & $val)
+proc `<`*(c: ColumnExpr, val: string): SqlExpr = SqlExpr(sql: c.expr & " < " & quoteLiteral(val))
+
 proc `>=`*(c: ColumnExpr, val: int): SqlExpr = SqlExpr(sql: c.expr & " >= " & $val)
+proc `>=`*(c: ColumnExpr, val: int32): SqlExpr = SqlExpr(sql: c.expr & " >= " & $val)
+proc `>=`*(c: ColumnExpr, val: int64): SqlExpr = SqlExpr(sql: c.expr & " >= " & $val)
+proc `>=`*(c: ColumnExpr, val: float): SqlExpr = SqlExpr(sql: c.expr & " >= " & $val)
+proc `>=`*(c: ColumnExpr, val: string): SqlExpr = SqlExpr(sql: c.expr & " >= " & quoteLiteral(val))
+
 proc `<=`*(c: ColumnExpr, val: int): SqlExpr = SqlExpr(sql: c.expr & " <= " & $val)
+proc `<=`*(c: ColumnExpr, val: int32): SqlExpr = SqlExpr(sql: c.expr & " <= " & $val)
+proc `<=`*(c: ColumnExpr, val: int64): SqlExpr = SqlExpr(sql: c.expr & " <= " & $val)
+proc `<=`*(c: ColumnExpr, val: float): SqlExpr = SqlExpr(sql: c.expr & " <= " & $val)
+proc `<=`*(c: ColumnExpr, val: string): SqlExpr = SqlExpr(sql: c.expr & " <= " & quoteLiteral(val))
+
 proc `==`*(c: ColumnExpr, val: int): SqlExpr = SqlExpr(sql: c.expr & " = " & $val)
-proc `!=`*(c: ColumnExpr, val: int): SqlExpr = SqlExpr(sql: c.expr & " != " & $val)
+proc `==`*(c: ColumnExpr, val: int32): SqlExpr = SqlExpr(sql: c.expr & " = " & $val)
+proc `==`*(c: ColumnExpr, val: int64): SqlExpr = SqlExpr(sql: c.expr & " = " & $val)
+proc `==`*(c: ColumnExpr, val: float): SqlExpr = SqlExpr(sql: c.expr & " = " & $val)
+proc `==`*(c: ColumnExpr, val: bool): SqlExpr = SqlExpr(sql: c.expr & " = " & (if val: "TRUE" else: "FALSE"))
 proc `==`*(c: ColumnExpr, val: string): SqlExpr = SqlExpr(sql: c.expr & " = " & quoteLiteral(val))
+proc `==`*(c: ColumnExpr, val: QueryParam): SqlExpr = SqlExpr(sql: c.expr & " = " & $val)
+proc `==`*(c: ColumnExpr, val: ColumnRef): SqlExpr = SqlExpr(sql: c.expr & " = " & $val)
+proc `==`*(a: ColumnExpr, b: ColumnExpr): SqlExpr = SqlExpr(sql: a.expr & " = " & b.expr)
+
+proc `!=`*(c: ColumnExpr, val: int): SqlExpr = SqlExpr(sql: c.expr & " != " & $val)
+proc `!=`*(c: ColumnExpr, val: int32): SqlExpr = SqlExpr(sql: c.expr & " != " & $val)
+proc `!=`*(c: ColumnExpr, val: int64): SqlExpr = SqlExpr(sql: c.expr & " != " & $val)
+proc `!=`*(c: ColumnExpr, val: float): SqlExpr = SqlExpr(sql: c.expr & " != " & $val)
+proc `!=`*(c: ColumnExpr, val: bool): SqlExpr = SqlExpr(sql: c.expr & " != " & (if val: "TRUE" else: "FALSE"))
 proc `!=`*(c: ColumnExpr, val: string): SqlExpr = SqlExpr(sql: c.expr & " != " & quoteLiteral(val))
+proc `!=`*(c: ColumnExpr, val: QueryParam): SqlExpr = SqlExpr(sql: c.expr & " != " & $val)
+proc `!=`*(c: ColumnExpr, val: ColumnRef): SqlExpr = SqlExpr(sql: c.expr & " != " & $val)
+proc `!=`*(a: ColumnExpr, b: ColumnExpr): SqlExpr = SqlExpr(sql: a.expr & " != " & b.expr)
+
+# String helper operators for ColumnExpr
+proc like*(c: ColumnExpr, pattern: string): SqlExpr = SqlExpr(sql: c.expr & " LIKE " & quoteLiteral(pattern))
+proc ilike*(c: ColumnExpr, pattern: string): SqlExpr = SqlExpr(sql: c.expr & " ILIKE " & quoteLiteral(pattern))
+proc notLike*(c: ColumnExpr, pattern: string): SqlExpr = SqlExpr(sql: c.expr & " NOT LIKE " & quoteLiteral(pattern))
+proc notIlike*(c: ColumnExpr, pattern: string): SqlExpr = SqlExpr(sql: c.expr & " NOT ILIKE " & quoteLiteral(pattern))
+
+# NULL helpers for ColumnExpr
+proc isNull*(c: ColumnExpr): SqlExpr = SqlExpr(sql: c.expr & " IS NULL")
+proc isNotNull*(c: ColumnExpr): SqlExpr = SqlExpr(sql: c.expr & " IS NOT NULL")
+
+# IN list helper for ColumnExpr
+proc inList*(c: ColumnExpr, items: openArray[string]): SqlExpr =
+  if items.len == 0: return SqlExpr(sql: "FALSE")
+  let quoted = items.mapIt(quoteLiteral(it)).join(", ")
+  SqlExpr(sql: c.expr & " IN (" & quoted & ")")
+
+proc inList*(c: ColumnExpr, items: openArray[int]): SqlExpr =
+  if items.len == 0: return SqlExpr(sql: "FALSE")
+  let strItems = items.mapIt($it).join(", ")
+  SqlExpr(sql: c.expr & " IN (" & strItems & ")")
+
+proc inList*(c: ColumnExpr, items: openArray[int32]): SqlExpr =
+  if items.len == 0: return SqlExpr(sql: "FALSE")
+  let strItems = items.mapIt($it).join(", ")
+  SqlExpr(sql: c.expr & " IN (" & strItems & ")")
+
+proc inList*(c: ColumnExpr, items: openArray[int64]): SqlExpr =
+  if items.len == 0: return SqlExpr(sql: "FALSE")
+  let strItems = items.mapIt($it).join(", ")
+  SqlExpr(sql: c.expr & " IN (" & strItems & ")")
+
+proc notInList*(c: ColumnExpr, items: openArray[string]): SqlExpr =
+  if items.len == 0: return SqlExpr(sql: "TRUE")
+  let quoted = items.mapIt(quoteLiteral(it)).join(", ")
+  SqlExpr(sql: c.expr & " NOT IN (" & quoted & ")")
+
+proc notInList*(c: ColumnExpr, items: openArray[int]): SqlExpr =
+  if items.len == 0: return SqlExpr(sql: "TRUE")
+  let strItems = items.mapIt($it).join(", ")
+  SqlExpr(sql: c.expr & " NOT IN (" & strItems & ")")
+
+# BETWEEN helper for ColumnExpr
+proc between*(c: ColumnExpr, minVal, maxVal: int): SqlExpr =
+  SqlExpr(sql: c.expr & " BETWEEN " & $minVal & " AND " & $maxVal)
+
+proc between*(c: ColumnExpr, minVal, maxVal: float): SqlExpr =
+  SqlExpr(sql: c.expr & " BETWEEN " & $minVal & " AND " & $maxVal)
+
+proc between*(c: ColumnExpr, minVal, maxVal: string): SqlExpr =
+  SqlExpr(sql: c.expr & " BETWEEN " & quoteLiteral(minVal) & " AND " & quoteLiteral(maxVal))
 
 # JSON / JSONB operators & helpers
 proc `[]`*(c: ColumnRef, key: string): ColumnExpr =
@@ -450,6 +536,8 @@ proc `not`*(a: SqlExpr): SqlExpr = SqlExpr(sql: "NOT (" & a.sql & ")")
 # Order By modifiers
 proc desc*(c: ColumnRef): string = $c & " DESC"
 proc asc*(c: ColumnRef): string = $c & " ASC"
+proc desc*(e: ColumnExpr): string = e.expr & " DESC"
+proc asc*(e: ColumnExpr): string = e.expr & " ASC"
 proc desc*(s: string): string = quoteIdent(s) & " DESC"
 proc asc*(s: string): string = quoteIdent(s) & " ASC"
 proc desc*(id: SqlIdent): string = quoteIdent(string(id)) & " DESC"
@@ -466,6 +554,9 @@ proc `$`*(o: OrderExpr): string = o.sql
 converter toOrderExpr*(c: ColumnRef): OrderExpr =
   ## If asc/desc is not specified, direction is omitted: "s"."col"
   OrderExpr(sql: $c)
+
+converter toOrderExpr*(e: ColumnExpr): OrderExpr =
+  OrderExpr(sql: e.expr)
 
 converter toOrderExpr*(s: string): OrderExpr =
   OrderExpr(sql: s)
@@ -810,6 +901,10 @@ proc GroupBy*(step: FromStep or WhereStep, cols: varargs[string]): GroupByStep =
 
 proc GroupBy*(step: FromStep or WhereStep, cols: varargs[ColumnRef]): GroupByStep =
   step.state.groupBys.add(cols.mapIt($it))
+  GroupByStep(state: step.state)
+
+proc GroupBy*(step: FromStep or WhereStep, cols: varargs[ColumnExpr]): GroupByStep =
+  step.state.groupBys.add(cols.mapIt(it.expr))
   GroupByStep(state: step.state)
 
 proc Having*(step: GroupByStep, expr: SqlExpr): HavingStep =

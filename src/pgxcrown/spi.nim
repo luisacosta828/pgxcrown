@@ -81,6 +81,33 @@ proc getTuple*(tuptable: TupleTable, idx: uint64): HeapTuple {.importc: "pgx_spi
 # Type Converters & Row Mapper
 # =============================================================================
 
+proc parsePgArray*(val: string): seq[string] =
+  ## Parses a PostgreSQL string array representation (e.g. '{a,b,c}' or '{"a,b","c"}') into elements
+  result = @[]
+  let s = val.strip()
+  if s.len < 2 or s[0] != '{' or s[^1] != '}':
+    return result
+  let inner = s[1 .. ^2].strip()
+  if inner.len == 0:
+    return result
+  var cur = ""
+  var inQuote = false
+  var escaped = false
+  for c in inner:
+    if escaped:
+      cur.add(c)
+      escaped = false
+    elif c == '\\':
+      escaped = true
+    elif c == '"':
+      inQuote = not inQuote
+    elif c == ',' and not inQuote:
+      result.add(cur)
+      cur = ""
+    else:
+      cur.add(c)
+  result.add(cur)
+
 proc parseValue*[T](val: string): T {.tags: [].} =
   ## Safely parses a string column into a strongly typed Nim value
   when T is int:
@@ -91,8 +118,16 @@ proc parseValue*[T](val: string): T {.tags: [].} =
     try: int16(parseInt(val)) except CatchableError: 0'i16
   elif T is int8:
     try: int8(parseInt(val)) except CatchableError: 0'i8
+  elif T is uint:
+    try: uint(parseUInt(val)) except CatchableError: 0'u
+  elif T is uint64:
+    try: parseBiggestUInt(val) except CatchableError: 0'u64
   elif T is uint32:
     try: uint32(parseUInt(val)) except CatchableError: 0'u32
+  elif T is uint16:
+    try: uint16(parseUInt(val)) except CatchableError: 0'u16
+  elif T is uint8 or T is byte:
+    try: uint8(parseUInt(val)) except CatchableError: 0'u8
   elif T is int64:
     try: int64(parseBiggestInt(val)) except CatchableError: 0'i64
   elif T is float:
@@ -115,6 +150,14 @@ proc parseValue*[T](val: string): T {.tags: [].} =
       else: (try: parseJson(val) except CatchableError: newJNull())
   elif T is enum:
     try: parseEnum[T](val) except CatchableError: default(T)
+  elif T is seq:
+    if val.len == 0 or val == "{}":
+      @[]
+    else:
+      var items: T = @[]
+      for elem in parsePgArray(val):
+        items.add(parseValue[typeof(default(T)[0])](elem))
+      items
   elif T is Option:
     if val.len == 0:
       none(typeof(default(T).get))
