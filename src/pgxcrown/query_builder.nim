@@ -91,10 +91,50 @@ proc isKeywordLiteral*(s: string): bool =
   lower in ["true", "false", "null", "default"]
 
 proc isArrayLiteral*(s: string): bool =
-  ## Checks if string represents an ARRAY[...] literal (e.g. from formatSqlValue)
-  if s.len >= 7 and s.startsWith("ARRAY["):
-    if s.endsWith("]"): return true
-    if s.endsWith("]::jsonb[]") or s.endsWith("]::text[]") or s.endsWith("]::int[]") or s.endsWith("]::bigint[]"): return true
+  ## Checks if string represents a genuine, safe PostgreSQL ARRAY[...] literal (e.g. from formatSqlValue)
+  if s.len < 7 or not s.startsWith("ARRAY["):
+    return false
+  var inQuote = false
+  var i = 6 # position immediately after "ARRAY["
+  var bracketDepth = 1
+
+  while i < s.len:
+    let c = s[i]
+    if c == '\0':
+      return false
+    elif inQuote:
+      if c == '\'':
+        if i + 1 < s.len and s[i + 1] == '\'':
+          i += 1 # escaped quote inside literal
+        else:
+          inQuote = false
+    else:
+      if c == '\'':
+        inQuote = true
+      elif c == '[':
+        bracketDepth += 1
+      elif c == ']':
+        bracketDepth -= 1
+        if bracketDepth == 0:
+          let rest = s[i + 1 .. ^1].strip()
+          if rest.len == 0:
+            return true
+          if rest.startsWith("::") and rest.endsWith("[]"):
+            let typeName = rest[2 .. ^3].strip().toLowerAscii
+            return typeName in [
+              "text", "varchar", "char", "integer", "int", "int4", "int8", "bigint",
+              "smallint", "int2", "double precision", "float8", "float4", "real",
+              "numeric", "decimal", "boolean", "bool", "json", "jsonb", "uuid",
+              "timestamp", "timestamptz", "date", "bytea"
+            ]
+          return false
+      elif c == ';':
+        return false
+      elif c == '-' and i + 1 < s.len and s[i + 1] == '-':
+        return false
+      elif c == '/' and i + 1 < s.len and s[i + 1] == '*':
+        return false
+    i += 1
   return false
 
 proc safeSqlValue*(s: string): string =
@@ -880,12 +920,17 @@ proc DoNothing*(step: ConflictStep): InsertValuesStep =
   InsertValuesStep(state: step.state)
 
 proc cleanSetExpr*(sql: string): string =
-  ## Strips table qualifier in SET clauses (e.g. "u"."name" = val -> "name" = val)
+  ## Strips table qualifier in SET clauses (e.g. "u"."name" = val -> "name" = val, or u.name = val -> name = val)
   if sql.len > 0 and sql[0] == '"':
     let dotPos = sql.find("\".\"")
     let eqPos = sql.find('=')
     if dotPos != -1 and eqPos != -1 and dotPos < eqPos:
       return sql[dotPos + 2 .. ^1]
+  elif sql.len > 0:
+    let dotPos = sql.find('.')
+    let eqPos = sql.find('=')
+    if dotPos != -1 and eqPos != -1 and dotPos < eqPos:
+      return sql[dotPos + 1 .. ^1]
   return sql
 
 proc DoUpdate*(step: ConflictStep, exprs: varargs[SqlExpr]): InsertValuesStep =
@@ -1108,11 +1153,29 @@ proc formatSqlValue*[T](val: T): string =
       "NULL"
   elif T is seq:
     when typeof(val[0]) is string or typeof(val[0]) is cstring:
-      "ARRAY[" & val.mapIt(quoteLiteral($it)).join(", ") & "]"
-    elif typeof(val[0]) is int or typeof(val[0]) is int32 or typeof(val[0]) is int64 or typeof(val[0]) is float or typeof(val[0]) is bool:
-      "ARRAY[" & val.mapIt($it).join(", ") & "]"
+      if val.len == 0: "ARRAY[]::text[]"
+      else: "ARRAY[" & val.mapIt(quoteLiteral($it)).join(", ") & "]"
+    elif typeof(val[0]) is int or typeof(val[0]) is int32:
+      if val.len == 0: "ARRAY[]::integer[]"
+      else: "ARRAY[" & val.mapIt($it).join(", ") & "]"
+    elif typeof(val[0]) is int64:
+      if val.len == 0: "ARRAY[]::bigint[]"
+      else: "ARRAY[" & val.mapIt($it).join(", ") & "]"
+    elif typeof(val[0]) is int16 or typeof(val[0]) is int8 or typeof(val[0]) is byte:
+      if val.len == 0: "ARRAY[]::smallint[]"
+      else: "ARRAY[" & val.mapIt($it).join(", ") & "]"
+    elif typeof(val[0]) is uint or typeof(val[0]) is uint32 or typeof(val[0]) is uint64 or typeof(val[0]) is uint16 or typeof(val[0]) is uint8:
+      if val.len == 0: "ARRAY[]::bigint[]"
+      else: "ARRAY[" & val.mapIt($it).join(", ") & "]"
+    elif typeof(val[0]) is float or typeof(val[0]) is float64 or typeof(val[0]) is float32:
+      if val.len == 0: "ARRAY[]::double precision[]"
+      else: "ARRAY[" & val.mapIt($it).join(", ") & "]"
+    elif typeof(val[0]) is bool:
+      if val.len == 0: "ARRAY[]::boolean[]"
+      else: "ARRAY[" & val.mapIt(if it: "TRUE" else: "FALSE").join(", ") & "]"
     elif typeof(val[0]) is JsonNode:
-      "ARRAY[" & val.mapIt(quoteLiteral($it)).join(", ") & "]::jsonb[]"
+      if val.len == 0: "ARRAY[]::jsonb[]"
+      else: "ARRAY[" & val.mapIt(quoteLiteral($it)).join(", ") & "]::jsonb[]"
     else:
       quoteLiteral($val)
   else:
@@ -1183,6 +1246,18 @@ proc columnDefsFromType*[T: object](primaryKey: string = "id"): seq[(string, str
         sqlColType = "CHAR(1)"
       elif typeof(val.get) is JsonNode:
         sqlColType = "JSONB"
+      elif typeof(val.get) is seq[string]:
+        sqlColType = "TEXT[]"
+      elif typeof(val.get) is seq[int] or typeof(val.get) is seq[int32]:
+        sqlColType = "INTEGER[]"
+      elif typeof(val.get) is seq[int64]:
+        sqlColType = "BIGINT[]"
+      elif typeof(val.get) is seq[float] or typeof(val.get) is seq[float64]:
+        sqlColType = "DOUBLE PRECISION[]"
+      elif typeof(val.get) is seq[bool]:
+        sqlColType = "BOOLEAN[]"
+      elif typeof(val.get) is seq[JsonNode]:
+        sqlColType = "JSONB[]"
       else:
         sqlColType = "TEXT"
     else:

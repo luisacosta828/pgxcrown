@@ -179,7 +179,7 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
         entry.add " DEFAULT "
         case defaultNode.kind
         of nnkStrLit, nnkTripleStrLit:
-          entry.add "'" & defaultNode.strVal & "'"
+          entry.add "'" & defaultNode.strVal.replace("'", "''") & "'"
         of nnkIntLit, nnkInt32Lit, nnkInt64Lit, nnkFloatLit, nnkFloat64Lit:
           entry.add defaultNode.repr
         of nnkIdent:
@@ -194,7 +194,7 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
             entry.add "NULL"
           elif defaultNode[0].repr == "some":
             if defaultNode[1].kind in {nnkStrLit, nnkTripleStrLit}:
-              entry.add "'" & defaultNode[1].strVal & "'"
+              entry.add "'" & defaultNode[1].strVal.replace("'", "''") & "'"
             else:
               entry.add defaultNode[1].repr
           else:
