@@ -383,10 +383,11 @@ template move_nim_params_as_locals =
         )
       )
     elif defaultNode.kind != nnkEmpty:
+      let defVal = if isStringType: newCall(ident("toPgText"), defaultNode) else: defaultNode
       getValue = newTree(nnkIfExpr,
         newTree(nnkElifBranch,
           newCall(ident("isArgNull"), newLit(argIdxVal)),
-          defaultNode
+          defVal
         ),
         newTree(nnkElse,
           rawFetch

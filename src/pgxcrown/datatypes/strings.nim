@@ -81,6 +81,11 @@ converter toString*(t: PgText): string =
   result = newString(t.len)
   copyMem(addr result[0], t.dataPtr, t.len)
 
+converter toCString*(t: PgText): cstring =
+  if t.len == 0 or t.dataPtr == nil:
+    return ""
+  cstring(toString(t))
+
 proc `$`*(t: PgText): string {.inline.} =
   toString(t)
 

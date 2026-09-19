@@ -51,11 +51,11 @@ proc NimToSQLType(dt: string): string =
   else:
     if cleanDt.startsWith("seq["):
       let inner = cleanDt[4 .. ^2].strip(chars = {'*'})
-      let sqlInner = if inner in recordType: inner else: NimToSQLType(inner)
+      let sqlInner = if inner in recordType: "\"" & inner & "\"" else: NimToSQLType(inner)
       let finalSqlInner = if sqlInner.endsWith("[]"): sqlInner else: sqlInner & "[]"
       finalSqlInner
     elif cleanDt in recordType:
-      cleanDt
+      "\"" & cleanDt & "\""
     else:
       "record"
 
@@ -143,7 +143,7 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
       hasOptionOrDefault = true
     elif retTypeNode.kind == nnkBracketExpr and retTypeNode[0].repr == "seq":
       let innerType = retTypeNode[1].repr.strip(chars = {'*'})
-      let sqlInner = if innerType in recordType: innerType else: NimToSQLType(innerType)
+      let sqlInner = if innerType in recordType: "\"" & innerType & "\"" else: NimToSQLType(innerType)
       let finalSqlInner = if sqlInner.endsWith("[]"): sqlInner[0 .. ^3] else: sqlInner
       returnTypeStr = " returns SETOF " & finalSqlInner
     else:
@@ -270,7 +270,7 @@ proc buildObjectType(element: NimNode, sql_scripts: var string) =
             fields.add "\"" & fieldNameStr & "\" " & fieldTypeStr
 
   if fields.len > 0:
-    let typeSql = "\nCREATE TYPE " & objName & " AS (\n  " & fields.join(",\n  ") & "\n);\n"
+    let typeSql = "\nCREATE TYPE \"" & objName & "\" AS (\n  " & fields.join(",\n  ") & "\n);\n"
     sql_scripts.add typeSql
 
 proc lift_base_datatypes(function: NimNode, custom_datatypes: Table[string, string]) =
