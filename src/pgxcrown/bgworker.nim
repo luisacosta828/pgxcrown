@@ -366,6 +366,19 @@ proc trackWorkerStopped*(name: string) =
               "WHERE name = " & quoteLiteral(name) & ";"
       discard exec(const_string(q), 0)
 
+proc trackWorkerHeartbeat*(name: string = "") =
+  ## Updates the last_seen heartbeat timestamp (and ensures status = 'running') in pgxcrown_workers.
+  ## If name is omitted, automatically uses getWorkerName().
+  let wName = if name.len > 0: name else: getWorkerName()
+  if wName.len == 0:
+    return
+  ensureWorkersCatalog()
+  spi_init:
+    pgTry:
+      let q = "UPDATE pgxcrown_workers SET last_seen = clock_timestamp(), status = 'running' " &
+              "WHERE name = " & quoteLiteral(wName) & ";"
+      discard exec(const_string(q), 0)
+
 proc stopWorkerByName*(name: string): bool =
   ## Terminates a worker by name via pg_terminate_backend and marks it stopped.
   ## Verifies PID liveness and background worker identity to prevent terminating recycled client PIDs.

@@ -110,7 +110,11 @@ bool IsSubTransaction(void) { return false; }
 
 int SPI_connect(void) { return 0; }
 int SPI_finish(void) { return 0; }
-int SPI_exec(const char *cmd, long count) { return 0; }
+char mockLastSpiSql[512] = {0};
+int SPI_exec(const char *cmd, long count) {
+    if (cmd) strncpy(mockLastSpiSql, cmd, sizeof(mockLastSpiSql) - 1);
+    return 0;
+}
 uint64 SPI_processed = 0;
 void *SPI_tuptable = NULL;
 
@@ -343,5 +347,26 @@ suite "Pgxcrown - PostgreSQL Background Worker (BGWorker) Suite":
     check mockConnUserOid == 10'u32
     check mockConnFlags == BGWORKER_BYPASS_ALLOWCONN
 
+    MyBgworkerEntry = nil
+
+  test "Worker heartbeat tracking (trackWorkerHeartbeat)":
+    var mockLastSpiSql {.importc.}: array[512, char]
+
+    # Explicit worker name
+    mockLastSpiSql[0] = '\0'
+    trackWorkerHeartbeat("metrics_daemon")
+    let sqlExplicit = $cast[cstring](addr mockLastSpiSql[0])
+    check "UPDATE pgxcrown_workers SET last_seen = clock_timestamp(), status = 'running'" in sqlExplicit
+    check "WHERE name = 'metrics_daemon'" in sqlExplicit
+
+    # Implicit worker name from MyBgworkerEntry
+    var mockWorker: BackgroundWorker
+    for i, ch in "auto_heartbeat_worker":
+      mockWorker.bgw_name[i] = ch
+    MyBgworkerEntry = addr mockWorker
+    mockLastSpiSql[0] = '\0'
+    trackWorkerHeartbeat()
+    let sqlImplicit = $cast[cstring](addr mockLastSpiSql[0])
+    check "WHERE name = 'auto_heartbeat_worker'" in sqlImplicit
     MyBgworkerEntry = nil
 
