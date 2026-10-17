@@ -5,8 +5,8 @@ import std/[unittest, strutils]
 #include "postgres.h"
 #include "postmaster/bgworker.h"
 #include "storage/latch.h"
-#include "storage/ipc.h"
 #include "utils/guc.h"
+#include "utils/snapmgr.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
@@ -71,13 +71,15 @@ void TerminateBackgroundWorker(BackgroundWorkerHandle *handle) {}
 void BackgroundWorkerInitializeConnection(const char *dbname, const char *username, uint32 flags) {}
 void BackgroundWorkerBlockSignals(void) {}
 void BackgroundWorkerUnblockSignals(void) {}
-void StartTransactionCommand(void) {}
-void CommitTransactionCommand(void) {}
+int mockTxStartCount = 0;
+int mockTxCommitCount = 0;
+void StartTransactionCommand(void) { mockTxStartCount++; }
+void CommitTransactionCommand(void) { mockTxCommitCount++; }
 void AbortCurrentTransaction(void) {}
 void SetCurrentStatementStartTimestamp(void) {}
 void ProcessConfigFile(GucContext context) {}
-void PushActiveSnapshot(void *snapshot) {}
-void *GetTransactionSnapshot(void) { return NULL; }
+void PushActiveSnapshot(Snapshot snapshot) {}
+Snapshot GetTransactionSnapshot(void) { return NULL; }
 
 void PopActiveSnapshot(void) {}
 bool ActiveSnapshotSet(void) { return false; }
@@ -233,18 +235,47 @@ suite "Pgxcrown - PostgreSQL Background Worker (BGWorker) Suite":
     check "SELECT stop_telemetry_worker();" in testSql
 
   test "Worker introspection & graceful shutdown verification":
+    var mockTxStartCount {.importc.}: cint
+    var mockTxCommitCount {.importc.}: cint
+
     # Default without entry should be empty string
     check getWorkerName() == ""
     check getWorkerType() == ""
+    check not hasWorkerDbConnection()
 
-    # Simulated worker entry
+    # Simulated worker entry (shared-memory-only first)
     var mockWorker: BackgroundWorker
     for i, ch in "archiver_daemon":
       mockWorker.bgw_name[i] = ch
     for i, ch in "Archiver":
       mockWorker.bgw_type[i] = ch
+    mockWorker.bgw_flags = BGWORKER_SHMEM_ACCESS
 
     MyBgworkerEntry = addr mockWorker
     check getWorkerName() == "archiver_daemon"
     check getWorkerType() == "Archiver"
+    check not hasWorkerDbConnection()
+
+    # Shutdown without DB connection should NOT start a transaction
+    mockTxStartCount = 0
+    mockTxCommitCount = 0
+    workerGotSigterm = 1
+    var shmemShutdownRan = false
+    runWorkerLoop(100, (discard), (shmemShutdownRan = true))
+    check shmemShutdownRan
+    check mockTxStartCount == 0
+    check mockTxCommitCount == 0
+
+    # Shutdown WITH DB connection should wrap trackWorkerStopped inside workerTransaction
+    mockWorker.bgw_flags = BGWORKER_SHMEM_ACCESS or BGWORKER_BACKEND_DATABASE_CONNECTION
+    check hasWorkerDbConnection()
+    workerGotSigterm = 1
+    var dbShutdownRan = false
+    runWorkerLoop(100, (discard), (dbShutdownRan = true))
+    check dbShutdownRan
+    check mockTxStartCount == 1
+    check mockTxCommitCount == 1
+
+    workerGotSigterm = 0
     MyBgworkerEntry = nil
+

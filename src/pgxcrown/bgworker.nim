@@ -75,6 +75,11 @@ proc getWorkerType*(): string =
     return $cast[cstring](addr MyBgworkerEntry.bgw_type[0])
   return ""
 
+proc hasWorkerDbConnection*(): bool =
+  ## Returns true if the current background worker was registered with database connection access
+  MyBgworkerEntry != nil and (MyBgworkerEntry.bgw_flags and BGWORKER_BACKEND_DATABASE_CONNECTION) != 0
+
+
 type
   WorkerHandle* = object
     raw*: BackgroundWorkerHandlePtr
@@ -377,8 +382,11 @@ proc StartTransactionCommand*() {.importc, header: "access/xact.h".}
 proc CommitTransactionCommand*() {.importc, header: "access/xact.h".}
 proc AbortCurrentTransaction*() {.importc, header: "access/xact.h".}
 
-proc GetTransactionSnapshot*(): pointer {.importc, header: "utils/snapmgr.h".}
-proc PushActiveSnapshot*(snapshot: pointer) {.importc, header: "utils/snapmgr.h".}
+type
+  PgSnapshot* {.importc: "Snapshot", header: "utils/snapmgr.h".} = pointer
+
+proc GetTransactionSnapshot*(): PgSnapshot {.importc, header: "utils/snapmgr.h".}
+proc PushActiveSnapshot*(snapshot: PgSnapshot) {.importc, header: "utils/snapmgr.h".}
 proc PopActiveSnapshot*() {.importc, header: "utils/snapmgr.h".}
 proc ActiveSnapshotSet*(): bool {.importc, header: "utils/snapmgr.h".}
 
@@ -387,12 +395,24 @@ proc WaitLatch*(latch: pointer, wakeEvents: cint, timeout_ms: clong, wait_event_
 proc ResetLatch*(latch: pointer) {.importc, header: "storage/latch.h".}
 proc SetLatch*(latch: pointer) {.importc, header: "storage/latch.h".}
 
-proc proc_exit*(code: cint) {.importc, header: "storage/ipc.h".}
+proc proc_exit*(code: cint) {.importc: "proc_exit".}
 proc ProcessConfigFile*(context: cint) {.importc, header: "utils/guc.h".}
 proc pqsignal*(signo: cint, handler: proc(signo: cint) {.cdecl.}): pointer {.importc, header: "libpq/pqsignal.h".}
 
-var workerGotSigterm* {.volatile.}: SigAtomic = 0
-var workerGotSighup* {.volatile.}: SigAtomic = 0
+var workerGotSigterm* {.exportc: "pgx_worker_got_sigterm", volatile.}: SigAtomic = 0
+var workerGotSighup* {.exportc: "pgx_worker_got_sighup", volatile.}: SigAtomic = 0
+
+proc isWorkerSigtermSet*(): bool =
+  volatileLoad(addr workerGotSigterm) != 0
+
+proc setWorkerSigterm*(val: SigAtomic = 1) =
+  volatileStore(addr workerGotSigterm, val)
+
+proc consumeWorkerSighup*(): bool =
+  if volatileLoad(addr workerGotSighup) != 0:
+    volatileStore(addr workerGotSighup, 0)
+    return true
+  return false
 
 proc onSigterm(signo: cint) {.cdecl.} =
   let saved = posixErrno
@@ -447,9 +467,8 @@ template workerTransaction*(body: untyped) =
 template runWorkerLoop*(intervalMs: int, body: untyped, shutdownHandler: untyped) =
   if MyLatch != nil:
     ResetLatch(MyLatch)
-  while volatileLoad(addr workerGotSigterm) == 0:
-    if volatileLoad(addr workerGotSighup) != 0:
-      volatileStore(addr workerGotSighup, 0)
+  while not isWorkerSigtermSet():
+    if consumeWorkerSighup():
       ProcessConfigFile(PGC_SIGHUP)
     try:
       body
@@ -457,7 +476,7 @@ template runWorkerLoop*(intervalMs: int, body: untyped, shutdownHandler: untyped
       pgWarning("BgWorker error: " & err.msg)
     except Defect as defect:
       pgWarning("BgWorker defect: " & defect.msg)
-    if volatileLoad(addr workerGotSigterm) != 0:
+    if isWorkerSigtermSet():
       break
     setWorkerIdle("waiting for next cycle (" & $intervalMs & "ms)")
     if MyLatch != nil:
@@ -468,11 +487,12 @@ template runWorkerLoop*(intervalMs: int, body: untyped, shutdownHandler: untyped
     if (rc and WL_POSTMASTER_DEATH) != 0:
       workerExit(1)
 
-  # Graceful shutdown: auto-update catalog and execute shutdown handler
+  # Graceful shutdown: auto-update catalog (only when connected to a database) and execute shutdown handler
   let wName = getWorkerName()
-  if wName.len > 0:
+  if wName.len > 0 and hasWorkerDbConnection():
     try:
-      trackWorkerStopped(wName)
+      workerTransaction:
+        trackWorkerStopped(wName)
     except CatchableError:
       discard
     except Defect:
