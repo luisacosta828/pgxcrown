@@ -45,73 +45,83 @@ var
 {.pop.}
 
 template get_pg_proc_retset*(ttuple: typed): bool =
-  var is_null = false
-  var datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_proretset, addr(is_null))
+  var attrIsNull = false
+  var datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_proretset, addr(attrIsNull))
   (cast[uint](datum) != 0)
 
 template get_pg_proc_src*(ttuple: typed): cstring =
   var
-    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_prosrc, addr(is_null))
-    content   = TextDatumGetCString(datum)
+    attrIsNull = false
+    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_prosrc, addr(attrIsNull))
+    content = TextDatumGetCString(datum)
   content
 
 template get_pg_proc_name*(ttuple: typed): cstring =
   var
-    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_proname, addr(is_null))
+    attrIsNull = false
+    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_proname, addr(attrIsNull))
     fn_name = DatumGetName(datum)
   NameStr(fn_name[])
 
 template get_pg_proc_kind*(ttuple: typed): char =
   var
-    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_prokind, addr(is_null))
+    attrIsNull = false
+    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_prokind, addr(attrIsNull))
     fn_kind = DatumGetChar(datum)
   fn_kind
 
 template get_pg_proc_is_strict*(ttuple: typed): bool =
   var
-    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_proisstrict, addr(is_null))
+    attrIsNull = false
+    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_proisstrict, addr(attrIsNull))
     fn_is_strict = DatumGetBool(datum)
   fn_is_strict
 
 
 template get_pg_proc_nargs*(ttuple: typed): int16 =
   var
-    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_pronargs, addr(is_null))
+    attrIsNull = false
+    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_pronargs, addr(attrIsNull))
     fn_nargs = DatumGetInt16(datum)
   fn_nargs
 
 template get_pg_proc_default_nargs*(ttuple: typed): int16 =
   var
-    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_pronargdefaults, addr(is_null))
+    attrIsNull = false
+    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_pronargdefaults, addr(attrIsNull))
     fn_default_nargs = DatumGetInt16(datum)
   fn_default_nargs
 
 template get_pg_proc_rettype*(ttuple: typed): Oid =
   var
-    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_prorettype, addr(is_null))
+    attrIsNull = false
+    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_prorettype, addr(attrIsNull))
     fn_rettype = DatumGetObjectId(datum)
   fn_rettype
 
 template get_pg_proc_argnames*(ttuple: typed): seq[string] =
   var
-    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_proargnames, addr(is_null))
+    attrIsNull = false
+    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_proargnames, addr(attrIsNull))
     nelems: int
     arg_names: cstringArray
   
-  if not is_null:
-    nelems = get_func_input_arg_names(datum,0, arg_names)  
+  if not attrIsNull:
+    nelems = get_func_input_arg_names(datum, 0, arg_names)  
   arg_names.cstringArrayToSeq(nelems)
   
 
 template get_pg_proc_argtypes*(ttuple: typed): ptr UncheckedArray[Oid] =
   var
-    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_proargtypes, addr(is_null))
+    attrIsNull = false
+    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_proargtypes, addr(attrIsNull))
     fn_args_types = cast[ptr oidvector](DatumGetPointer(datum))
   addr(fn_args_types.values)
 
 template get_pg_proc_arg_oid*(ttuple: typed, arg_idx: int): Oid =
   var
-    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_proargtypes, addr(is_null))
+    attrIsNull = false
+    datum = SysCacheGetAttr(PROCOID, ttuple, Anum_pg_proc_proargtypes, addr(attrIsNull))
     fn_args_types = cast[ptr oidvector](DatumGetPointer(datum))
   fn_args_types.values[arg_idx]
 
