@@ -1,5 +1,6 @@
 import std/[options, macros, strutils]
 import ./datatypes/basic
+export Oid, Datum
 
 {.passC: "-include postgres.h".}
 
@@ -96,6 +97,39 @@ proc isWorkerPidAlive*(pid: int, expectedType: string = ""): bool =
   if expectedType.len > 0 and activeType != expectedType:
     return false
   return true
+
+const pgxConnMetaPrefix = "\x01PGX:"
+
+proc unpackWorkerConnMeta(): (string, string, bool) =
+  if MyBgworkerEntry == nil:
+    return ("", "", false)
+  var zeroIdx = 0
+  while zeroIdx < BGW_EXTRALEN and MyBgworkerEntry.bgw_extra[zeroIdx] != '\0':
+    inc zeroIdx
+  let metaStart = zeroIdx + 1
+  if metaStart + pgxConnMetaPrefix.len >= BGW_EXTRALEN:
+    return ("", "", false)
+  for i in 0 ..< pgxConnMetaPrefix.len:
+    if MyBgworkerEntry.bgw_extra[metaStart + i] != pgxConnMetaPrefix[i]:
+      return ("", "", false)
+  let payloadStart = metaStart + pgxConnMetaPrefix.len
+  let rawPayload = $cast[cstring](addr MyBgworkerEntry.bgw_extra[payloadStart])
+  let parts = rawPayload.split('\x1F')
+  if parts.len >= 3:
+    return (parts[0], parts[1], parts[2] == "1")
+  return ("", "", false)
+
+proc getWorkerDbName*(): string =
+  ## Returns the database name configured in the bgWorker DSL, or "" if none
+  unpackWorkerConnMeta()[0]
+
+proc getWorkerUserName*(): string =
+  ## Returns the database user name configured in the bgWorker DSL, or "" if none
+  unpackWorkerConnMeta()[1]
+
+proc getWorkerBypassAllowConn*(): bool =
+  ## Returns the bypassAllowConn flag configured in the bgWorker DSL
+  unpackWorkerConnMeta()[2]
 
 proc hasWorkerDbConnection*(): bool =
   ## Returns true if the current background worker was registered with database connection access
@@ -204,6 +238,14 @@ proc toRawWorker*(cfg: WorkerConfig): BackgroundWorker =
   copyToFixed(result.bgw_function_name, cfg.functionName)
   result.bgw_main_arg = cfg.mainArg
   copyToFixed(result.bgw_extra, cfg.extra)
+  let dbStr = if cfg.dbName != nil and cfg.dbName[0] != '\0': $cfg.dbName else: ""
+  let userStr = if cfg.userName != nil and cfg.userName[0] != '\0': $cfg.userName else: ""
+  if dbStr.len > 0 or userStr.len > 0 or cfg.bypassAllowConn:
+    let extraLen = if cfg.extra != nil: min(cfg.extra.len, BGW_EXTRALEN - 1) else: 0
+    let metaStart = extraLen + 1
+    let meta = pgxConnMetaPrefix & dbStr & "\x1F" & userStr & "\x1F" & (if cfg.bypassAllowConn: "1" else: "0")
+    if metaStart + meta.len < BGW_EXTRALEN:
+      copyMem(addr result.bgw_extra[metaStart], cstring(meta), meta.len)
   result.bgw_notify_pid = cint(cfg.notifyPid)
 
 proc registerWorker*(cfg: WorkerConfig) =
@@ -404,6 +446,7 @@ var posixErrno {.importc: "errno", header: "errno.h".}: cint
 
 proc BackgroundWorkerUnblockSignals*() {.importc, header: "postmaster/bgworker.h".}
 proc BackgroundWorkerInitializeConnection*(dbname, username: cstring, flags: cuint) {.importc, header: "postmaster/bgworker.h".}
+proc BackgroundWorkerInitializeConnectionByOid*(dboid, useroid: Oid, flags: cuint) {.importc, header: "postmaster/bgworker.h".}
 
 proc SetCurrentStatementStartTimestamp*() {.importc, header: "access/xact.h".}
 proc StartTransactionCommand*() {.importc, header: "access/xact.h".}
@@ -465,9 +508,21 @@ proc setupSignals*() =
 proc workerInit*(dbName: cstring = nil, userName: cstring = nil, bypassAllowConn: bool = false) =
   setupSignals()
   BackgroundWorkerUnblockSignals()
-  if dbName != nil and dbName[0] != '\0':
-    let flags: cuint = if bypassAllowConn: cuint(BGWORKER_BYPASS_ALLOWCONN) else: 0'u32
-    BackgroundWorkerInitializeConnection(dbName, userName, flags)
+  let effectiveDb = if dbName != nil and dbName[0] != '\0': $dbName else: getWorkerDbName()
+  let effectiveUser = if userName != nil and userName[0] != '\0': $userName else: getWorkerUserName()
+  let effectiveBypass = bypassAllowConn or getWorkerBypassAllowConn()
+  if effectiveDb.len > 0 or (effectiveUser.len > 0 and hasWorkerDbConnection()):
+    let flags: cuint = if effectiveBypass: cuint(BGWORKER_BYPASS_ALLOWCONN) else: 0'u32
+    let dbArg: cstring = if effectiveDb.len > 0: cstring(effectiveDb) else: nil
+    let userArg: cstring = if effectiveUser.len > 0: cstring(effectiveUser) else: nil
+    BackgroundWorkerInitializeConnection(dbArg, userArg, flags)
+
+proc workerInitByOid*(dbOid: Oid, userOid: Oid = Oid(0), bypassAllowConn: bool = false) =
+  setupSignals()
+  BackgroundWorkerUnblockSignals()
+  let effectiveBypass = bypassAllowConn or getWorkerBypassAllowConn()
+  let flags: cuint = if effectiveBypass: cuint(BGWORKER_BYPASS_ALLOWCONN) else: 0'u32
+  BackgroundWorkerInitializeConnectionByOid(dbOid, userOid, flags)
 
 proc workerExit*(code: int = 0) {.inline.} =
   proc_exit(cint(code))

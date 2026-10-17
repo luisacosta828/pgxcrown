@@ -69,7 +69,23 @@ const char *GetBackgroundWorkerTypeByPid(pid_t pid) {
     return NULL;
 }
 void TerminateBackgroundWorker(BackgroundWorkerHandle *handle) {}
-void BackgroundWorkerInitializeConnection(const char *dbname, const char *username, uint32 flags) {}
+char mockConnDb[64] = {0};
+char mockConnUser[64] = {0};
+uint32 mockConnFlags = 0;
+Oid mockConnDbOid = 0;
+Oid mockConnUserOid = 0;
+void BackgroundWorkerInitializeConnection(const char *dbname, const char *username, uint32 flags) {
+    mockConnDb[0] = '\0';
+    mockConnUser[0] = '\0';
+    if (dbname) strncpy(mockConnDb, dbname, sizeof(mockConnDb) - 1);
+    if (username) strncpy(mockConnUser, username, sizeof(mockConnUser) - 1);
+    mockConnFlags = flags;
+}
+void BackgroundWorkerInitializeConnectionByOid(Oid dboid, Oid useroid, uint32 flags) {
+    mockConnDbOid = dboid;
+    mockConnUserOid = useroid;
+    mockConnFlags = flags;
+}
 void BackgroundWorkerBlockSignals(void) {}
 void BackgroundWorkerUnblockSignals(void) {}
 int mockTxStartCount = 0;
@@ -291,4 +307,41 @@ suite "Pgxcrown - PostgreSQL Background Worker (BGWorker) Suite":
     check not isWorkerPidAlive(4242, "OtherWorkerType")
     check not isWorkerPidAlive(9999)
     check not isWorkerPidAlive(0)
+
+  test "Automatic propagation of dbName, userName, and bypassAllowConn to workerInit":
+    var mockConnDb {.importc.}: array[64, char]
+    var mockConnUser {.importc.}: array[64, char]
+    var mockConnFlags {.importc.}: uint32
+    var mockConnDbOid {.importc.}: uint32
+    var mockConnUserOid {.importc.}: uint32
+
+    let cfg = bgWorker("AnalyticsDaemon"):
+      database "analytics_db"
+      user "analytics_role"
+      bypassAllowConn
+      extra "shard=7"
+
+    var raw = cfg.toRawWorker()
+    MyBgworkerEntry = addr raw
+
+    # User extra payload remains intact and null-terminated
+    check getWorkerExtra() == "shard=7"
+    check getWorkerDbName() == "analytics_db"
+    check getWorkerUserName() == "analytics_role"
+    check getWorkerBypassAllowConn() == true
+
+    # Zero-arg workerInit() automatically uses propagated connection config
+    workerInit()
+    check $cast[cstring](addr mockConnDb[0]) == "analytics_db"
+    check $cast[cstring](addr mockConnUser[0]) == "analytics_role"
+    check mockConnFlags == BGWORKER_BYPASS_ALLOWCONN
+
+    # Explicit workerInitByOid inherits bypassAllowConn if not overridden
+    mockConnFlags = 0
+    workerInitByOid(16384.Oid, 10.Oid)
+    check mockConnDbOid == 16384'u32
+    check mockConnUserOid == 10'u32
+    check mockConnFlags == BGWORKER_BYPASS_ALLOWCONN
+
+    MyBgworkerEntry = nil
 
