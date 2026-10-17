@@ -14,5 +14,8 @@ tmp_*
 nimcache/
 benchmarks/
 tests/test_base_types
+tests/test_bgworker
+tests/test_errors
+tests/test_pgtext
 tests/test_pgvector
 tests/test_query_builder
