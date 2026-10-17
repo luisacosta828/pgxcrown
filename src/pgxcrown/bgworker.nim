@@ -51,6 +51,7 @@ proc RegisterDynamicBackgroundWorker*(worker: ptr BackgroundWorker, handle: ptr 
 proc GetBackgroundWorkerPid*(handle: BackgroundWorkerHandlePtr, pid: var cint): BgwHandleStatus {.importc.}
 proc WaitForBackgroundWorkerStartup*(handle: BackgroundWorkerHandlePtr, pid: var cint): BgwHandleStatus {.importc.}
 proc WaitForBackgroundWorkerShutdown*(handle: BackgroundWorkerHandlePtr): BgwHandleStatus {.importc.}
+proc GetBackgroundWorkerTypeByPid*(pid: cint): cstring {.importc.}
 proc TerminateBackgroundWorker*(handle: BackgroundWorkerHandlePtr) {.importc.}
 
 var MyBgworkerEntry* {.importc: "MyBgworkerEntry".}: ptr BackgroundWorker
@@ -74,6 +75,27 @@ proc getWorkerType*(): string =
   if MyBgworkerEntry != nil and MyBgworkerEntry.bgw_type[0] != '\0':
     return $cast[cstring](addr MyBgworkerEntry.bgw_type[0])
   return ""
+
+proc getWorkerTypeByPid*(pid: int): string =
+  ## Returns the background worker type (bgw_type) for an active worker PID,
+  ## or "" if the PID does not belong to an active background worker.
+  if pid <= 0:
+    return ""
+  let raw = GetBackgroundWorkerTypeByPid(cint(pid))
+  if raw != nil and raw[0] != '\0':
+    return $raw
+  return ""
+
+proc isWorkerPidAlive*(pid: int, expectedType: string = ""): bool =
+  ## Verifies via PostgreSQL shared memory (GetBackgroundWorkerTypeByPid) that
+  ## the given PID belongs to an active background worker (and matches expectedType if given),
+  ## preventing false positives or collateral termination if OS PIDs are recycled.
+  let activeType = getWorkerTypeByPid(pid)
+  if activeType.len == 0:
+    return false
+  if expectedType.len > 0 and activeType != expectedType:
+    return false
+  return true
 
 proc hasWorkerDbConnection*(): bool =
   ## Returns true if the current background worker was registered with database connection access
@@ -303,7 +325,8 @@ proc trackWorkerStopped*(name: string) =
       discard exec(const_string(q), 0)
 
 proc stopWorkerByName*(name: string): bool =
-  ## Terminates a worker by name via pg_terminate_backend and marks it stopped
+  ## Terminates a worker by name via pg_terminate_backend and marks it stopped.
+  ## Verifies PID liveness and background worker identity to prevent terminating recycled client PIDs.
   ensureWorkersCatalog()
   var targetPid = 0
   let findQ = "SELECT pid FROM pgxcrown_workers WHERE name = " & quoteLiteral(name) & " AND status = 'running';"
@@ -315,10 +338,15 @@ proc stopWorkerByName*(name: string): bool =
       targetPid = 0
 
   if targetPid > 0:
-    let termQ = "SELECT pg_terminate_backend(" & $targetPid & ");"
-    discard fetchRawRows(termQ)
-    trackWorkerStopped(name)
-    return true
+    if isWorkerPidAlive(targetPid):
+      let termQ = "SELECT pg_terminate_backend(" & $targetPid & ") WHERE NOT EXISTS (" &
+                  "SELECT 1 FROM pg_stat_activity WHERE pid = " & $targetPid & " AND backend_type = 'client backend');"
+      discard fetchRawRows(termQ)
+      trackWorkerStopped(name)
+      return true
+    else:
+      trackWorkerStopped(name)
+      return false
   return false
 
 proc getWorkerStatusByName*(name: string): string =
@@ -340,10 +368,10 @@ proc getWorkerStatusByName*(name: string): string =
   if recordedStatus == "stopped":
     return "stopped"
 
-  # If recorded as running, check if process is actually alive in pg_stat_activity
+  # If recorded as running, verify PID belongs to a live background worker and not a recycled client backend
   var isAlive = false
-  if targetPid > 0:
-    let checkQ = "SELECT 1 FROM pg_stat_activity WHERE pid = " & $targetPid & ";"
+  if targetPid > 0 and isWorkerPidAlive(targetPid):
+    let checkQ = "SELECT 1 FROM pg_stat_activity WHERE pid = " & $targetPid & " AND backend_type != 'client backend';"
     let checkRows = fetchRawRows(checkQ)
     if checkRows.len > 0:
       isAlive = true

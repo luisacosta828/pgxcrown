@@ -65,7 +65,8 @@ BgwHandleStatus WaitForBackgroundWorkerShutdown(BackgroundWorkerHandle *handle) 
     return BGWH_STOPPED;
 }
 const char *GetBackgroundWorkerTypeByPid(pid_t pid) {
-    return "TestWorker";
+    if (pid == 4242) return "TestWorker";
+    return NULL;
 }
 void TerminateBackgroundWorker(BackgroundWorkerHandle *handle) {}
 void BackgroundWorkerInitializeConnection(const char *dbname, const char *username, uint32 flags) {}
@@ -278,4 +279,16 @@ suite "Pgxcrown - PostgreSQL Background Worker (BGWorker) Suite":
 
     workerGotSigterm = 0
     MyBgworkerEntry = nil
+
+  test "PID liveness & recycling defense (getWorkerTypeByPid / isWorkerPidAlive)":
+    check getWorkerTypeByPid(4242) == "TestWorker"
+    check getWorkerTypeByPid(9999) == ""
+    check getWorkerTypeByPid(0) == ""
+    check getWorkerTypeByPid(-1) == ""
+
+    check isWorkerPidAlive(4242)
+    check isWorkerPidAlive(4242, "TestWorker")
+    check not isWorkerPidAlive(4242, "OtherWorkerType")
+    check not isWorkerPidAlive(9999)
+    check not isWorkerPidAlive(0)
 
