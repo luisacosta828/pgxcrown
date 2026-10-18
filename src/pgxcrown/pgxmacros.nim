@@ -565,7 +565,7 @@ proc analyze_node(code: NimNode): NimNode =
     result = check_while_section(code)
   of nnkProcDef, nnkFuncDef:
     result = check_proc_def(code)
-  of nnkPrefix, nnkDotExpr, nnkEmpty, nnkCommentStmt, nnkTypeSection, nnkTypeDef, nnkObjectTy, nnkRecList, nnkEnumTy, nnkEnumFieldDef, nnkRefTy, nnkPtrTy, nnkDistinctTy, nnkTupleTy, nnkBracket, nnkCurly, nnkPar, nnkSym, nnkLambda, nnkDo, nnkAccQuoted, nnkFormalParams, nnkTableConstr, nnkTupleConstr, nnkObjConstr, nnkConv, nnkHiddenStdConv, nnkHiddenSubConv, nnkStmtListExpr, nnkElifBranch, nnkElse, nnkOfBranch, nnkPragma, nnkExprColonExpr, nnkPragmaExpr, nnkExprEqExpr:
+  of nnkPrefix, nnkDotExpr, nnkEmpty, nnkCommentStmt, nnkTypeSection, nnkTypeDef, nnkObjectTy, nnkRecList, nnkEnumTy, nnkEnumFieldDef, nnkRefTy, nnkPtrTy, nnkDistinctTy, nnkTupleTy, nnkBracket, nnkCurly, nnkPar, nnkSym, nnkLambda, nnkDo, nnkAccQuoted, nnkFormalParams, nnkTableConstr, nnkTupleConstr, nnkObjConstr, nnkConv, nnkHiddenStdConv, nnkHiddenSubConv, nnkStmtListExpr, nnkElifBranch, nnkElse, nnkElifExpr, nnkElseExpr, nnkOfBranch, nnkPragma, nnkExprColonExpr, nnkPragmaExpr, nnkExprEqExpr, nnkWhenStmt, nnkBreakStmt, nnkContinueStmt, nnkRaiseStmt, nnkFinally, nnkDefer, nnkYieldStmt, nnkTemplateDef, nnkIteratorDef:
     if code.len == 0:
       result = code
     else:
@@ -939,7 +939,7 @@ proc isStatement(n: NimNode): bool =
   case n.kind:
   of nnkAsgn, nnkVarSection, nnkLetSection, nnkConstSection, nnkTypeSection,
      nnkDiscardStmt, nnkBreakStmt, nnkContinueStmt, nnkIfStmt, nnkWhenStmt,
-     nnkWhileStmt, nnkForStmt, nnkBlockStmt, nnkStmtList:
+     nnkWhileStmt, nnkForStmt, nnkBlockStmt, nnkStmtList, nnkTryStmt, nnkRaiseStmt, nnkDefer:
     true
   of nnkCall, nnkInfix:
     if n.len > 0 and n[0].kind == nnkIdent and n[0].repr in ["[]=", "add", "del", "delete", "insert", "inc", "dec"]:
