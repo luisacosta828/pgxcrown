@@ -73,8 +73,14 @@ type
 
   PgxGuardedFn* = proc(data: pointer) {.cdecl.}
 
-proc pgxEreportFull(elevel: cint, sqlerrcode: cint, msg: cstring, detail: cstring, hint: cstring) {.importc: "pgx_ereport_full", nodecl.}
-proc pgxCallGuarded*(fn: PgxGuardedFn, data: pointer, outErr: ptr PgxCapturedError): bool {.importc: "pgx_call_guarded", nodecl.}
+proc pgxEreportFullRaw(elevel: cint, sqlerrcode: cint, msg: cstring, detail: cstring, hint: cstring) {.importc: "pgx_ereport_full", nodecl.}
+proc pgxCallGuardedRaw(fn: PgxGuardedFn, data: pointer, outErr: ptr PgxCapturedError): bool {.importc: "pgx_call_guarded", nodecl.}
+
+proc pgxEreportFull*(elevel: cint, sqlerrcode: cint, msg: cstring, detail: cstring, hint: cstring) =
+  pgxEreportFullRaw(elevel, sqlerrcode, msg, detail, hint)
+
+proc pgxCallGuarded*(fn: PgxGuardedFn, data: pointer, outErr: ptr PgxCapturedError): bool =
+  pgxCallGuardedRaw(fn, data, outErr)
 
 # -----------------------------------------------------------------------------
 # Reporting Procs

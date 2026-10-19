@@ -1,12 +1,27 @@
 from basic import Oid, Datum, NameData, OidOutputFunctionCall, PointerGetDatum, Pointer,
-  Int32GetDatum, Int64GetDatum, Float4GetDatum, Float8GetDatum, BoolGetDatum,
-  CharGetDatum, ObjectIdGetDatum, CStringGetTextDatum, DatumToInt32, DatumToInt64,
+  Int32GetDatum, Int64GetDatum, Int16GetDatum, Float4GetDatum, Float8GetDatum, BoolGetDatum,
+  CharGetDatum, ObjectIdGetDatum, CStringGetTextDatum, TextDatumGetCString, DatumToInt32, DatumToInt64,
   DatumGetFloat8, DatumGetChar, DatumGetObjectId, DatumToCString,
-  DatumGetInt32, DatumGetInt64, DatumGetInt16, DatumGetFloat4
+  DatumGetInt32, DatumGetInt64, DatumGetInt16, DatumGetFloat4, palloc
 
 from jsonb import JsonNodeToDatum, DatumToJsonNode
 
 import std/[options, json, strutils, typetraits]
+
+{.push header: "postgres.h".}
+proc htup_pfree(p: pointer) {.importc: "pfree".}
+{.pop.}
+
+{.push header: "utils/array.h".}
+proc htup_DatumGetArrayTypeP(x: Datum): pointer {.importc: "DatumGetArrayTypeP".}
+proc htup_deconstruct_array(
+  arr: pointer, elmtype: Oid, elmlen: cint, elmbyval: bool, elmalign: cchar,
+  elemsp: ptr ptr Datum, nullsp: ptr ptr bool, nelemsp: ptr cint
+) {.importc: "deconstruct_array".}
+proc htup_construct_array(
+  elems: ptr Datum, nelems: cint, elmtype: Oid, elmlen: cint, elmbyval: bool, elmalign: cchar
+): pointer {.importc: "construct_array".}
+{.pop.}
 
 {.push header: "access/htup_details.h" .}
 type
@@ -221,6 +236,41 @@ proc tupleHeaderToObject*[T: object | tuple](th: HeapTupleHeader): T {.tags: [].
           if cs != nil:
             try: field = parseEnum[typeof(field)]($cs)
             except CatchableError: field = default(typeof(field))
+        elif typeof(field) is seq:
+          type ElemT = typeof(field[0])
+          let arrPtr = htup_DatumGetArrayTypeP(rawDatum)
+          if arrPtr != nil:
+            var elemsPtr: ptr Datum
+            var nullsPtr: ptr bool
+            var nElems: cint
+            when ElemT is int32 or ElemT is int or ElemT is cint:
+              htup_deconstruct_array(arrPtr, 23.Oid, 4'i32, true, 'i'.cchar, addr elemsPtr, addr nullsPtr, addr nElems)
+            elif ElemT is int64 or ElemT is clonglong:
+              htup_deconstruct_array(arrPtr, 20.Oid, 8'i32, true, 'd'.cchar, addr elemsPtr, addr nullsPtr, addr nElems)
+            elif ElemT is int16 or ElemT is cshort:
+              htup_deconstruct_array(arrPtr, 21.Oid, 2'i32, true, 's'.cchar, addr elemsPtr, addr nullsPtr, addr nElems)
+            elif ElemT is float64 or ElemT is float or ElemT is cdouble:
+              htup_deconstruct_array(arrPtr, 701.Oid, 8'i32, true, 'd'.cchar, addr elemsPtr, addr nullsPtr, addr nElems)
+            elif ElemT is float32 or ElemT is cfloat:
+              htup_deconstruct_array(arrPtr, 700.Oid, 4'i32, true, 'i'.cchar, addr elemsPtr, addr nullsPtr, addr nElems)
+            elif ElemT is bool:
+              htup_deconstruct_array(arrPtr, 16.Oid, 1'i32, true, 'c'.cchar, addr elemsPtr, addr nullsPtr, addr nElems)
+            else:
+              htup_deconstruct_array(arrPtr, 25.Oid, -1'i32, false, 'i'.cchar, addr elemsPtr, addr nullsPtr, addr nElems)
+            let elemArr = cast[ptr UncheckedArray[Datum]](elemsPtr)
+            let nullArr = cast[ptr UncheckedArray[bool]](nullsPtr)
+            field = newSeq[ElemT](nElems)
+            for k in 0 ..< nElems:
+              if nullArr == nil or not nullArr[k]:
+                when ElemT is int32 or ElemT is int or ElemT is cint: field[k] = ElemT(DatumGetInt32(elemArr[k]))
+                elif ElemT is int64 or ElemT is clonglong: field[k] = ElemT(DatumGetInt64(elemArr[k]))
+                elif ElemT is int16 or ElemT is cshort: field[k] = ElemT(DatumGetInt16(elemArr[k]))
+                elif ElemT is float64 or ElemT is float or ElemT is cdouble: field[k] = ElemT(DatumGetFloat8(elemArr[k]))
+                elif ElemT is float32 or ElemT is cfloat: field[k] = ElemT(DatumGetFloat4(elemArr[k]))
+                elif ElemT is bool: field[k] = (elemArr[k] != 0)
+                else: field[k] = $TextDatumGetCString(elemArr[k])
+            if elemsPtr != nil: htup_pfree(elemsPtr)
+            if nullsPtr != nil: htup_pfree(nullsPtr)
         else:
           let cs = getTupleStringAttr(th, tupDesc, idx)
           field = if cs != nil: $cs else: ""
@@ -231,6 +281,46 @@ proc tupleHeaderToObject*[T: object | tuple](th: HeapTupleHeader): T {.tags: [].
 # -----------------------------------------------------------------------------
 # High-Level Generic Serializer: object -> HeapTuple / Datum
 # -----------------------------------------------------------------------------
+
+proc htupPackSeq*[E](s: seq[E]): Datum =
+  var elmOid: Oid
+  var elmLen: cint
+  var elmByVal: bool
+  var elmAlign: cchar
+  when E is int32 or E is int or E is cint:
+    elmOid = 23.Oid; elmLen = 4; elmByVal = true; elmAlign = 'i'.cchar
+  elif E is int64 or E is clonglong:
+    elmOid = 20.Oid; elmLen = 8; elmByVal = true; elmAlign = 'd'.cchar
+  elif E is int16 or E is cshort:
+    elmOid = 21.Oid; elmLen = 2; elmByVal = true; elmAlign = 's'.cchar
+  elif E is float64 or E is float or E is cdouble:
+    elmOid = 701.Oid; elmLen = 8; elmByVal = true; elmAlign = 'd'.cchar
+  elif E is float32 or E is cfloat:
+    elmOid = 700.Oid; elmLen = 4; elmByVal = true; elmAlign = 'i'.cchar
+  elif E is bool:
+    elmOid = 16.Oid; elmLen = 1; elmByVal = true; elmAlign = 'c'.cchar
+  elif E is JsonNode:
+    elmOid = 3802.Oid; elmLen = -1; elmByVal = false; elmAlign = 'i'.cchar
+  else:
+    elmOid = 25.Oid; elmLen = -1; elmByVal = false; elmAlign = 'i'.cchar
+
+  if s.len == 0:
+    let arrPtr = htup_construct_array(nil, 0'i32, elmOid, elmLen, elmByVal, elmAlign)
+    return PointerGetDatum(cast[Pointer](arrPtr))
+
+  let elemsBuf = cast[ptr UncheckedArray[Datum]](palloc(cuint(s.len * sizeof(Datum))))
+  for i in 0 ..< s.len:
+    when E is int32 or E is int or E is cint: elemsBuf[i] = Int32GetDatum(int32(s[i]))
+    elif E is int64 or E is clonglong: elemsBuf[i] = Int64GetDatum(int64(s[i]))
+    elif E is int16 or E is cshort: elemsBuf[i] = Int16GetDatum(int16(s[i]))
+    elif E is float64 or E is float or E is cdouble: elemsBuf[i] = Float8GetDatum(float64(s[i]))
+    elif E is float32 or E is cfloat: elemsBuf[i] = Float4GetDatum(float32(s[i]))
+    elif E is bool: elemsBuf[i] = BoolGetDatum(s[i])
+    elif E is JsonNode: elemsBuf[i] = JsonNodeToDatum(s[i])
+    else: elemsBuf[i] = CStringGetTextDatum(cstring($s[i]))
+  let arrPtr = htup_construct_array(cast[ptr Datum](elemsBuf), s.len.cint, elmOid, elmLen, elmByVal, elmAlign)
+  htup_pfree(elemsBuf)
+  return PointerGetDatum(cast[Pointer](arrPtr))
 
 proc buildTupleDescFor*[T: object | tuple](): TupleDesc =
   var numFields: cint = 0
@@ -261,6 +351,15 @@ proc buildTupleDescFor*[T: object | tuple](): TupleDesc =
                    elif typeof(val) is string or typeof(val) is cstring: 25.Oid
                    elif typeof(val) is char: 18.Oid
                    elif typeof(val) is JsonNode: 3802.Oid
+                   elif typeof(val) is seq:
+                     when typeof(val[0]) is bool: 1000.Oid
+                     elif typeof(val[0]) is int16 or typeof(val[0]) is cshort: 1005.Oid
+                     elif typeof(val[0]) is int32 or typeof(val[0]) is cint or typeof(val[0]) is int: 1007.Oid
+                     elif typeof(val[0]) is int64 or typeof(val[0]) is clonglong: 1016.Oid
+                     elif typeof(val[0]) is float32 or typeof(val[0]) is cfloat: 1021.Oid
+                     elif typeof(val[0]) is float64 or typeof(val[0]) is cdouble or typeof(val[0]) is float: 1022.Oid
+                     elif typeof(val[0]) is JsonNode: 3807.Oid
+                     else: 1009.Oid
                    elif typeof(val) is Option:
                      when typeof(val.get) is bool: 16.Oid
                      elif typeof(val.get) is int8: 18.Oid
@@ -330,6 +429,7 @@ proc objectToHeapTuple*[T: object | tuple](obj: T, customDesc: TupleDesc = nil):
             elif typeof(innerVal) is cstring: values[idx] = CStringGetTextDatum(innerVal)
             elif typeof(innerVal) is char: values[idx] = CharGetDatum(innerVal)
             elif typeof(innerVal) is JsonNode: values[idx] = JsonNodeToDatum(innerVal)
+            elif typeof(innerVal) is seq: values[idx] = htupPackSeq(innerVal)
             elif typeof(innerVal) is enum: values[idx] = CStringGetTextDatum(cstring($innerVal))
             else: values[idx] = CStringGetTextDatum(cstring($innerVal))
         else:
@@ -354,6 +454,7 @@ proc objectToHeapTuple*[T: object | tuple](obj: T, customDesc: TupleDesc = nil):
           elif typeof(val) is cstring: values[idx] = CStringGetTextDatum(val)
           elif typeof(val) is char: values[idx] = CharGetDatum(val)
           elif typeof(val) is JsonNode: values[idx] = JsonNodeToDatum(val)
+          elif typeof(val) is seq: values[idx] = htupPackSeq(val)
           elif typeof(val) is enum: values[idx] = CStringGetTextDatum(cstring($val))
           else: values[idx] = CStringGetTextDatum(cstring($val))
         idx += 1

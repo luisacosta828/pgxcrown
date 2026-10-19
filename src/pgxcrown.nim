@@ -117,6 +117,10 @@ template ActivateHooks*() =
     #include "fmgr.h"
   """.}
 
+proc toParam*(v: PgText): QueryParam {.inline.} = toParam(toString(v))
+proc toQueryParam*(v: PgText): QueryParam {.inline.} = toParam(toString(v))
+
+
 export compiler
 export basic
 export reports
@@ -127,3 +131,4 @@ export query_builder
 export spi
 export strings
 export bgworker
+

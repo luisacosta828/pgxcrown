@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Pgxcrown v0.24.0 - Documentation Scripts
+   Pgxcrown v0.24.1 - Documentation Scripts
    ========================================================================== */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -143,7 +143,7 @@ function initHeroCodeTabs() {
    -------------------------------------------------------------------------- */
 const pillarData = {
   zerocopy: {
-    badge: '⚡ Zero-Copy Native Core (v0.24.0)',
+    badge: '⚡ Zero-Copy Native Core (v0.24.1)',
     title: 'Zero-Copy Memory-Mapped Architecture',
     desc: 'Direct pointer-slice views over PostgreSQL varlena and array buffers eliminate intermediate memory allocations, strlen overhead, and garbage collection pauses.',
     checklist: [
@@ -167,7 +167,7 @@ const pillarData = {
   },
 
   bgworker: {
-    badge: '🤖 In-Database Autonomy (v0.24.0)',
+    badge: '🤖 In-Database Autonomy (v0.24.1)',
     title: 'Autonomous Background Workers & Daemons',
     desc: 'Run persistent, multi-tenant background daemons directly inside the PostgreSQL engine with sub-1ms dynamic launch, real-time pg_stat_activity monitoring, nested subtransaction savepoints, and automatic catalog tracking.',
     checklist: [
@@ -197,7 +197,7 @@ const pillarData = {
   },
 
   shield: {
-    badge: '🛡️ Reliability & Security (v0.24.0)',
+    badge: '🛡️ Reliability & Security (v0.24.1)',
     title: 'Fail-Safe Panic Shield & SQLSTATE Error Mapping',
     desc: 'Every exported UDF is automatically enclosed in a PG_TRY / PG_CATCH barrier. Defects, panics, and overflows safely abort the transaction with zero SIGABRT server crashes.',
     checklist: [
@@ -274,7 +274,7 @@ const pillarData = {
   },
 
   tooling: {
-    badge: '🚀 Developer Experience (v0.24.0)',
+    badge: '🚀 Developer Experience (v0.24.1)',
     title: 'Smart Toolchain with Sub-15ms Incremental Builds',
     desc: 'pgxtool manages extension scaffolding, incremental compilation caching, automated gitignore management, and multi-version Docker sandbox testing.',
     checklist: [
@@ -363,7 +363,7 @@ function initPillarsShowcase() {
 }
 
 /* --------------------------------------------------------------------------
-   3. CLI Terminal Simulator (Updated for v0.24.0)
+   3. CLI Terminal Simulator (Updated for v0.24.1)
    -------------------------------------------------------------------------- */
 const cliLogs = {
   'pgxtool init': [

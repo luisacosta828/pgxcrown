@@ -3,7 +3,7 @@
 ## Maps PostgreSQL `text`, `varchar`, and `bpchar` (varlena) directly to a
 ## zero-copy slice without allocating memory or calling strlen.
 
-import std/[options, hashes]
+import std/[options, hashes, json]
 import ./basic
 
 {.push header: "postgres.h".}
@@ -88,6 +88,9 @@ converter toCString*(t: PgText): cstring =
 
 proc `$`*(t: PgText): string {.inline.} =
   toString(t)
+
+proc `%`*(t: PgText): JsonNode {.inline.} =
+  newJString(toString(t))
 
 proc `==`*(a, b: PgText): bool =
   if a.len != b.len: return false

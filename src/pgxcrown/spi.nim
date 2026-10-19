@@ -73,9 +73,13 @@ proc gettype*(tupdesc: TupleDesc, fnumber: cint): const_string {.importc: "SPI_g
 proc getvalue*(tupl: HeapTuple, tupdesc: TupleDesc, fnumber: cint): const_string {.importc: "SPI_getvalue".}
 {.pop.}
 
-proc getTupdesc*(tuptable: TupleTable): TupleDesc {.importc: "pgx_spi_get_tupdesc".}
-proc getNatts*(tupdesc: TupleDesc): cint {.importc: "pgx_spi_get_natts".}
-proc getTuple*(tuptable: TupleTable, idx: uint64): HeapTuple {.importc: "pgx_spi_get_tuple".}
+proc getTupdescRaw(tuptable: TupleTable): TupleDesc {.importc: "pgx_spi_get_tupdesc", nodecl.}
+proc getNattsRaw(tupdesc: TupleDesc): cint {.importc: "pgx_spi_get_natts", nodecl.}
+proc getTupleRaw(tuptable: TupleTable, idx: uint64): HeapTuple {.importc: "pgx_spi_get_tuple", nodecl.}
+
+proc getTupdesc*(tuptable: TupleTable): TupleDesc = getTupdescRaw(tuptable)
+proc getNatts*(tupdesc: TupleDesc): cint = getNattsRaw(tupdesc)
+proc getTuple*(tuptable: TupleTable, idx: uint64): HeapTuple = getTupleRaw(tuptable, idx)
 
 # =============================================================================
 # Type Converters & Row Mapper
@@ -333,19 +337,32 @@ proc ReleaseCurrentSubTransaction*() {.importc, header: "access/xact.h".}
 proc RollbackAndReleaseCurrentSubTransaction*() {.importc, header: "access/xact.h".}
 proc IsSubTransaction*(): bool {.importc, header: "access/xact.h".}
 
+var CurrentMemoryContext* {.importc: "CurrentMemoryContext", header: "utils/palloc.h".}: pointer
+var CurrentResourceOwner* {.importc: "CurrentResourceOwner", header: "utils/resowner.h".}: pointer
+proc subxMemoryContextSwitchTo*(context: pointer): pointer {.importc: "MemoryContextSwitchTo", header: "utils/palloc.h", discardable.}
+
 template subTransaction*(body: untyped) =
   ## Executes body inside an internal nested subtransaction (savepoint).
   ## If an exception or defect occurs, changes within body are rolled back
   ## without invalidating the parent transaction, and the error is re-raised.
+  let subxOldCtx = CurrentMemoryContext
+  let subxOldOwner = CurrentResourceOwner
   BeginInternalSubTransaction(nil)
+  discard subxMemoryContextSwitchTo(subxOldCtx)
   try:
     body
     ReleaseCurrentSubTransaction()
+    discard subxMemoryContextSwitchTo(subxOldCtx)
+    CurrentResourceOwner = subxOldOwner
   except CatchableError as e:
     RollbackAndReleaseCurrentSubTransaction()
+    discard subxMemoryContextSwitchTo(subxOldCtx)
+    CurrentResourceOwner = subxOldOwner
     raise e
   except Defect as e:
     RollbackAndReleaseCurrentSubTransaction()
+    discard subxMemoryContextSwitchTo(subxOldCtx)
+    CurrentResourceOwner = subxOldOwner
     raise e
 
 template savepoint*(body: untyped, onError: untyped) =
@@ -353,21 +370,32 @@ template savepoint*(body: untyped, onError: untyped) =
   ## If an error occurs, the subtransaction is rolled back, the error is caught,
   ## and onError is invoked with `err` injected, allowing parent transactions
   ## (or batch loops) to continue undisturbed.
+  let subxOldCtx = CurrentMemoryContext
+  let subxOldOwner = CurrentResourceOwner
   BeginInternalSubTransaction(nil)
+  discard subxMemoryContextSwitchTo(subxOldCtx)
   var caughtEx: ref CatchableError = nil
   try:
     body
     ReleaseCurrentSubTransaction()
+    discard subxMemoryContextSwitchTo(subxOldCtx)
+    CurrentResourceOwner = subxOldOwner
   except CatchableError as e:
     RollbackAndReleaseCurrentSubTransaction()
+    discard subxMemoryContextSwitchTo(subxOldCtx)
+    CurrentResourceOwner = subxOldOwner
     caughtEx = e
   except Defect as e:
     RollbackAndReleaseCurrentSubTransaction()
+    discard subxMemoryContextSwitchTo(subxOldCtx)
+    CurrentResourceOwner = subxOldOwner
     caughtEx = (ref CatchableError)(msg: e.msg)
 
   if caughtEx != nil:
     let err {.inject.} = caughtEx
     onError
+
+
 
 proc execute*(query: ExecutableQuery): int {.discardable, tags: [DbWriteEffect].} =
   ## Alias for .run()

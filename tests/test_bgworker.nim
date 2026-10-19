@@ -103,10 +103,13 @@ bool ActiveSnapshotSet(void) { return false; }
 void proc_exit(int code) {}
 
 void pgstat_report_activity(int state, const char *cmd_str) {}
+MemoryContext CurrentMemoryContext = NULL;
+ResourceOwner CurrentResourceOwner = NULL;
 void BeginInternalSubTransaction(const char *name) {}
 void ReleaseCurrentSubTransaction(void) {}
 void RollbackAndReleaseCurrentSubTransaction(void) {}
 bool IsSubTransaction(void) { return false; }
+
 
 int SPI_connect(void) { return 0; }
 int SPI_finish(void) { return 0; }

@@ -100,16 +100,33 @@ proc ReplyLiteralsWithPgxTypes(dt: NimNode): string =
   else: ""
 
 proc hasReturn(node: NimNode): bool =
-  if node.kind == nnkReturnStmt:
+  case node.kind
+  of nnkReturnStmt, nnkRaiseStmt:
     return true
-  if node.kind in {nnkProcDef, nnkFuncDef, nnkIteratorDef, nnkTemplateDef, nnkMacroDef}:
+  of nnkStmtList, nnkStmtListExpr, nnkBlockStmt:
+    if node.len > 0:
+      return hasReturn(node[^1])
     return false
-  
-  for child in node:
-    if hasReturn(child):
-      return true
-      
-  return false
+  of nnkIfStmt, nnkIfExpr:
+    var hasElse = false
+    for branch in node:
+      if branch.kind in {nnkElse, nnkElseExpr}:
+        hasElse = true
+      if branch.len == 0 or not hasReturn(branch[^1]):
+        return false
+    return hasElse
+  of nnkCaseStmt:
+    var hasElse = false
+    for i in 1 ..< node.len:
+      let branch = node[i]
+      if branch.kind == nnkElse:
+        hasElse = true
+      if branch.len == 0 or not hasReturn(branch[^1]):
+        return false
+    return hasElse
+  else:
+    return false
+
 
 
 template map_enums_params(pvar, ptype) =

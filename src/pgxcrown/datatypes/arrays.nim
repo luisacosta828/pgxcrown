@@ -150,6 +150,14 @@ proc `$`*[T](v: PgVector[T]): string =
       result.add($v.dataPtr[i])
   result.add("]")
 
+proc `%`*[T](v: PgVector[T]): JsonNode =
+  result = newJArray()
+  for i in 0 ..< v.len:
+    if v.isNull(i):
+      result.add(newJNull())
+    else:
+      result.add(%v.dataPtr[i])
+
 proc `==`*[T](a, b: PgVector[T]): bool =
   if a.len != b.len: return false
   if a.hasNulls or b.hasNulls:
