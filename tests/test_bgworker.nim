@@ -132,6 +132,7 @@ int errdetail(const char *fmt, ...) { return 0; }
 int errhint(const char *fmt, ...) { return 0; }
 ErrorData *CopyErrorData(void) { return NULL; }
 void FlushErrorState(void) {}
+void pg_re_throw(void) { abort(); }
 void FreeErrorData(ErrorData *edata) {}
 char *pstrdup(const char *in) { return in ? strdup(in) : NULL; }
 """.}

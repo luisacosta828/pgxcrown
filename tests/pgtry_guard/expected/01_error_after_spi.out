@@ -1,0 +1,32 @@
+-- Regression: an error raised AFTER a successful pgTry (SPI) inside the same
+-- UDF call must be a clean SQL error, never a backend segfault.
+CREATE TEMP TABLE guard_results (label text, msg text);
+CREATE TABLE
+DO $$ BEGIN PERFORM plain_raise();
+EXCEPTION WHEN OTHERS THEN INSERT INTO guard_results VALUES ('1_plain_raise', SQLERRM); END $$;
+DO
+DO $$ BEGIN PERFORM ok_then_raise();
+EXCEPTION WHEN OTHERS THEN INSERT INTO guard_results VALUES ('2_ok_then_raise', SQLERRM); END $$;
+DO
+DO $$ BEGIN PERFORM ok_then_defect(5);
+EXCEPTION WHEN OTHERS THEN INSERT INTO guard_results VALUES ('3_ok_then_defect', SQLERRM); END $$;
+DO
+SELECT label, msg FROM guard_results ORDER BY label;
+      label       |                          msg
+------------------+-------------------------------------------------------
+ 1_plain_raise    | baseline: no SPI before
+ 2_ok_then_raise  | boom after successful pgTry
+ 3_ok_then_defect | Extension Defect [IndexDefect]: index 6 not in 0 .. 2
+(3 rows)
+
+SELECT ok_return() AS spi_rows;
+ spi_rows
+----------
+        1
+(1 row)
+
+SELECT 'still alive' AS status;
+   status
+-------------
+ still alive
+(1 row)

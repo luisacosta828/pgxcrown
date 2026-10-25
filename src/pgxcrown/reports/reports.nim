@@ -38,10 +38,14 @@ bool pgx_call_guarded(pgx_guarded_fn fn, void *data, void *out_err_raw) {
     out_err->hint = NULL;
     out_err->context = NULL;
   }
+  /* Never `return` from inside PG_TRY: it would skip PG_END_TRY() and leave
+   * PG_exception_stack pointing at this (dead) stack frame, so a later
+   * ereport(ERROR) in the same call would siglongjmp into garbage. */
+  volatile bool ok = false;
   PG_TRY();
   {
     fn(data);
-    return true;
+    ok = true;
   }
   PG_CATCH();
   {
@@ -57,9 +61,10 @@ bool pgx_call_guarded(pgx_guarded_fn fn, void *data, void *out_err_raw) {
     if (edata != NULL) {
       FreeErrorData(edata);
     }
-    return false;
+    ok = false;
   }
   PG_END_TRY();
+  return ok;
 }
 """.}
 
