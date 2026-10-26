@@ -319,6 +319,44 @@ suite "pgxcrown v0.16.0 - Type-Safe SQL Query Builder & SPI Execution Suite":
     check "'{\"exploit\":\"\'\'); DROP TABLE users; --\"}'" in malInsertSql
     check "ARRAY[]::jsonb[]" in malInsertSql
 
+  test "Batch/Bulk Insert with insertManyFrom and insertFrom(openArray[T])":
+    type BatchUser = object
+      id: int
+      username: string
+      active: bool
+
+    let u1 = BatchUser(id: 1, username: "alice", active: true)
+    let u2 = BatchUser(id: 2, username: "bob", active: false)
+    let u3 = BatchUser(id: 3, username: "charlie", active: true)
+
+    # 1. Single-element openArray delegates directly to insertFrom
+    let qSingle = insertManyFrom(@[u1], tableName = "batch_users")
+    let sqlSingle = $qSingle
+    check "INSERT INTO \"batch_users\" (\"id\", \"username\", \"active\")" in sqlSingle
+    check "VALUES\n  (1, 'alice', TRUE)" in sqlSingle
+
+    # 2. Multi-element openArray produces multi-row VALUES list
+    let qMulti = insertManyFrom(@[u1, u2, u3], tableName = "batch_users")
+    let sqlMulti = $qMulti
+    check "INSERT INTO \"batch_users\" (\"id\", \"username\", \"active\")" in sqlMulti
+    check "(1, 'alice', TRUE)" in sqlMulti
+    check "(2, 'bob', FALSE)" in sqlMulti
+    check "(3, 'charlie', TRUE)" in sqlMulti
+
+    # 3. insertFrom seamlessly accepts openArray
+    let qOverload = insertFrom(@[u1, u2])
+    let sqlOverload = $qOverload
+    check "INSERT INTO \"batchuser\" (\"id\", \"username\", \"active\")" in sqlOverload
+    check "(1, 'alice', TRUE),\n  (2, 'bob', FALSE)" in sqlOverload
+
+    # 4. Chaining OnConflict and Returning on bulk insert
+    let qUpsert = insertManyFrom(@[u1, u2])
+      .OnConflict("id").DoUpdate("username = EXCLUDED.username")
+      .Returning("id")
+    let sqlUpsert = $qUpsert
+    check "ON CONFLICT (\"id\") DO UPDATE SET username = EXCLUDED.username" in sqlUpsert
+    check "RETURNING \"id\"" in sqlUpsert
+
   test "Strongly typed row mapping with JsonNode and Option[JsonNode]":
     type ConfigDto = object
       id: int

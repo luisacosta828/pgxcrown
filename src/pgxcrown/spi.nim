@@ -459,3 +459,20 @@ proc spiInsertFrom*[T: object](obj: T, tableName: string = ""): int {.tags: [DbW
     pgTry:
       ret = int(exec(const_string(sql), 0))
   return ret
+
+proc spiInsertManyFrom*[T: object](objs: openArray[T], tableName: string = ""): int {.tags: [DbWriteEffect].} =
+  ## Inspects collection of object instances, generates multi-row bulk INSERT statement, and executes it via SPI.
+  ## Returns 0 immediately if sequence is empty.
+  if objs.len == 0: return 0
+  let q = insertManyFrom(objs, tableName)
+  let sql = $q
+  validateNoNullBytes(sql)
+  var ret = 0
+  spi_init:
+    pgTry:
+      ret = int(exec(const_string(sql), 0))
+  return ret
+
+proc spiInsertFrom*[T: object](objs: openArray[T], tableName: string = ""): int {.tags: [DbWriteEffect], inline.} =
+  ## Overload of spiInsertFrom accepting openArray[T]
+  spiInsertManyFrom[T](objs, tableName)

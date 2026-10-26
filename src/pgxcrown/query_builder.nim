@@ -1466,3 +1466,25 @@ proc insertFrom*[T: object](obj: T, tableName: string = ""): InsertValuesStep =
   var insertStep = InsertInto(targetTable, cols)
   insertStep.state.insertRows.add(vals)
   return InsertValuesStep(state: insertStep.state)
+
+proc insertManyFrom*[T: object](objs: openArray[T], tableName: string = ""): InsertValuesStep =
+  ## Generates an INSERT INTO statement with multiple formatted rows from a collection of object instances.
+  ## If the collection contains a single item, it delegates directly to insertFrom.
+  if objs.len == 1:
+    return insertFrom(objs[0], tableName)
+
+  let targetTable = if tableName.len > 0: tableName else: getObjectTypeName[T]()
+  let cols = columnsOf[T]()
+  var insertStep = InsertInto(targetTable, cols)
+
+  for obj in objs:
+    var row: seq[string] = @[]
+    for _, val in fieldPairs(obj):
+      row.add(formatSqlValue(val))
+    insertStep.state.insertRows.add(row)
+
+  return InsertValuesStep(state: insertStep.state)
+
+proc insertFrom*[T: object](objs: openArray[T], tableName: string = ""): InsertValuesStep {.inline.} =
+  ## Overload allowing openArray[T] seamlessly in insertFrom
+  insertManyFrom[T](objs, tableName)
