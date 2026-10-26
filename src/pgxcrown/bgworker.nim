@@ -453,6 +453,7 @@ type
 
 var MyLatch* {.importc, header: "miscadmin.h".}: pointer
 var posixErrno {.importc: "errno", header: "errno.h".}: cint
+proc CHECK_FOR_INTERRUPTS*() {.importc: "CHECK_FOR_INTERRUPTS", header: "miscadmin.h".}
 
 
 
@@ -564,6 +565,7 @@ template runWorkerLoop*(intervalMs: int, body: untyped, shutdownHandler: untyped
   if MyLatch != nil:
     ResetLatch(MyLatch)
   while not isWorkerSigtermSet():
+    CHECK_FOR_INTERRUPTS()
     if consumeWorkerSighup():
       ProcessConfigFile(PGC_SIGHUP)
     try:
@@ -572,12 +574,13 @@ template runWorkerLoop*(intervalMs: int, body: untyped, shutdownHandler: untyped
       pgWarning("BgWorker error: " & err.msg)
     except Defect as defect:
       pgWarning("BgWorker defect: " & defect.msg)
+    CHECK_FOR_INTERRUPTS()
     if isWorkerSigtermSet():
       break
     setWorkerIdle("waiting for next cycle (" & $intervalMs & "ms)")
     if MyLatch != nil:
       ResetLatch(MyLatch)
-    let rc = WaitLatch(MyLatch, WL_LATCH_SET or WL_TIMEOUT or WL_POSTMASTER_DEATH, clong(intervalMs), PG_WAIT_EXTENSION)
+    let rc = WaitLatch(MyLatch, WL_LATCH_SET or WL_TIMEOUT or WL_POSTMASTER_DEATH or WL_EXIT_ON_PM_DEATH, clong(intervalMs), PG_WAIT_EXTENSION)
     if MyLatch != nil:
       ResetLatch(MyLatch)
     if (rc and WL_POSTMASTER_DEATH) != 0:

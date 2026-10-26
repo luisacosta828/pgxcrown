@@ -208,7 +208,7 @@ proc transfer_credits*(userId: int32, amount: int64): bool {.volatile.} =
 | `DivByZeroDefect` | `22012` | `ERRCODE_DIVISION_BY_ZERO` |
 | `IndexDefect` | `2202E` | `ERRCODE_ARRAY_SUBSCRIPT_ERROR` |
 | `ValueError` | `22023` | `ERRCODE_INVALID_PARAMETER_VALUE` |
-| `KeyError` | `22000` | `ERRCODE_DATA_EXCEPTION` |
+| `KeyError` | `P0002` | `ERRCODE_NO_DATA_FOUND` |
 | `PgError` | *User Defined* | Custom SQLSTATE (e.g. `23505`, `22001`) |
 
 ---

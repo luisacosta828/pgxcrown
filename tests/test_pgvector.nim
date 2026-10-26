@@ -169,3 +169,19 @@ suite "Pgxcrown - Zero-Cost Fast-Path PgVector[T] Suite":
     let vf32 = PgVector[float32](raw: nil, dataPtr: cast[ptr UncheckedArray[float32]](addr f32[0]), len: 3, hasNulls: false)
     check vf32.len == 3
     check vf32[2] == 5.0
+
+  test "PgVector bounds-checked indexing, slicing, and mutation":
+    var raw = [10'i32, 20, 30]
+    var v = PgVector[int32](raw: nil, dataPtr: cast[ptr UncheckedArray[int32]](addr raw[0]), len: 3, hasNulls: false)
+    expect IndexDefect:
+      discard v[-1]
+    expect IndexDefect:
+      discard v[3]
+    expect IndexDefect:
+      v[5] = 99
+    expect IndexDefect:
+      discard v[0..5]
+    expect IndexDefect:
+      discard v.isNull(10)
+    expect IndexDefect:
+      discard v.get(-2)

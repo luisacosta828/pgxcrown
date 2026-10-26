@@ -38,17 +38,21 @@ proc sanitizeIdentifierString*(s: string): string =
         clean.add(ch)
   clean
 
-proc quoteIdent*(s: string): string =
-  ## Safely quotes PostgreSQL table or column identifiers ("table"."col"),
+proc quoteIdent*(s: string, splitQualified: bool = false): string =
+  ## Safely quotes a PostgreSQL table or column identifier,
   ## and strips null bytes to prevent identifier injection.
+  ## If splitQualified is true, dots are treated as namespace separators (e.g. "schema"."table").
   if s.len == 0: return ""
-  if "." in s:
+  if s == "*": return "*"
+  if splitQualified and "." in s:
     var parts = s.split('.')
     for i in 0 ..< parts.len:
       if parts[i] != "*": parts[i] = "\"" & sanitizeIdentifierString(parts[i]) & "\""
     return parts.join(".")
-  if s == "*": return "*"
   return "\"" & sanitizeIdentifierString(s) & "\""
+
+proc quoteQualifiedIdent*(s: string): string {.inline.} =
+  quoteIdent(s, splitQualified = true)
 
 type
   RawSql* = distinct string
@@ -606,7 +610,7 @@ converter toOrderExpr*(id: SqlIdent): OrderExpr =
 
 # SQL Aggregates
 proc count*(c: ColumnRef): ColumnExpr = ColumnExpr(expr: "COUNT(" & $c & ")", alias: "")
-proc count*(s: string): ColumnExpr = ColumnExpr(expr: "COUNT(" & (if s == "*": "*" else: quoteIdent(s)) & ")", alias: "")
+proc count*(s: string): ColumnExpr = ColumnExpr(expr: "COUNT(" & (if s == "*": "*" else: quoteIdent(s, splitQualified = true)) & ")", alias: "")
 proc sum*(c: ColumnRef): ColumnExpr = ColumnExpr(expr: "SUM(" & $c & ")", alias: "")
 proc avg*(c: ColumnRef): ColumnExpr = ColumnExpr(expr: "AVG(" & $c & ")", alias: "")
 proc minCol*(c: ColumnRef): ColumnExpr = ColumnExpr(expr: "MIN(" & $c & ")", alias: "")
@@ -804,7 +808,7 @@ proc toColumnExpr*(e: SqlExpr): ColumnExpr = ColumnExpr(expr: e.sql, alias: "")
 proc toColumnExpr*(c: ColumnRef): ColumnExpr = ColumnExpr(expr: $c, alias: "")
 proc toColumnExpr*(id: SqlIdent): ColumnExpr = ColumnExpr(expr: $id, alias: "")
 proc toColumnExpr*(r: RawSql): ColumnExpr = ColumnExpr(expr: $r, alias: "")
-proc toColumnExpr*(s: string): ColumnExpr = ColumnExpr(expr: quoteIdent(s), alias: "")
+proc toColumnExpr*(s: string): ColumnExpr = ColumnExpr(expr: quoteIdent(s, splitQualified = true), alias: "")
 proc toColumnExpr*(n: int): ColumnExpr = ColumnExpr(expr: $n, alias: "")
 proc toColumnExpr*(n: int32): ColumnExpr = ColumnExpr(expr: $n, alias: "")
 proc toColumnExpr*(n: int64): ColumnExpr = ColumnExpr(expr: $n, alias: "")

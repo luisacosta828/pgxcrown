@@ -81,11 +81,6 @@ converter toString*(t: PgText): string =
   result = newString(t.len)
   copyMem(addr result[0], t.dataPtr, t.len)
 
-converter toCString*(t: PgText): cstring =
-  if t.len == 0 or t.dataPtr == nil:
-    return ""
-  cstring(toString(t))
-
 proc `$`*(t: PgText): string {.inline.} =
   toString(t)
 
@@ -244,21 +239,21 @@ proc getPgText*(datum: Datum): PgText =
 # Return handlers to PostgreSQL Datum
 proc returnPgText*(t: PgText): Datum =
   if t.len == 0:
-    let res = cstring_to_text_with_len(nil, 0)
+    let res = cstring_to_text_with_len(cast[pointer](cstring("")), 0)
     return cast[Datum](res)
   let res = cstring_to_text_with_len(cast[pointer](t.dataPtr), cint(t.len))
   return cast[Datum](res)
 
 proc returnPgText*(s: string): Datum =
   if s.len == 0:
-    let res = cstring_to_text_with_len(nil, 0)
+    let res = cstring_to_text_with_len(cast[pointer](cstring("")), 0)
     return cast[Datum](res)
   let res = cstring_to_text_with_len(cast[pointer](unsafeAddr s[0]), cint(s.len))
   return cast[Datum](res)
 
 proc returnPgText*(cs: cstring): Datum =
   if cs == nil or cs.len == 0:
-    let res = cstring_to_text_with_len(nil, 0)
+    let res = cstring_to_text_with_len(cast[pointer](cstring("")), 0)
     return cast[Datum](res)
   let res = cstring_to_text_with_len(cast[pointer](cs), cint(cs.len))
   return cast[Datum](res)

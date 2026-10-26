@@ -40,9 +40,39 @@ proc construct_array*(
   elmlen: cint,
   elmbyval: bool,
   elmalign: cchar
-): ptr ArrayType {.importc.}
+): ptr ArrayType {.importc: "construct_array".}
+
+proc construct_md_array*(
+  elems: ptr Datum,
+  nulls: ptr bool,
+  ndims: cint,
+  dims: ptr cint,
+  lbs: ptr cint,
+  elmtype: Oid,
+  elmlen: cint,
+  elmbyval: bool,
+  elmalign: cchar
+): ptr ArrayType {.importc: "construct_md_array".}
 
 {.pop.}
+
+proc buildPgArray*(
+  elems: ptr Datum,
+  nulls: ptr bool,
+  hasNulls: bool,
+  len: cint,
+  elmtype: Oid,
+  elmlen: cint,
+  elmbyval: bool,
+  elmalign: cchar
+): ptr ArrayType =
+  if len == 0:
+    return construct_array(nil, 0'i32, elmtype, elmlen, elmbyval, elmalign)
+  if not hasNulls or nulls == nil:
+    return construct_array(elems, len, elmtype, elmlen, elmbyval, elmalign)
+  var dims = len
+  var lbs = 1'i32
+  return construct_md_array(elems, nulls, 1'i32, addr dims, addr lbs, elmtype, elmlen, elmbyval, elmalign)
 
 # Type OIDs for PostgreSQL primitive types
 const
@@ -73,12 +103,16 @@ template len*[T](v: PgVector[T]): int = v.len
 template low*[T](v: PgVector[T]): int = 0
 template high*[T](v: PgVector[T]): int = (if v.len > 0: v.len - 1 else: 0)
 
-template `[]`*[T](v: PgVector[T], idx: int): T =
+proc `[]`*[T](v: PgVector[T], idx: int): T {.inline.} =
+  if idx < 0 or idx >= v.len:
+    raise newException(IndexDefect, "Index " & $idx & " out of bounds for PgVector of length " & $v.len)
   v.dataPtr[idx]
 
-template `[]`*[T](v: PgVector[T], slice: HSlice[int, int]): untyped =
+proc `[]`*[T](v: PgVector[T], slice: HSlice[int, int]): PgVector[T] =
   let sA = slice.a
   let sB = slice.b
+  if sA < 0 or (sB >= v.len and v.len > 0) or (v.len == 0 and (sA != 0 or sB != -1)):
+    raise newException(IndexDefect, "Slice " & $sA & ".." & $sB & " out of bounds for PgVector of length " & $v.len)
   let subLen = if sB >= sA: sB - sA + 1 else: 0
   let subPtr = if subLen > 0 and v.dataPtr != nil: cast[ptr UncheckedArray[T]](addr v.dataPtr[sA]) else: nil
   PgVector[T](
@@ -86,11 +120,13 @@ template `[]`*[T](v: PgVector[T], slice: HSlice[int, int]): untyped =
     dataPtr: subPtr,
     len: subLen,
     hasNulls: v.hasNulls,
-    nullElems: if v.hasNulls and v.nullElems.len > 0: v.nullElems[sA .. sB] else: @[],
-    nullBitmap: if v.hasNulls and v.nullBitmap.len > 0: v.nullBitmap[sA .. sB] else: @[]
+    nullElems: if v.hasNulls and v.nullElems.len > 0 and sB >= sA: v.nullElems[sA .. sB] else: @[],
+    nullBitmap: if v.hasNulls and v.nullBitmap.len > 0 and sB >= sA: v.nullBitmap[sA .. sB] else: @[]
   )
 
-template `[]=`*[T](v: var PgVector[T], idx: int, val: T) =
+proc `[]=`*[T](v: var PgVector[T], idx: int, val: T) {.inline.} =
+  if idx < 0 or idx >= v.len:
+    raise newException(IndexDefect, "Index " & $idx & " out of bounds for PgVector of length " & $v.len)
   v.dataPtr[idx] = val
 
 iterator items*[T](v: PgVector[T]): T =
@@ -101,13 +137,17 @@ iterator pairs*[T](v: PgVector[T]): (int, T) =
   for i in 0 ..< v.len:
     yield (i, v.dataPtr[i])
 
-template isNull*[T](v: PgVector[T], idx: int): bool =
+proc isNull*[T](v: PgVector[T], idx: int): bool {.inline.} =
+  if idx < 0 or idx >= v.len:
+    raise newException(IndexDefect, "Index " & $idx & " out of bounds for PgVector of length " & $v.len)
   if not v.hasNulls or v.nullBitmap.len == 0:
     false
   else:
     v.nullBitmap[idx]
 
 proc get*[T](v: PgVector[T], idx: int): Option[T] =
+  if idx < 0 or idx >= v.len:
+    raise newException(IndexDefect, "Index " & $idx & " out of bounds for PgVector of length " & $v.len)
   if v.isNull(idx):
     none(T)
   else:
@@ -248,10 +288,18 @@ proc returnPgVectorFloat64*(v: PgVector[float64]): Datum =
     let arrPtr = construct_array(nil, 0'i32, FLOAT8OID, 8'i32, true, 'd'.cchar)
     return PointerGetDatum(cast[Pointer](arrPtr))
   let elemsBuf = cast[ptr UncheckedArray[Datum]](palloc(cuint(v.len * sizeof(Datum))))
+  let hasNulls = v.hasNulls and v.nullBitmap.len == v.len
+  let nullsBuf = if hasNulls: cast[ptr UncheckedArray[bool]](palloc(cuint(v.len * sizeof(bool)))) else: nil
   for i in 0 ..< v.len:
-    elemsBuf[i] = Float8GetDatum(v[i])
-  let arrPtr = construct_array(cast[ptr Datum](elemsBuf), v.len.cint, FLOAT8OID, 8'i32, true, 'd'.cchar)
+    if hasNulls and v.nullBitmap[i]:
+      elemsBuf[i] = 0'u64
+      nullsBuf[i] = true
+    else:
+      elemsBuf[i] = Float8GetDatum(v[i])
+      if nullsBuf != nil: nullsBuf[i] = false
+  let arrPtr = buildPgArray(cast[ptr Datum](elemsBuf), cast[ptr bool](nullsBuf), hasNulls, v.len.cint, FLOAT8OID, 8'i32, true, 'd'.cchar)
   pfree(elemsBuf)
+  if nullsBuf != nil: pfree(nullsBuf)
   return PointerGetDatum(cast[Pointer](arrPtr))
 
 proc returnPgVectorFloat32*(v: PgVector[float32]): Datum =
@@ -261,10 +309,18 @@ proc returnPgVectorFloat32*(v: PgVector[float32]): Datum =
     let arrPtr = construct_array(nil, 0'i32, FLOAT4OID, 4'i32, true, 'i'.cchar)
     return PointerGetDatum(cast[Pointer](arrPtr))
   let elemsBuf = cast[ptr UncheckedArray[Datum]](palloc(cuint(v.len * sizeof(Datum))))
+  let hasNulls = v.hasNulls and v.nullBitmap.len == v.len
+  let nullsBuf = if hasNulls: cast[ptr UncheckedArray[bool]](palloc(cuint(v.len * sizeof(bool)))) else: nil
   for i in 0 ..< v.len:
-    elemsBuf[i] = Float4GetDatum(v[i])
-  let arrPtr = construct_array(cast[ptr Datum](elemsBuf), v.len.cint, FLOAT4OID, 4'i32, true, 'i'.cchar)
+    if hasNulls and v.nullBitmap[i]:
+      elemsBuf[i] = 0'u64
+      nullsBuf[i] = true
+    else:
+      elemsBuf[i] = Float4GetDatum(v[i])
+      if nullsBuf != nil: nullsBuf[i] = false
+  let arrPtr = buildPgArray(cast[ptr Datum](elemsBuf), cast[ptr bool](nullsBuf), hasNulls, v.len.cint, FLOAT4OID, 4'i32, true, 'i'.cchar)
   pfree(elemsBuf)
+  if nullsBuf != nil: pfree(nullsBuf)
   return PointerGetDatum(cast[Pointer](arrPtr))
 
 proc returnPgVectorInt32*(v: PgVector[int32]): Datum =
@@ -274,10 +330,18 @@ proc returnPgVectorInt32*(v: PgVector[int32]): Datum =
     let arrPtr = construct_array(nil, 0'i32, INT4OID, 4'i32, true, 'i'.cchar)
     return PointerGetDatum(cast[Pointer](arrPtr))
   let elemsBuf = cast[ptr UncheckedArray[Datum]](palloc(cuint(v.len * sizeof(Datum))))
+  let hasNulls = v.hasNulls and v.nullBitmap.len == v.len
+  let nullsBuf = if hasNulls: cast[ptr UncheckedArray[bool]](palloc(cuint(v.len * sizeof(bool)))) else: nil
   for i in 0 ..< v.len:
-    elemsBuf[i] = Int32GetDatum(v[i])
-  let arrPtr = construct_array(cast[ptr Datum](elemsBuf), v.len.cint, INT4OID, 4'i32, true, 'i'.cchar)
+    if hasNulls and v.nullBitmap[i]:
+      elemsBuf[i] = 0'u64
+      nullsBuf[i] = true
+    else:
+      elemsBuf[i] = Int32GetDatum(v[i])
+      if nullsBuf != nil: nullsBuf[i] = false
+  let arrPtr = buildPgArray(cast[ptr Datum](elemsBuf), cast[ptr bool](nullsBuf), hasNulls, v.len.cint, INT4OID, 4'i32, true, 'i'.cchar)
   pfree(elemsBuf)
+  if nullsBuf != nil: pfree(nullsBuf)
   return PointerGetDatum(cast[Pointer](arrPtr))
 
 proc returnPgVectorInt64*(v: PgVector[int64]): Datum =
@@ -287,10 +351,18 @@ proc returnPgVectorInt64*(v: PgVector[int64]): Datum =
     let arrPtr = construct_array(nil, 0'i32, INT8OID, 8'i32, true, 'd'.cchar)
     return PointerGetDatum(cast[Pointer](arrPtr))
   let elemsBuf = cast[ptr UncheckedArray[Datum]](palloc(cuint(v.len * sizeof(Datum))))
+  let hasNulls = v.hasNulls and v.nullBitmap.len == v.len
+  let nullsBuf = if hasNulls: cast[ptr UncheckedArray[bool]](palloc(cuint(v.len * sizeof(bool)))) else: nil
   for i in 0 ..< v.len:
-    elemsBuf[i] = Int64GetDatum(v[i])
-  let arrPtr = construct_array(cast[ptr Datum](elemsBuf), v.len.cint, INT8OID, 8'i32, true, 'd'.cchar)
+    if hasNulls and v.nullBitmap[i]:
+      elemsBuf[i] = 0'u64
+      nullsBuf[i] = true
+    else:
+      elemsBuf[i] = Int64GetDatum(v[i])
+      if nullsBuf != nil: nullsBuf[i] = false
+  let arrPtr = buildPgArray(cast[ptr Datum](elemsBuf), cast[ptr bool](nullsBuf), hasNulls, v.len.cint, INT8OID, 8'i32, true, 'd'.cchar)
   pfree(elemsBuf)
+  if nullsBuf != nil: pfree(nullsBuf)
   return PointerGetDatum(cast[Pointer](arrPtr))
 
 proc returnPgVectorInt16*(v: PgVector[int16]): Datum =
@@ -300,10 +372,18 @@ proc returnPgVectorInt16*(v: PgVector[int16]): Datum =
     let arrPtr = construct_array(nil, 0'i32, INT2OID, 2'i32, true, 's'.cchar)
     return PointerGetDatum(cast[Pointer](arrPtr))
   let elemsBuf = cast[ptr UncheckedArray[Datum]](palloc(cuint(v.len * sizeof(Datum))))
+  let hasNulls = v.hasNulls and v.nullBitmap.len == v.len
+  let nullsBuf = if hasNulls: cast[ptr UncheckedArray[bool]](palloc(cuint(v.len * sizeof(bool)))) else: nil
   for i in 0 ..< v.len:
-    elemsBuf[i] = Int16GetDatum(v[i])
-  let arrPtr = construct_array(cast[ptr Datum](elemsBuf), v.len.cint, INT2OID, 2'i32, true, 's'.cchar)
+    if hasNulls and v.nullBitmap[i]:
+      elemsBuf[i] = 0'u64
+      nullsBuf[i] = true
+    else:
+      elemsBuf[i] = Int16GetDatum(v[i])
+      if nullsBuf != nil: nullsBuf[i] = false
+  let arrPtr = buildPgArray(cast[ptr Datum](elemsBuf), cast[ptr bool](nullsBuf), hasNulls, v.len.cint, INT2OID, 2'i32, true, 's'.cchar)
   pfree(elemsBuf)
+  if nullsBuf != nil: pfree(nullsBuf)
   return PointerGetDatum(cast[Pointer](arrPtr))
 
 proc returnPgVectorBool*(v: PgVector[bool]): Datum =
@@ -313,10 +393,18 @@ proc returnPgVectorBool*(v: PgVector[bool]): Datum =
     let arrPtr = construct_array(nil, 0'i32, BOOLOID, 1'i32, true, 'c'.cchar)
     return PointerGetDatum(cast[Pointer](arrPtr))
   let elemsBuf = cast[ptr UncheckedArray[Datum]](palloc(cuint(v.len * sizeof(Datum))))
+  let hasNulls = v.hasNulls and v.nullBitmap.len == v.len
+  let nullsBuf = if hasNulls: cast[ptr UncheckedArray[bool]](palloc(cuint(v.len * sizeof(bool)))) else: nil
   for i in 0 ..< v.len:
-    elemsBuf[i] = BoolGetDatum(v[i])
-  let arrPtr = construct_array(cast[ptr Datum](elemsBuf), v.len.cint, BOOLOID, 1'i32, true, 'c'.cchar)
+    if hasNulls and v.nullBitmap[i]:
+      elemsBuf[i] = 0'u64
+      nullsBuf[i] = true
+    else:
+      elemsBuf[i] = BoolGetDatum(v[i])
+      if nullsBuf != nil: nullsBuf[i] = false
+  let arrPtr = buildPgArray(cast[ptr Datum](elemsBuf), cast[ptr bool](nullsBuf), hasNulls, v.len.cint, BOOLOID, 1'i32, true, 'c'.cchar)
   pfree(elemsBuf)
+  if nullsBuf != nil: pfree(nullsBuf)
   return PointerGetDatum(cast[Pointer](arrPtr))
 
 proc getArrayHeapTuples*(arrayDatum: Datum): seq[HeapTupleHeader] =

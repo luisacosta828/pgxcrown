@@ -1,5 +1,8 @@
-{.passC: "-I/usr/include/postgresql/14/server -I/usr/include/postgresql".}
-import std/[unittest, strutils]
+import std/strutils
+const pgIncludeDirServer = staticExec("pg_config --includedir-server").strip()
+const pgIncludeDir = staticExec("pg_config --includedir").strip()
+{.passC: "-I" & (if pgIncludeDirServer.len > 0: pgIncludeDirServer else: "/usr/include/postgresql/14/server") & " -I" & (if pgIncludeDir.len > 0: pgIncludeDir else: "/usr/include/postgresql").}
+import std/unittest
 
 {.emit: """
 #include "postgres.h"
@@ -15,6 +18,8 @@ static struct Latch mockLatch;
 struct Latch *MyLatch = &mockLatch;
 int MyProcPid = 4242;
 BackgroundWorker *MyBgworkerEntry = NULL;
+volatile sig_atomic_t InterruptPending = 0;
+void ProcessInterrupts(void) {}
 #undef vsnprintf
 
 #undef snprintf
@@ -45,6 +50,7 @@ int pg_snprintf(char *str, size_t count, const char *fmt, ...) {
 
 void SetLatch(struct Latch *latch) {}
 void ResetLatch(struct Latch *latch) {}
+void pfree(void *ptr) { if (ptr) free(ptr); }
 pqsigfunc pqsignal(int signo, pqsigfunc func) { return NULL; }
 int WaitLatch(struct Latch *latch, int wakeEvents, long timeout, uint32 wait_event_info) { return 0; }
 void RegisterBackgroundWorker(BackgroundWorker *worker) {}

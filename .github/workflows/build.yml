@@ -29,6 +29,11 @@ jobs:
     - name: Run Unit Tests
       run: |
         nim c -r --hints:off tests/test_base_types.nim
+        nim c -r --hints:off tests/test_errors.nim
+        nim c -r --hints:off tests/test_query_builder.nim
+        nim c -r --hints:off tests/test_pgtext.nim
+        nim c -r --hints:off tests/test_pgvector.nim
+        nim c -r --hints:off tests/test_bgworker.nim
 
     - name: Build & Validate Extensions, Custom Types, and Hooks
       run: |

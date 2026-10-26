@@ -404,6 +404,8 @@ suite "pgxcrown v0.16.0 - Type-Safe SQL Query Builder & SPI Execution Suite":
     let nullPayload = "user\0name"
     check quoteLiteral(nullPayload) == "'username'"
     check quoteIdent("users\0_table") == "\"users_table\""
+    check quoteIdent("cpu.load") == "\"cpu.load\""
+    check quoteQualifiedIdent("metrics.cpu.load") == "\"metrics\".\"cpu\".\"load\""
 
     # INSERT with TableRef and ColumnRef proxies
     let qInsert = InsertInto(u, u.name, u.role)

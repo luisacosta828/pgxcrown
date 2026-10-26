@@ -19,6 +19,14 @@ proc ensureTestDirectories(projectDir: string) =
   createDir(sqlDir)
   createDir(expDir)
 
+proc isServerCrash(output: string): bool =
+  let lower = output.toLowerAscii()
+  return "server closed the connection unexpectedly" in lower or
+         "terminating connection due to administrator command" in lower or
+         "fatal:  database system is in recovery mode" in lower or
+         "the database system is shutting down" in lower or
+         "panic:" in lower
+
 proc runTestSuiteForVersion*(
   project: string,
   projectDir: string,
@@ -72,6 +80,16 @@ proc runTestSuiteForVersion*(
     let startTime = epochTime()
     let (actualOutput, _) = ctx.executeSqlInContainer(testDb, tc.sqlPath)
     let elapsedMs = int((epochTime() - startTime) * 1000)
+
+    if isServerCrash(actualOutput):
+      echo "   • tests/sql/" & tc.name & ".sql ...... " & ColRed & "💥 SERVER CRASH DETECTED" & ColReset & " (" & $elapsedMs & "ms)"
+      echo ColRed & "     PostgreSQL server crashed while executing test!" & ColReset
+      echo ColDim & "     ┌─ [Crash Log] ───────────────────────────────────────────" & ColReset
+      for line in actualOutput.strip.splitLines():
+        echo ColDim & "     │ " & ColReset & line
+      echo ColDim & "     └─────────────────────────────────────────────────────────" & ColReset
+      inc failedCount
+      continue
 
     if bless or not fileExists(tc.expectedPath):
       blessExpectedFile(tc.expectedPath, actualOutput)

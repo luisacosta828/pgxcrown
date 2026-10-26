@@ -90,9 +90,26 @@ proc JsonbIteratorNext*(
 {.push header: "utils/fmgrprotos.h".}
 proc numeric_float8*(fcinfo: FunctionCallInfo): Datum {.importc: "numeric_float8", noconv, cdecl, noSideEffect, gcsafe.}
 proc numeric_int4*(fcinfo: FunctionCallInfo): Datum {.importc: "numeric_int4", noconv, cdecl, noSideEffect, gcsafe.}
+proc numeric_out*(fcinfo: FunctionCallInfo): Datum {.importc: "numeric_out", noconv, cdecl, noSideEffect, gcsafe.}
 {.pop.}
 
 {.pop.} # postgres.h
+
+proc numericToJsonNode(num: pointer): JsonNode =
+  if num == nil: return newJNull()
+  let cs = cast[cstring](DirectFunctionCall1(numeric_out, cast[Datum](num)))
+  if cs == nil: return newJNull()
+  let s = $cs
+  pfree(cs)
+  if '.' notin s and 'e' notin s and 'E' notin s:
+    try:
+      return newJInt(parseBiggestInt(s))
+    except ValueError:
+      discard
+  try:
+    return newJFloat(parseFloat(s))
+  except ValueError:
+    return newJString(s)
 
 # -----------------------------------------------------------------------------
 # 3. High-Level Ergonomic Zero-Copy Type: JsonbView
@@ -235,11 +252,7 @@ proc parseContainer*(container: ptr JsonbContainer): JsonNode =
           of jbvNull: result[kStr] = newJNull()
           of jbvBool: result[kStr] = newJBool(vVal.val.boolean)
           of jbvNumeric:
-            if vVal.val.numeric == nil: result[kStr] = newJNull()
-            else:
-              let f = DirectFunctionCall1(numeric_float8, cast[Datum](vVal.val.numeric)).DatumGetFloat8
-              if f == float64(f.BiggestInt): result[kStr] = newJInt(f.BiggestInt)
-              else: result[kStr] = newJFloat(f)
+            result[kStr] = numericToJsonNode(vVal.val.numeric)
           of jbvString:
             let sLen = vVal.val.string.len
             var s = newString(sLen)
@@ -267,11 +280,7 @@ proc parseContainer*(container: ptr JsonbContainer): JsonNode =
         of jbvNull: result.add(newJNull())
         of jbvBool: result.add(newJBool(elemVal.val.boolean))
         of jbvNumeric:
-          if elemVal.val.numeric == nil: result.add(newJNull())
-          else:
-            let f = DirectFunctionCall1(numeric_float8, cast[Datum](elemVal.val.numeric)).DatumGetFloat8
-            if f == float64(f.BiggestInt): result.add(newJInt(f.BiggestInt))
-            else: result.add(newJFloat(f))
+          result.add(numericToJsonNode(elemVal.val.numeric))
         of jbvString:
           let sLen = elemVal.val.string.len
           var s = newString(sLen)
@@ -292,10 +301,7 @@ proc parseContainer*(container: ptr JsonbContainer): JsonNode =
     of jbvNull: return newJNull()
     of jbvBool: return newJBool(val.val.boolean)
     of jbvNumeric:
-      if val.val.numeric == nil: return newJNull()
-      let f = DirectFunctionCall1(numeric_float8, cast[Datum](val.val.numeric)).DatumGetFloat8
-      if f == float64(f.BiggestInt): return newJInt(f.BiggestInt)
-      else: return newJFloat(f)
+      return numericToJsonNode(val.val.numeric)
     of jbvString:
       let sLen = val.val.string.len
       var s = newString(sLen)
@@ -317,9 +323,7 @@ proc toJsonNode*(j: JsonbView): JsonNode =
     case j.val.`type`
     of jbvString: return newJString(j.getStr())
     of jbvNumeric:
-      let f = j.getFloat()
-      if f == float64(f.BiggestInt): return newJInt(f.BiggestInt)
-      else: return newJFloat(f)
+      return numericToJsonNode(j.val.val.numeric)
     of jbvBool: return newJBool(j.getBool())
     else: return newJNull()
 

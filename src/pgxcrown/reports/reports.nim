@@ -66,6 +66,15 @@ bool pgx_call_guarded(pgx_guarded_fn fn, void *data, void *out_err_raw) {
   PG_END_TRY();
   return ok;
 }
+
+static inline void pgx_free_captured_error(PgxCapturedError_C *err) {
+  if (err != NULL) {
+    if (err->message) { pfree((void*)err->message); err->message = NULL; }
+    if (err->detail) { pfree((void*)err->detail); err->detail = NULL; }
+    if (err->hint) { pfree((void*)err->hint); err->hint = NULL; }
+    if (err->context) { pfree((void*)err->context); err->context = NULL; }
+  }
+}
 """.}
 
 type
@@ -80,12 +89,16 @@ type
 
 proc pgxEreportFullRaw(elevel: cint, sqlerrcode: cint, msg: cstring, detail: cstring, hint: cstring) {.importc: "pgx_ereport_full", nodecl.}
 proc pgxCallGuardedRaw(fn: PgxGuardedFn, data: pointer, outErr: ptr PgxCapturedError): bool {.importc: "pgx_call_guarded", nodecl.}
+proc pgxFreeCapturedErrorRaw(err: ptr PgxCapturedError) {.importc: "pgx_free_captured_error", nodecl.}
 
 proc pgxEreportFull*(elevel: cint, sqlerrcode: cint, msg: cstring, detail: cstring, hint: cstring) =
   pgxEreportFullRaw(elevel, sqlerrcode, msg, detail, hint)
 
 proc pgxCallGuarded*(fn: PgxGuardedFn, data: pointer, outErr: ptr PgxCapturedError): bool =
   pgxCallGuardedRaw(fn, data, outErr)
+
+proc pgxFreeCapturedError*(err: ptr PgxCapturedError) =
+  pgxFreeCapturedErrorRaw(err)
 
 # -----------------------------------------------------------------------------
 # Reporting Procs
@@ -170,7 +183,10 @@ template pgTry*(body: untyped): untyped =
       err.detail = if captured.detail != nil: $captured.detail else: ""
       err.hint = if captured.hint != nil: $captured.hint else: ""
       err.context = if captured.context != nil: $captured.context else: ""
+      pgxFreeCapturedError(addr captured)
       raise err
+    else:
+      pgxFreeCapturedError(addr captured)
 
 # -----------------------------------------------------------------------------
 # Panic Shield Exception Dispatchers

@@ -233,7 +233,8 @@ proc fetchRawRows*(sqlQuery: string): seq[Table[string, string]] {.tags: [DbRead
         if tupdesc != nil:
           let natts = int(getNatts(tupdesc))
           if SPI_processed > 0 and natts > 0:
-            for rowIdx in 0 ..< int(SPI_processed):
+            let numRows = min(SPI_processed, uint64(high(int)))
+            for rowIdx in 0 ..< int(numRows):
               let tup = getTuple(SPI_tuptable, uint64(rowIdx))
               if tup != nil:
                 var rowTable = initTable[string, string]()

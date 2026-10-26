@@ -1,6 +1,7 @@
-{.passC: "-I/usr/include/postgresql/14/server".}
-import unittest
 import std/strutils
+const pgIncludeDirServer = staticExec("pg_config --includedir-server").strip()
+{.passC: "-I" & (if pgIncludeDirServer.len > 0: pgIncludeDirServer else: "/usr/include/postgresql/14/server").}
+import unittest
 import ../src/pgxcrown
 {.emit: """
 #include "postgres.h"

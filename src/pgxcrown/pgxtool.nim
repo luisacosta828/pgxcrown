@@ -14,11 +14,21 @@ proc getPlatformCompiler(): string {.inline.} =
   else:
     "gcc"
 
-const
-  home = getHomeDir()
-  current_user = home.lastPathPart
-  pgxtool_init_dir = home / current_user & "_pgxtool"
-  pgxtool_config = pgxtool_init_dir / "config.json"
+proc getPgxtoolInitDir*(): string =
+  let custom = getEnv("PGXTOOL_HOME", "")
+  if custom.len > 0: return custom
+  let h = getHomeDir()
+  let u = h.lastPathPart
+  h / (if u.len > 0: u else: "user") & "_pgxtool"
+
+proc getPgxtoolConfig*(): string =
+  getPgxtoolInitDir() / "config.json"
+
+var
+  home* = getHomeDir()
+  current_user* = home.lastPathPart
+  pgxtool_init_dir* = getPgxtoolInitDir()
+  pgxtool_config* = getPgxtoolConfig()
 
 const available_base_types* = [
   "int", "int16", "int32", "int64",
@@ -332,35 +342,42 @@ proc auditBinarySymbols*(soPath: string): bool =
     "dlopen", "dlsym", "dlclose", "dlerror"
   ]
 
-  let (output, exitCode) = osproc.execCmdEx("nm -D " & quoteShell(soPath))
-  if exitCode == 0:
-    var blockedFlagged: seq[string]
-    var loaderFlagged: seq[string]
-    for line in output.splitLines():
-      if " U " in line:
-        let parts = line.splitWhitespace()
-        if parts.len > 0:
-          let symRaw = parts[^1]
-          let symName = symRaw.split('@')[0]
-          if symName in blockedSymbols:
-            blockedFlagged.add(symRaw)
-          elif symName in allowedLoaderSymbols:
-            loaderFlagged.add(symRaw)
+  if findExe("nm") == "":
+    echo "❌ [SECURITY AUDIT FAILED] 'nm' utility not found. Please install binutils to run security audits."
+    return false
 
-    if blockedFlagged.len > 0:
-      echo "❌ [SECURITY VIOLATION] Restricted OS System Calls Detected in ", soPath, ":"
-      for s in blockedFlagged:
-        echo "   • Blocked Symbol: '", s, "' (Forbidden by Pgxcrown Security Policy)"
-      echo "   Exposing raw shell/OS execution calls compromises PostgreSQL server security."
-      return false
-    elif loaderFlagged.len > 0:
-      echo "ℹ️  [SECURITY AUDIT] Dynamic Library Loader Symbols Detected in ", soPath, ":"
-      for s in loaderFlagged:
-        echo "   • Extension Loader Symbol: '", s, "'"
-      return true
-    else:
-      echo "🛡️  [SECURITY AUDIT PASSED] No blacklisted OS system calls detected in ", soPath
-      return true
+  let (output, exitCode) = osproc.execCmdEx("nm -D " & quoteShell(soPath))
+  if exitCode != 0:
+    echo "❌ [SECURITY AUDIT FAILED] 'nm' failed to inspect " & soPath & ": " & output.strip()
+    return false
+
+  var blockedFlagged: seq[string]
+  var loaderFlagged: seq[string]
+  for line in output.splitLines():
+    if " U " in line:
+      let parts = line.splitWhitespace()
+      if parts.len > 0:
+        let symRaw = parts[^1]
+        let symName = symRaw.split('@')[0]
+        if symName in blockedSymbols:
+          blockedFlagged.add(symRaw)
+        elif symName in allowedLoaderSymbols:
+          loaderFlagged.add(symRaw)
+
+  if blockedFlagged.len > 0:
+    echo "❌ [SECURITY VIOLATION] Restricted OS System Calls Detected in ", soPath, ":"
+    for s in blockedFlagged:
+      echo "   • Blocked Symbol: '", s, "' (Forbidden by Pgxcrown Security Policy)"
+    echo "   Exposing raw shell/OS execution calls compromises PostgreSQL server security."
+    return false
+  elif loaderFlagged.len > 0:
+    echo "ℹ️  [SECURITY AUDIT] Dynamic Library Loader Symbols Detected in ", soPath, ":"
+    for s in loaderFlagged:
+      echo "   • Extension Loader Symbol: '", s, "'"
+    return true
+  else:
+    echo "🛡️  [SECURITY AUDIT PASSED] No blacklisted OS system calls detected in ", soPath
+    return true
 
 proc cleanupGeneratedFiles*(dir: string, prjName: string, tmpFile: string) =
   let filesToDelete = [
