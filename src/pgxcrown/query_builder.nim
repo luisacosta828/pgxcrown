@@ -5,7 +5,7 @@
 ## PostgreSQL UPSERT (ON CONFLICT), Set Operations, and Infix `as` Sugar.
 ## =============================================================================
 
-import std/[strutils, sequtils, tables, macros, options, json]
+import std/[strutils, sequtils, tables, macros, options, json, typetraits]
 export json
 
 # =============================================================================
@@ -50,110 +50,74 @@ proc quoteIdent*(s: string): string =
   if s == "*": return "*"
   return "\"" & sanitizeIdentifierString(s) & "\""
 
-proc isSafelyQuotedLiteral*(s: string): bool =
-  ## Checks if string is already a valid, safely escaped single-quoted SQL literal
-  if s.len < 2 or s[0] != '\'' or s[^1] != '\'':
-    return false
-  var i = 1
-  while i < s.len - 1:
-    if s[i] == '\0':
-      return false
-    elif s[i] == '\'':
-      if i + 1 < s.len - 1 and s[i + 1] == '\'':
-        i += 2
-      else:
-        return false # Unescaped quote inside literal -> unsafe!
-    else:
-      i += 1
-  return true
-
-proc isNumericLiteral*(s: string): bool =
-  ## Checks if string is a pure numeric literal (integer or float)
-  if s.len == 0: return false
-  var hasDigit = false
-  var hasDot = false
-  var start = 0
-  if s[0] in {'+', '-'}:
-    start = 1
-  if start >= s.len: return false
-  for j in start ..< s.len:
-    if s[j] in '0'..'9':
-      hasDigit = true
-    elif s[j] == '.' and not hasDot:
-      hasDot = true
-    else:
-      return false
-  return hasDigit
-
-proc isKeywordLiteral*(s: string): bool =
-  ## Checks if string is a safe SQL keyword literal
-  let lower = s.toLowerAscii
-  lower in ["true", "false", "null", "default"]
-
-proc isArrayLiteral*(s: string): bool =
-  ## Checks if string represents a genuine, safe PostgreSQL ARRAY[...] literal (e.g. from formatSqlValue)
-  if s.len < 7 or not s.startsWith("ARRAY["):
-    return false
-  var inQuote = false
-  var i = 6 # position immediately after "ARRAY["
-  var bracketDepth = 1
-
-  while i < s.len:
-    let c = s[i]
-    if c == '\0':
-      return false
-    elif inQuote:
-      if c == '\'':
-        if i + 1 < s.len and s[i + 1] == '\'':
-          i += 1 # escaped quote inside literal
-        else:
-          inQuote = false
-    else:
-      if c == '\'':
-        inQuote = true
-      elif c == '[':
-        bracketDepth += 1
-      elif c == ']':
-        bracketDepth -= 1
-        if bracketDepth == 0:
-          let rest = s[i + 1 .. ^1].strip()
-          if rest.len == 0:
-            return true
-          if rest.startsWith("::") and rest.endsWith("[]"):
-            let typeName = rest[2 .. ^3].strip().toLowerAscii
-            return typeName in [
-              "text", "varchar", "char", "integer", "int", "int4", "int8", "bigint",
-              "smallint", "int2", "double precision", "float8", "float4", "real",
-              "numeric", "decimal", "boolean", "bool", "json", "jsonb", "uuid",
-              "timestamp", "timestamptz", "date", "bytea"
-            ]
-          return false
-      elif c == ';':
-        return false
-      elif c == '-' and i + 1 < s.len and s[i + 1] == '-':
-        return false
-      elif c == '/' and i + 1 < s.len and s[i + 1] == '*':
-        return false
-    i += 1
-  return false
-
-proc safeSqlValue*(s: string): string =
-  ## Automatically sanitizes any value for SQL query generation.
-  ## Preserves already-safe balanced SQL string literals ('...'), pure numeric literals,
-  ## standard keywords (TRUE, FALSE, NULL, DEFAULT), and PostgreSQL array literals (ARRAY[...]).
-  ## Any other value is strictly escaped and enclosed in single quotes.
-  if isSafelyQuotedLiteral(s):
-    quoteLiteral(s[1 .. ^2].replace("''", "'"))
-  elif isNumericLiteral(s) or isKeywordLiteral(s) or isArrayLiteral(s):
-    s
-  else:
-    quoteLiteral(s)
-
 type
   RawSql* = distinct string
+  SqlExpr* = object
+    sql*: string
 
 proc raw*(s: string): RawSql = RawSql(s)
 proc `$`*(r: RawSql): string = string(r)
+proc `$`*(e: SqlExpr): string = e.sql
+
+proc formatSqlValue*[T](val: T): string =
+  ## Safely serializes a Nim value into a SQL literal for queries, INSERT/UPDATE and VALUES statements
+  when T is RawSql:
+    string(val)
+  elif T is SqlExpr:
+    val.sql
+  elif T is distinct:
+    formatSqlValue(val.distinctBase)
+  elif T is int or T is int32 or T is int64 or T is int16 or T is int8 or T is byte:
+    $val
+  elif T is uint or T is uint32 or T is uint64 or T is uint16 or T is uint8:
+    $val
+  elif T is float or T is float64 or T is float32:
+    $val
+  elif T is bool:
+    if val: "TRUE" else: "FALSE"
+  elif T is string or T is cstring:
+    quoteLiteral($val)
+  elif T is char:
+    quoteLiteral($val)
+  elif T is JsonNode:
+    quoteLiteral($val)
+  elif T is Option:
+    if val.isSome:
+      formatSqlValue(val.get)
+    else:
+      "NULL"
+  elif T is seq:
+    when typeof(val[0]) is string or typeof(val[0]) is cstring:
+      if val.len == 0: "ARRAY[]::text[]"
+      else: "ARRAY[" & val.mapIt(quoteLiteral($it)).join(", ") & "]"
+    elif typeof(val[0]) is int or typeof(val[0]) is int32:
+      if val.len == 0: "ARRAY[]::integer[]"
+      else: "ARRAY[" & val.mapIt($it).join(", ") & "]"
+    elif typeof(val[0]) is int64:
+      if val.len == 0: "ARRAY[]::bigint[]"
+      else: "ARRAY[" & val.mapIt($it).join(", ") & "]"
+    elif typeof(val[0]) is int16 or typeof(val[0]) is int8 or typeof(val[0]) is byte:
+      if val.len == 0: "ARRAY[]::smallint[]"
+      else: "ARRAY[" & val.mapIt($it).join(", ") & "]"
+    elif typeof(val[0]) is uint or typeof(val[0]) is uint32 or typeof(val[0]) is uint64 or typeof(val[0]) is uint16 or typeof(val[0]) is uint8:
+      if val.len == 0: "ARRAY[]::bigint[]"
+      else: "ARRAY[" & val.mapIt($it).join(", ") & "]"
+    elif typeof(val[0]) is float or typeof(val[0]) is float64 or typeof(val[0]) is float32:
+      if val.len == 0: "ARRAY[]::double precision[]"
+      else: "ARRAY[" & val.mapIt($it).join(", ") & "]"
+    elif typeof(val[0]) is bool:
+      if val.len == 0: "ARRAY[]::boolean[]"
+      else: "ARRAY[" & val.mapIt(if it: "TRUE" else: "FALSE").join(", ") & "]"
+    elif typeof(val[0]) is JsonNode:
+      if val.len == 0: "ARRAY[]::jsonb[]"
+      else: "ARRAY[" & val.mapIt(quoteLiteral($it)).join(", ") & "]::jsonb[]"
+    elif typeof(val[0]) is distinct:
+      if val.len == 0: "ARRAY[]"
+      else: "ARRAY[" & val.mapIt(formatSqlValue(it.distinctBase)).join(", ") & "]"
+    else:
+      quoteLiteral($val)
+  else:
+    quoteLiteral($val)
 
 type
   ParamKind* = enum
@@ -174,34 +138,49 @@ proc toParam*(v: int32): QueryParam = QueryParam(kind: pkInt, intVal: v.int64)
 proc toParam*(v: int64): QueryParam = QueryParam(kind: pkInt, intVal: v)
 proc toParam*(v: int16): QueryParam = QueryParam(kind: pkInt, intVal: v.int64)
 proc toParam*(v: int8): QueryParam = QueryParam(kind: pkInt, intVal: v.int64)
-proc toParam*(v: uint): QueryParam = QueryParam(kind: pkInt, intVal: v.int64)
-proc toParam*(v: uint32): QueryParam = QueryParam(kind: pkInt, intVal: v.int64)
-proc toParam*(v: uint64): QueryParam = QueryParam(kind: pkInt, intVal: cast[int64](v))
+proc toParam*(v: uint): QueryParam = QueryParam(kind: pkRaw, rawVal: $v)
+proc toParam*(v: uint32): QueryParam = QueryParam(kind: pkRaw, rawVal: $v)
+proc toParam*(v: uint64): QueryParam = QueryParam(kind: pkRaw, rawVal: $v)
 proc toParam*(v: float): QueryParam = QueryParam(kind: pkFloat, floatVal: v)
 proc toParam*(v: float32): QueryParam = QueryParam(kind: pkFloat, floatVal: v.float64)
 proc toParam*(v: string): QueryParam = QueryParam(kind: pkString, strVal: v)
 proc toParam*(v: cstring): QueryParam = (if v == nil: QueryParam(kind: pkNull) else: QueryParam(kind: pkString, strVal: $v))
+proc toParam*(v: char): QueryParam = QueryParam(kind: pkString, strVal: $v)
 proc toParam*(v: bool): QueryParam = QueryParam(kind: pkBool, boolVal: v)
 proc toParam*(v: JsonNode): QueryParam = (if v.isNil or v.kind == JNull: QueryParam(kind: pkNull) else: QueryParam(kind: pkJson, jsonVal: v))
 proc toParam*(r: RawSql): QueryParam = QueryParam(kind: pkRaw, rawVal: string(r))
+proc toParam*(e: SqlExpr): QueryParam = QueryParam(kind: pkRaw, rawVal: e.sql)
 proc toParam*(p: QueryParam): QueryParam = p
 proc toParam*[T](o: Option[T]): QueryParam = (if o.isSome: toParam(o.get) else: QueryParam(kind: pkNull))
+proc toParam*[T](s: seq[T]): QueryParam = QueryParam(kind: pkRaw, rawVal: formatSqlValue(s))
+proc toParam*[T: distinct](v: T): QueryParam = toParam(v.distinctBase)
 
 converter toQueryParam*(v: int): QueryParam = toParam(v)
 converter toQueryParam*(v: int32): QueryParam = toParam(v)
 converter toQueryParam*(v: int64): QueryParam = toParam(v)
+converter toQueryParam*(v: int16): QueryParam = toParam(v)
+converter toQueryParam*(v: int8): QueryParam = toParam(v)
+converter toQueryParam*(v: uint): QueryParam = toParam(v)
+converter toQueryParam*(v: uint32): QueryParam = toParam(v)
+converter toQueryParam*(v: uint64): QueryParam = toParam(v)
 converter toQueryParam*(v: float): QueryParam = toParam(v)
 converter toQueryParam*(v: float32): QueryParam = toParam(v)
 converter toQueryParam*(v: bool): QueryParam = toParam(v)
 converter toQueryParam*(v: string): QueryParam = toParam(v)
+converter toQueryParam*(v: cstring): QueryParam = toParam(v)
+converter toQueryParam*(v: char): QueryParam = toParam(v)
 converter toQueryParam*(v: JsonNode): QueryParam = toParam(v)
 converter toQueryParam*(r: RawSql): QueryParam = toParam(r)
+converter toQueryParam*(e: SqlExpr): QueryParam = toParam(e)
+converter toQueryParam*[T](s: seq[T]): QueryParam = toParam(s)
+converter toQueryParam*[T](o: Option[T]): QueryParam = toParam(o)
+converter toQueryParam*[T: distinct](v: T): QueryParam = toParam(v)
 
 proc `$`*(p: QueryParam): string =
   case p.kind
   of pkInt: $p.intVal
   of pkFloat: $p.floatVal
-  of pkString: safeSqlValue(p.strVal)
+  of pkString: quoteLiteral(p.strVal)
   of pkBool: (if p.boolVal: "TRUE" else: "FALSE")
   of pkNull: "NULL"
   of pkJson: quoteLiteral($p.jsonVal)
@@ -247,9 +226,6 @@ proc `$`*(id: SqlIdent): string = quoteIdent(string(id))
 # 3. Expressions, Window Functions, and Case Statements
 # =============================================================================
 type
-  SqlExpr* = object
-    sql*: string
-
   ColumnExpr* = object
     expr*: string
     alias*: string
@@ -752,8 +728,15 @@ type
 proc toSql*(st: QueryState): string
 proc `$`*(step: ExecutableQuery): string = toSql(step.state)
 
+# Subquery helpers (type-safe ARRAY(SELECT ...), EXISTS, IN)
+proc asArray*(step: ExecutableQuery): SqlExpr = SqlExpr(sql: "ARRAY(" & $step & ")")
+proc exists*(step: ExecutableQuery): SqlExpr = SqlExpr(sql: "EXISTS (" & $step & ")")
+proc inSubquery*(c: ColumnRef, step: ExecutableQuery): SqlExpr = SqlExpr(sql: $c & " IN (" & $step & ")")
+proc notInSubquery*(c: ColumnRef, step: ExecutableQuery): SqlExpr = SqlExpr(sql: $c & " NOT IN (" & $step & ")")
+
 # Column conversion helpers
 proc colExpr*(expr: string, alias: string = ""): ColumnExpr = ColumnExpr(expr: expr, alias: alias)
+proc toColumnExpr*(e: SqlExpr): ColumnExpr = ColumnExpr(expr: e.sql, alias: "")
 proc toColumnExpr*(c: ColumnRef): ColumnExpr = ColumnExpr(expr: $c, alias: "")
 proc toColumnExpr*(id: SqlIdent): ColumnExpr = ColumnExpr(expr: $id, alias: "")
 proc toColumnExpr*(r: RawSql): ColumnExpr = ColumnExpr(expr: $r, alias: "")
@@ -960,18 +943,21 @@ proc Except*[T1: ExecutableQuery, T2: ExecutableQuery](q1: T1, q2: T2): SelectSt
 # =============================================================================
 # 9. PostgreSQL Standalone VALUES & Rows
 # =============================================================================
-proc Values*(rows: varargs[seq[string]]): ValuesStep =
-  var sanitizedRows: seq[seq[string]] = @[]
-  for row in rows:
-    sanitizedRows.add(row.mapIt(safeSqlValue(it)))
-  let st = QueryState(kind: skValues, valuesRows: sanitizedRows, limitVal: -1, offsetVal: -1)
-  ValuesStep(state: st)
+type
+  SqlRow* = distinct seq[string]
 
-proc Row*(params: varargs[QueryParam, toQueryParam]): seq[string] =
+proc Row*(params: varargs[QueryParam, toQueryParam]): SqlRow =
   var res: seq[string] = @[]
   for p in params:
     res.add($p)
-  res
+  SqlRow(res)
+
+proc Values*(rows: varargs[SqlRow]): ValuesStep =
+  var rawRows: seq[seq[string]] = @[]
+  for r in rows:
+    rawRows.add(seq[string](r))
+  let st = QueryState(kind: skValues, valuesRows: rawRows, limitVal: -1, offsetVal: -1)
+  ValuesStep(state: st)
 
 # =============================================================================
 # 10. INSERT, PostgreSQL UPSERT (ON CONFLICT), UPDATE, DELETE Steps
@@ -995,11 +981,8 @@ proc Values*(step: InsertStep or InsertValuesStep, params: varargs[QueryParam, t
   step.state.insertRows.add(formattedRow)
   InsertValuesStep(state: step.state)
 
-proc Values*(step: InsertStep or InsertValuesStep, vals: openArray[string]): InsertValuesStep =
-  var formattedRow: seq[string] = @[]
-  for v in vals:
-    formattedRow.add(safeSqlValue(v))
-  step.state.insertRows.add(formattedRow)
+proc Values*(step: InsertStep or InsertValuesStep, row: SqlRow): InsertValuesStep =
+  step.state.insertRows.add(seq[string](row))
   InsertValuesStep(state: step.state)
 
 proc OnConflict*(step: InsertValuesStep, cols: varargs[string]): ConflictStep =
@@ -1225,57 +1208,6 @@ proc toSql*(st: QueryState): string =
 # 11. Object Schema Inspection & DDL Generation (createTableFrom)
 # =============================================================================
 
-proc formatSqlValue*[T](val: T): string =
-  ## Safely serializes a Nim field value into a SQL literal for INSERT/UPDATE statements
-  when T is int or T is int32 or T is int64 or T is int16 or T is int8 or T is byte:
-    $val
-  elif T is uint or T is uint32 or T is uint64 or T is uint16 or T is uint8:
-    $val
-  elif T is float or T is float64 or T is float32:
-    $val
-  elif T is bool:
-    if val: "TRUE" else: "FALSE"
-  elif T is string or T is cstring:
-    quoteLiteral($val)
-  elif T is char:
-    quoteLiteral($val)
-  elif T is JsonNode:
-    quoteLiteral($val)
-  elif T is Option:
-    if val.isSome:
-      formatSqlValue(val.get)
-    else:
-      "NULL"
-  elif T is seq:
-    when typeof(val[0]) is string or typeof(val[0]) is cstring:
-      if val.len == 0: "ARRAY[]::text[]"
-      else: "ARRAY[" & val.mapIt(quoteLiteral($it)).join(", ") & "]"
-    elif typeof(val[0]) is int or typeof(val[0]) is int32:
-      if val.len == 0: "ARRAY[]::integer[]"
-      else: "ARRAY[" & val.mapIt($it).join(", ") & "]"
-    elif typeof(val[0]) is int64:
-      if val.len == 0: "ARRAY[]::bigint[]"
-      else: "ARRAY[" & val.mapIt($it).join(", ") & "]"
-    elif typeof(val[0]) is int16 or typeof(val[0]) is int8 or typeof(val[0]) is byte:
-      if val.len == 0: "ARRAY[]::smallint[]"
-      else: "ARRAY[" & val.mapIt($it).join(", ") & "]"
-    elif typeof(val[0]) is uint or typeof(val[0]) is uint32 or typeof(val[0]) is uint64 or typeof(val[0]) is uint16 or typeof(val[0]) is uint8:
-      if val.len == 0: "ARRAY[]::bigint[]"
-      else: "ARRAY[" & val.mapIt($it).join(", ") & "]"
-    elif typeof(val[0]) is float or typeof(val[0]) is float64 or typeof(val[0]) is float32:
-      if val.len == 0: "ARRAY[]::double precision[]"
-      else: "ARRAY[" & val.mapIt($it).join(", ") & "]"
-    elif typeof(val[0]) is bool:
-      if val.len == 0: "ARRAY[]::boolean[]"
-      else: "ARRAY[" & val.mapIt(if it: "TRUE" else: "FALSE").join(", ") & "]"
-    elif typeof(val[0]) is JsonNode:
-      if val.len == 0: "ARRAY[]::jsonb[]"
-      else: "ARRAY[" & val.mapIt(quoteLiteral($it)).join(", ") & "]::jsonb[]"
-    else:
-      quoteLiteral($val)
-  else:
-    quoteLiteral($val)
-
 proc columnDefsFromType*[T: object](primaryKey: string = "id"): seq[(string, string)] =
   ## Inspects properties of object type T and returns a sequence of (columnName, sqlTypeDef)
   result = @[]
@@ -1459,4 +1391,5 @@ proc insertFrom*[T: object](obj: T, tableName: string = ""): InsertValuesStep =
     vals.add(formatSqlValue(val))
 
   var insertStep = InsertInto(targetTable, cols)
-  insertStep.Values(vals)
+  insertStep.state.insertRows.add(vals)
+  return InsertValuesStep(state: insertStep.state)

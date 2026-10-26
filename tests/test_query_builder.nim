@@ -2,6 +2,7 @@
 import std/[unittest, tables, options, strutils, json]
 import ../src/pgxcrown/query_builder
 import ../src/pgxcrown/spi
+import ../src/pgxcrown/native_functions
 
 suite "pgxcrown v0.16.0 - Type-Safe SQL Query Builder & SPI Execution Suite":
 
@@ -67,7 +68,7 @@ suite "pgxcrown v0.16.0 - Type-Safe SQL Query Builder & SPI Execution Suite":
 
   test "PostgreSQL UPSERT (ON CONFLICT DO UPDATE ... RETURNING)":
     let q = InsertInto("counters", "key", "count")
-      .Values("'page_views'", "1")
+      .Values("page_views", 1)
       .OnConflict("key").DoUpdate("count = counters.count + 1")
       .Returning("count")
 
@@ -104,8 +105,8 @@ suite "pgxcrown v0.16.0 - Type-Safe SQL Query Builder & SPI Execution Suite":
     check $qSelect == "SELECT NOW() AS \"server_time\", 42 AS \"answer\""
 
     let qValues = Values(
-      Row("1", quoteLiteral("Alice")),
-      Row("2", quoteLiteral("Bob"))
+      Row(1, "Alice"),
+      Row(2, "Bob")
     ).Limit(5)
     check "VALUES\n  (1, 'Alice'),\n  (2, 'Bob')\nLIMIT 5" == $qValues
 
@@ -388,15 +389,54 @@ suite "pgxcrown v0.16.0 - Type-Safe SQL Query Builder & SPI Execution Suite":
     let nonEmpty = @["gaming", "hardware"]
     check formatSqlValue(nonEmpty) == "ARRAY['gaming', 'hardware']"
 
-    # Safe array literal validation
-    check isArrayLiteral("ARRAY[]::text[]")
-    check isArrayLiteral("ARRAY['gaming', 'hardware']")
-    check isArrayLiteral("ARRAY[1, 2, 3]::integer[]")
+    # String values simulating SQL/arrays are strictly escaped as string literals
+    check formatSqlValue("ARRAY[(SELECT password FROM users)]") == "'ARRAY[(SELECT password FROM users)]'"
+    check formatSqlValue("ARRAY[1]::text[]; DROP TABLE users;") == "'ARRAY[1]::text[]; DROP TABLE users;'"
+    check formatSqlValue("null") == "'null'"
+    check formatSqlValue("true") == "'true'"
 
-    # Rejection of malicious pseudo-array payloads in isArrayLiteral & safeSqlValue
-    check not isArrayLiteral("ARRAY['legit']; DROP TABLE users; --]")
-    check not isArrayLiteral("ARRAY[1]::text[]; DROP TABLE users;")
-    check safeSqlValue("ARRAY['legit']; DROP TABLE users; --]") == "'ARRAY[''legit'']; DROP TABLE users; --]'"
+    # Type-safe SQL injection prevention in INSERT Values
+    let qInjection = InsertInto(u, u.name).Values("ARRAY[(SELECT password FROM users)]")
+    check "('ARRAY[(SELECT password FROM users)]')" in $qInjection
+
+    let qNullString = InsertInto(u, u.name).Values("null")
+    check "('null')" in $qNullString
+
+    # Type-safe seq[T] in Values
+    let tags: seq[string] = @["nim", "postgres"]
+    let qArray = InsertInto("articles", "tags").Values(tags)
+    check "(ARRAY['nim', 'postgres'])" in $qArray
+
+    # Subqueries wrapped as arrays, exists, and inSubquery
+    let sub = Select(u.id).From(u).Where(u.role == "admin")
+    let qSubArray = Select(sub.asArray() as "admin_ids")
+    check "SELECT ARRAY(SELECT \"u\".\"id\"" in $qSubArray
+    check "WHERE \"u\".\"role\" = 'admin') AS \"admin_ids\"" in $qSubArray
+
+    let qExists = Select(u.name).From(u).Where(sub.exists())
+    check "WHERE EXISTS (SELECT \"u\".\"id\"" in $qExists
+    check "WHERE \"u\".\"role\" = 'admin')" in $qExists
+
+    let qInSub = Select(u.name).From(u).Where(u.id.inSubquery(sub))
+    check "WHERE \"u\".\"id\" IN (SELECT \"u\".\"id\"" in $qInSub
+    check "WHERE \"u\".\"role\" = 'admin')" in $qInSub
+
+    # Distinct types support
+    type UserId = distinct int32
+    let uid = UserId(42)
+    check formatSqlValue(uid) == "42"
+    let qDistinct = InsertInto(u, u.id).Values(uid)
+    check "(42)" in $qDistinct
+
+    # Native functions
+    check sqlNow().sql == "now()"
+    check sqlClockTimestamp().sql == "clock_timestamp()"
+    check sqlCurrentDate().sql == "CURRENT_DATE"
+    check sqlCurrentTimestamp().sql == "CURRENT_TIMESTAMP"
+    check sqlRandom().sql == "random()"
+
+    let qFuncs = Select(sqlNow() as "now", sqlRandom() as "rnd")
+    check $qFuncs == "SELECT now() AS \"now\", random() AS \"rnd\""
 
   test "ColumnExpr full comparison suite, helpers, and GroupBy":
     let category = u.data["category"]

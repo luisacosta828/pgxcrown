@@ -9,6 +9,7 @@ import pgxcrown/reports/reports
 import pgxcrown/query_builder
 import pgxcrown/spi
 import pgxcrown/bgworker
+import pgxcrown/native_functions
 
 template trusted*() {.pragma: [raises: [ValueError], forbids: [IOEffect, TimeEffect], tags: []].}
 template immutable*() {.pragma: [noSideEffect, trusted, forbids: [DbReadEffect, DbWriteEffect]].}
@@ -131,4 +132,5 @@ export query_builder
 export spi
 export strings
 export bgworker
+export native_functions
 
