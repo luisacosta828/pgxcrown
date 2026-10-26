@@ -80,7 +80,10 @@ proc formatSqlValue*[T](val: T): string =
   elif T is char:
     quoteLiteral($val)
   elif T is JsonNode:
-    quoteLiteral($val)
+    if val.isNil or val.kind == JNull:
+      "NULL"
+    else:
+      quoteLiteral($val)
   elif T is Option:
     if val.isSome:
       formatSqlValue(val.get)
@@ -110,7 +113,7 @@ proc formatSqlValue*[T](val: T): string =
       else: "ARRAY[" & val.mapIt(if it: "TRUE" else: "FALSE").join(", ") & "]"
     elif typeof(val[0]) is JsonNode:
       if val.len == 0: "ARRAY[]::jsonb[]"
-      else: "ARRAY[" & val.mapIt(quoteLiteral($it)).join(", ") & "]::jsonb[]"
+      else: "ARRAY[" & val.mapIt(if it.isNil or it.kind == JNull: "NULL" else: quoteLiteral($it)).join(", ") & "]::jsonb[]"
     elif typeof(val[0]) is distinct:
       if val.len == 0: "ARRAY[]"
       else: "ARRAY[" & val.mapIt(formatSqlValue(it.distinctBase)).join(", ") & "]"
@@ -183,7 +186,7 @@ proc `$`*(p: QueryParam): string =
   of pkString: quoteLiteral(p.strVal)
   of pkBool: (if p.boolVal: "TRUE" else: "FALSE")
   of pkNull: "NULL"
-  of pkJson: quoteLiteral($p.jsonVal)
+  of pkJson: (if p.jsonVal.isNil or p.jsonVal.kind == JNull: "NULL" else: quoteLiteral($p.jsonVal))
   of pkRaw: p.rawVal
 
 # =============================================================================
@@ -250,7 +253,11 @@ proc `==`*(c: ColumnRef, val: int64): SqlExpr = SqlExpr(sql: $c & " = " & $val)
 proc `==`*(c: ColumnRef, val: float): SqlExpr = SqlExpr(sql: $c & " = " & $val)
 proc `==`*(c: ColumnRef, val: bool): SqlExpr = SqlExpr(sql: $c & " = " & (if val: "TRUE" else: "FALSE"))
 proc `==`*(c: ColumnRef, val: QueryParam): SqlExpr = SqlExpr(sql: $c & " = " & $val)
-proc `==`*(c: ColumnRef, val: JsonNode): SqlExpr = SqlExpr(sql: $c & " = " & quoteLiteral($val))
+proc `==`*(c: ColumnRef, val: JsonNode): SqlExpr =
+  if val.isNil or val.kind == JNull:
+    SqlExpr(sql: $c & " IS NULL")
+  else:
+    SqlExpr(sql: $c & " = " & quoteLiteral($val))
 
 proc `!=`*(c: ColumnRef, val: string): SqlExpr = SqlExpr(sql: $c & " != " & quoteLiteral(val))
 proc `!=`*(c: ColumnRef, val: int): SqlExpr = SqlExpr(sql: $c & " != " & $val)
@@ -259,6 +266,11 @@ proc `!=`*(c: ColumnRef, val: int64): SqlExpr = SqlExpr(sql: $c & " != " & $val)
 proc `!=`*(c: ColumnRef, val: float): SqlExpr = SqlExpr(sql: $c & " != " & $val)
 proc `!=`*(c: ColumnRef, val: bool): SqlExpr = SqlExpr(sql: $c & " != " & (if val: "TRUE" else: "FALSE"))
 proc `!=`*(c: ColumnRef, val: QueryParam): SqlExpr = SqlExpr(sql: $c & " != " & $val)
+proc `!=`*(c: ColumnRef, val: JsonNode): SqlExpr =
+  if val.isNil or val.kind == JNull:
+    SqlExpr(sql: $c & " IS NOT NULL")
+  else:
+    SqlExpr(sql: $c & " != " & quoteLiteral($val))
 
 proc `>=`*(c: ColumnRef, val: int): SqlExpr = SqlExpr(sql: $c & " >= " & $val)
 proc `>=`*(c: ColumnRef, val: int32): SqlExpr = SqlExpr(sql: $c & " >= " & $val)
@@ -369,6 +381,11 @@ proc `==`*(c: ColumnExpr, val: string): SqlExpr = SqlExpr(sql: c.expr & " = " & 
 proc `==`*(c: ColumnExpr, val: QueryParam): SqlExpr = SqlExpr(sql: c.expr & " = " & $val)
 proc `==`*(c: ColumnExpr, val: ColumnRef): SqlExpr = SqlExpr(sql: c.expr & " = " & $val)
 proc `==`*(a: ColumnExpr, b: ColumnExpr): SqlExpr = SqlExpr(sql: a.expr & " = " & b.expr)
+proc `==`*(c: ColumnExpr, val: JsonNode): SqlExpr =
+  if val.isNil or val.kind == JNull:
+    SqlExpr(sql: c.expr & " IS NULL")
+  else:
+    SqlExpr(sql: c.expr & " = " & quoteLiteral($val))
 
 proc `!=`*(c: ColumnExpr, val: int): SqlExpr = SqlExpr(sql: c.expr & " != " & $val)
 proc `!=`*(c: ColumnExpr, val: int32): SqlExpr = SqlExpr(sql: c.expr & " != " & $val)
@@ -379,6 +396,11 @@ proc `!=`*(c: ColumnExpr, val: string): SqlExpr = SqlExpr(sql: c.expr & " != " &
 proc `!=`*(c: ColumnExpr, val: QueryParam): SqlExpr = SqlExpr(sql: c.expr & " != " & $val)
 proc `!=`*(c: ColumnExpr, val: ColumnRef): SqlExpr = SqlExpr(sql: c.expr & " != " & $val)
 proc `!=`*(a: ColumnExpr, b: ColumnExpr): SqlExpr = SqlExpr(sql: a.expr & " != " & b.expr)
+proc `!=`*(c: ColumnExpr, val: JsonNode): SqlExpr =
+  if val.isNil or val.kind == JNull:
+    SqlExpr(sql: c.expr & " IS NOT NULL")
+  else:
+    SqlExpr(sql: c.expr & " != " & quoteLiteral($val))
 
 # String helper operators for ColumnExpr
 proc like*(c: ColumnExpr, pattern: string): SqlExpr = SqlExpr(sql: c.expr & " LIKE " & quoteLiteral(pattern))
@@ -476,33 +498,75 @@ proc jsonPathText*(c: ColumnRef, pathElements: varargs[string]): ColumnExpr =
 
 proc containsJson*(c: ColumnRef, jsonVal: JsonNode): SqlExpr =
   ## JSON containment operator (@>)
-  SqlExpr(sql: $c & " @> " & quoteLiteral($jsonVal))
+  if jsonVal.isNil or jsonVal.kind == JNull:
+    SqlExpr(sql: "FALSE")
+  else:
+    SqlExpr(sql: $c & " @> " & quoteLiteral($jsonVal))
 
 proc containsJson*(c: ColumnRef, jsonVal: string): SqlExpr =
   ## JSON containment operator (@>) with raw string
   SqlExpr(sql: $c & " @> " & quoteLiteral(jsonVal))
 
+proc containsJson*(c: ColumnExpr, jsonVal: JsonNode): SqlExpr =
+  ## JSON containment operator (@>) for ColumnExpr
+  if jsonVal.isNil or jsonVal.kind == JNull:
+    SqlExpr(sql: "FALSE")
+  else:
+    SqlExpr(sql: c.expr & " @> " & quoteLiteral($jsonVal))
+
+proc containsJson*(c: ColumnExpr, jsonVal: string): SqlExpr =
+  ## JSON containment operator (@>) with raw string for ColumnExpr
+  SqlExpr(sql: c.expr & " @> " & quoteLiteral(jsonVal))
+
 proc containedByJson*(c: ColumnRef, jsonVal: JsonNode): SqlExpr =
   ## JSON contained-by operator (<@)
-  SqlExpr(sql: $c & " <@ " & quoteLiteral($jsonVal))
+  if jsonVal.isNil or jsonVal.kind == JNull:
+    SqlExpr(sql: "FALSE")
+  else:
+    SqlExpr(sql: $c & " <@ " & quoteLiteral($jsonVal))
 
 proc containedByJson*(c: ColumnRef, jsonVal: string): SqlExpr =
   ## JSON contained-by operator (<@) with raw string
   SqlExpr(sql: $c & " <@ " & quoteLiteral(jsonVal))
 
+proc containedByJson*(c: ColumnExpr, jsonVal: JsonNode): SqlExpr =
+  ## JSON contained-by operator (<@) for ColumnExpr
+  if jsonVal.isNil or jsonVal.kind == JNull:
+    SqlExpr(sql: "FALSE")
+  else:
+    SqlExpr(sql: c.expr & " <@ " & quoteLiteral($jsonVal))
+
+proc containedByJson*(c: ColumnExpr, jsonVal: string): SqlExpr =
+  ## JSON contained-by operator (<@) with raw string for ColumnExpr
+  SqlExpr(sql: c.expr & " <@ " & quoteLiteral(jsonVal))
+
 proc hasJsonKey*(c: ColumnRef, key: string): SqlExpr =
   ## Checks if top-level key exists in JSON (?)
   SqlExpr(sql: $c & " ? " & quoteLiteral(key))
+
+proc hasJsonKey*(c: ColumnExpr, key: string): SqlExpr =
+  ## Checks if top-level key exists in JSON (?) for ColumnExpr
+  SqlExpr(sql: c.expr & " ? " & quoteLiteral(key))
 
 proc hasAnyJsonKey*(c: ColumnRef, keys: openArray[string]): SqlExpr =
   ## Checks if any top-level key exists in JSON (?|)
   let quoted = keys.mapIt(quoteLiteral(it)).join(", ")
   SqlExpr(sql: $c & " ?| ARRAY[" & quoted & "]")
 
+proc hasAnyJsonKey*(c: ColumnExpr, keys: openArray[string]): SqlExpr =
+  ## Checks if any top-level key exists in JSON (?|) for ColumnExpr
+  let quoted = keys.mapIt(quoteLiteral(it)).join(", ")
+  SqlExpr(sql: c.expr & " ?| ARRAY[" & quoted & "]")
+
 proc hasAllJsonKeys*(c: ColumnRef, keys: openArray[string]): SqlExpr =
   ## Checks if all top-level keys exist in JSON (?&)
   let quoted = keys.mapIt(quoteLiteral(it)).join(", ")
   SqlExpr(sql: $c & " ?& ARRAY[" & quoted & "]")
+
+proc hasAllJsonKeys*(c: ColumnExpr, keys: openArray[string]): SqlExpr =
+  ## Checks if all top-level keys exist in JSON (?&) for ColumnExpr
+  let quoted = keys.mapIt(quoteLiteral(it)).join(", ")
+  SqlExpr(sql: c.expr & " ?& ARRAY[" & quoted & "]")
 
 # Boolean logic
 proc `and`*(a, b: SqlExpr): SqlExpr = SqlExpr(sql: a.sql & " AND " & b.sql)
@@ -742,7 +806,16 @@ proc toColumnExpr*(id: SqlIdent): ColumnExpr = ColumnExpr(expr: $id, alias: "")
 proc toColumnExpr*(r: RawSql): ColumnExpr = ColumnExpr(expr: $r, alias: "")
 proc toColumnExpr*(s: string): ColumnExpr = ColumnExpr(expr: quoteIdent(s), alias: "")
 proc toColumnExpr*(n: int): ColumnExpr = ColumnExpr(expr: $n, alias: "")
+proc toColumnExpr*(n: int32): ColumnExpr = ColumnExpr(expr: $n, alias: "")
+proc toColumnExpr*(n: int64): ColumnExpr = ColumnExpr(expr: $n, alias: "")
 proc toColumnExpr*(f: float): ColumnExpr = ColumnExpr(expr: $f, alias: "")
+proc toColumnExpr*(b: bool): ColumnExpr = ColumnExpr(expr: (if b: "TRUE" else: "FALSE"), alias: "")
+proc toColumnExpr*(j: JsonNode): ColumnExpr =
+  if j.isNil or j.kind == JNull:
+    ColumnExpr(expr: "NULL::jsonb", alias: "")
+  else:
+    ColumnExpr(expr: quoteLiteral($j) & "::jsonb", alias: "")
+proc toColumnExpr*(p: QueryParam): ColumnExpr = ColumnExpr(expr: $p, alias: "")
 proc toColumnExpr*(c: ColumnExpr): ColumnExpr = c
 proc toColumnExpr*(q: ExecutableQuery): ColumnExpr = ColumnExpr(expr: "(" & $q & ")", alias: "")
 

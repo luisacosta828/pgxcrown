@@ -1,7 +1,7 @@
 # =============================================================================
 # pgxcrown - High Performance Zero-Copy Binary JSONB Module
 # Direct C FFI over PostgreSQL <utils/jsonb.h>
-# Compatible with PostgreSQL 13, 14, 15, 16, 17
+# Compatible with PostgreSQL 14, 15, 16, 17
 # =============================================================================
 
 import std/[json, strutils]
@@ -60,7 +60,7 @@ type
     WJB_END_OBJECT
 
 # -----------------------------------------------------------------------------
-# 2. C Core Functions (PG 13 - 17)
+# 2. C Core Functions (PG 14 - 17)
 # -----------------------------------------------------------------------------
 proc DatumGetJsonbP*(d: Datum): ptr Jsonb {.importc: "DatumGetJsonbP".}
 

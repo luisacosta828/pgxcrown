@@ -405,7 +405,7 @@ SELECT stop_order_archiver_worker();
 ## 🖥️ Platform & System Requirements
 
 - **Operating System**: Linux (`x86_64`, `aarch64`), macOS. *(Windows: use WSL2 or Docker).*
-- **PostgreSQL**: Version 12, 13, 14, 15, 16, or 17 (with `postgresql-server-dev-*` or `pg_config`).
+- **PostgreSQL**: Version 14, 15, 16, or 17 (with `postgresql-server-dev-*` or `pg_config`).
 - **Nim Compiler**: Version $\ge 2.0.0$.
 - **C Compiler**: GCC or Clang.
 - **Docker** *(optional)*: Required for running `pgxtool test` multi-version container sandboxes.

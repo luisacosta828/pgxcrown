@@ -14,7 +14,7 @@ proc pgconfigFinder*(): string =
       folder = """C:\Program Files\PostgreSQL\"""
       binary = """\bin\pg_config.exe"""
     if dirExists(folder):
-      for semver in countdown(25, 12):
+      for semver in countdown(25, 14):
         let candidate = folder & $semver & binary
         if fileExists(candidate):
           return candidate
@@ -34,7 +34,7 @@ proc pgLibFinder*(): string =
         folder = """C:\Program Files\PostgreSQL\"""
         tail = """\lib"""
       if dirExists(folder):
-        for semver in countdown(25, 12):
+        for semver in countdown(25, 14):
           let candidate = folder & $semver & tail
           if dirExists(candidate):
             return candidate
@@ -49,7 +49,7 @@ proc pgIncludeFinder*(): string =
         folder = """C:\Program Files\PostgreSQL\"""
         tail = """\include"""
       if dirExists(folder):
-        for semver in countdown(25, 12):
+        for semver in countdown(25, 14):
           let candidate = folder & $semver & tail
           if dirExists(candidate):
             return candidate
@@ -64,7 +64,7 @@ proc pgIncludeServerFinder*(): string =
         folder = """C:\Program Files\PostgreSQL\"""
         tail = """\include\server"""
       if dirExists(folder):
-        for semver in countdown(25, 12):
+        for semver in countdown(25, 14):
           let candidate = folder & $semver & tail
           if dirExists(candidate):
             return candidate
@@ -79,7 +79,7 @@ proc pgShareDirFinder*(): string =
         folder = """C:\Program Files\PostgreSQL\"""
         tail = """\share"""
       if dirExists(folder):
-        for semver in countdown(25, 12):
+        for semver in countdown(25, 14):
           let candidate = folder & $semver & tail
           if dirExists(candidate):
             return candidate

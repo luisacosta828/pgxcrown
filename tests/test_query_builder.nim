@@ -232,6 +232,39 @@ suite "pgxcrown v0.16.0 - Type-Safe SQL Query Builder & SPI Execution Suite":
     check "\"u\".\"flags\" ?| ARRAY['flag_a', 'flag_b']" in sqlContains
     check "\"u\".\"permissions\" ?& ARRAY['read', 'write']" in sqlContains
 
+    # 5. Nil-safety in JSON operations and formatSqlValue
+    var nilJson: JsonNode = nil
+    check formatSqlValue(nilJson) == "NULL"
+    check formatSqlValue(newJNull()) == "NULL"
+    check formatSqlValue(%*{"k": "v"}) == "'{\"k\":\"v\"}'"
+
+    var seqWithNil: seq[JsonNode] = @[nilJson, %*{"a": 1}, newJNull()]
+    check formatSqlValue(seqWithNil) == "ARRAY[NULL, '{\"a\":1}', NULL]::jsonb[]"
+
+    # 6. JSON Select and bool literals in Select
+    let qSelectJson = Select(%*{"role": "admin"} as "meta", nilJson as "empty_meta", true as "is_active")
+    check $qSelectJson == "SELECT '{\"role\":\"admin\"}'::jsonb AS \"meta\", NULL::jsonb AS \"empty_meta\", TRUE AS \"is_active\""
+
+    # 7. ColumnRef and ColumnExpr JSON comparison and containment
+    check (u.data == %*{"a": 1}).sql == "\"u\".\"data\" = '{\"a\":1}'"
+    check (u.data == nilJson).sql == "\"u\".\"data\" IS NULL"
+    check (u.data != %*{"a": 1}).sql == "\"u\".\"data\" != '{\"a\":1}'"
+    check (u.data != nilJson).sql == "\"u\".\"data\" IS NOT NULL"
+
+    let nestedExpr = u.data["nested"]
+    check (nestedExpr == %*{"a": 1}).sql == "\"u\".\"data\" -> 'nested' = '{\"a\":1}'"
+    check (nestedExpr == nilJson).sql == "\"u\".\"data\" -> 'nested' IS NULL"
+    check (nestedExpr != %*{"a": 1}).sql == "\"u\".\"data\" -> 'nested' != '{\"a\":1}'"
+    check (nestedExpr != nilJson).sql == "\"u\".\"data\" -> 'nested' IS NOT NULL"
+
+    check nestedExpr.containsJson(%*{"a": 1}).sql == "\"u\".\"data\" -> 'nested' @> '{\"a\":1}'"
+    check nestedExpr.containsJson(nilJson).sql == "FALSE"
+    check nestedExpr.containedByJson(%*{"a": 1}).sql == "\"u\".\"data\" -> 'nested' <@ '{\"a\":1}'"
+    check nestedExpr.containedByJson(nilJson).sql == "FALSE"
+    check nestedExpr.hasJsonKey("key").sql == "\"u\".\"data\" -> 'nested' ? 'key'"
+    check nestedExpr.hasAnyJsonKey(["k1", "k2"]).sql == "\"u\".\"data\" -> 'nested' ?| ARRAY['k1', 'k2']"
+    check nestedExpr.hasAllJsonKeys(["k1", "k2"]).sql == "\"u\".\"data\" -> 'nested' ?& ARRAY['k1', 'k2']"
+
   test "JSON Schema Introspection & createTableFrom with JsonNode":
     type Account = object
       id: int
@@ -261,6 +294,30 @@ suite "pgxcrown v0.16.0 - Type-Safe SQL Query Builder & SPI Execution Suite":
     check "INSERT INTO \"account\" (\"id\", \"username\", \"payload\", \"settings\", \"extra_payloads\")" in insertSql
     check "'{\"role\":\"admin\",\"score\":99}'" in insertSql
     check "'{\"dark_mode\":true}'" in insertSql
+
+    # Nil-safety and SQL injection resistance in insertFrom with JsonNode
+    var nilJsonNode: JsonNode = nil
+    let nilAccount = Account(
+      id: 2,
+      username: "hacker",
+      payload: nilJsonNode,
+      settings: none(JsonNode),
+      extra_payloads: @[nilJsonNode]
+    )
+    let nilInsertQ = insertFrom(nilAccount)
+    let nilInsertSql = $nilInsertQ
+    check "VALUES\n  (2, 'hacker', NULL, NULL, ARRAY[NULL]::jsonb[])" in nilInsertSql
+
+    let maliciousAccount = Account(
+      id: 3,
+      username: "safe_user",
+      payload: %*{"exploit": "'); DROP TABLE users; --"},
+      settings: some(%*{"active": true}),
+      extra_payloads: @[]
+    )
+    let malInsertSql = $(insertFrom(maliciousAccount))
+    check "'{\"exploit\":\"\'\'); DROP TABLE users; --\"}'" in malInsertSql
+    check "ARRAY[]::jsonb[]" in malInsertSql
 
   test "Strongly typed row mapping with JsonNode and Option[JsonNode]":
     type ConfigDto = object
