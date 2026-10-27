@@ -130,14 +130,7 @@ proc hasReturn(node: NimNode): bool =
 
 
 template map_enums_params(pvar, ptype) =
-  var 
-    ncall: NimNode
-    ncallident: NimNode
-
-  ncall = newCall(ident("DirectFunctionCall1"), [ident("enum_out"), newCall(ident("ObjectIdGetDatum"), [ident(pvar&"_oid")])])
-
-  ncall = newCall(ident("DatumToCString"), [ncall])
-  ncall = newCall(ident("$"),[ncall])
+  var ncall = newCall(ident("enumOidToString"), [ident(pvar & "_oid")])
 
   var 
     genericPart = nnkBracketExpr.newTree(ident("parseEnum"),ident(ptype))

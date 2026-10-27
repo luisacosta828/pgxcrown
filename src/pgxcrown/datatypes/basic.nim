@@ -233,6 +233,14 @@ template safePfree*(data: pointer) =
   if data != nil:
     pfree(data)
 
+proc enumOidToString*(oid: Oid): string =
+  let cs = DatumGetCString(DirectFunctionCall1(enum_out, ObjectIdGetDatum(oid)))
+  if cs != nil:
+    result = $cs
+    pfree(cs)
+  else:
+    result = ""
+
 converter DatumToObjectId*(x: Datum): Oid = DatumGetObjectId(x) 
 converter DatumToInt64*(x: Datum): int64 =  DatumGetInt64(x)
 converter DatumToInt32*(x: Datum): int =  DatumGetInt32(x)

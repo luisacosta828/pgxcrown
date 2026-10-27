@@ -2,7 +2,7 @@ from basic import Oid, Datum, NameData, OidOutputFunctionCall, PointerGetDatum, 
   Int32GetDatum, Int64GetDatum, Int16GetDatum, Float4GetDatum, Float8GetDatum, BoolGetDatum,
   CharGetDatum, ObjectIdGetDatum, CStringGetTextDatum, TextDatumGetCString, DatumToInt32, DatumToInt64,
   DatumGetFloat8, DatumGetChar, DatumGetObjectId, DatumToCString,
-  DatumGetInt32, DatumGetInt64, DatumGetInt16, DatumGetFloat4, palloc
+  DatumGetInt32, DatumGetInt64, DatumGetInt16, DatumGetFloat4, palloc, MemoryContextSwitchTo
 
 from jsonb import JsonNodeToDatum, DatumToJsonNode
 
@@ -412,11 +412,21 @@ proc buildTupleDescFor*[T: object | tuple](): TupleDesc =
     attrNum += 1
   return BlessTupleDesc(desc)
 
+{.push header: "utils/memutils.h".}
+var TopMemoryContext {.importc: "TopMemoryContext".}: pointer
+{.pop.}
+
 proc getCachedTupleDescFor*[T: object | tuple](): TupleDesc =
-  ## Thread-safe, cached blessed TupleDesc per composite type to avoid leaking blessed descriptors
+  ## Thread-safe, cached blessed TupleDesc allocated in TopMemoryContext per composite type
+  ## to avoid both repeated BlessTupleDesc leaks and dangling pointers across queries.
   var cached {.global.}: TupleDesc = nil
   if cached.isNil:
-    cached = buildTupleDescFor[T]()
+    let oldCtx = if TopMemoryContext != nil: MemoryContextSwitchTo(TopMemoryContext) else: nil
+    try:
+      cached = buildTupleDescFor[T]()
+    finally:
+      if oldCtx != nil:
+        discard MemoryContextSwitchTo(oldCtx)
   return cached
 
 proc objectToHeapTuple*[T: object | tuple](obj: T, customDesc: TupleDesc = nil): HeapTuple {.tags: [].} =

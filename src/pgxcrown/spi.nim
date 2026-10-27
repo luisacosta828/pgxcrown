@@ -6,7 +6,7 @@
 
 import std/[tables, options, strutils, json]
 export json, tables
-from datatypes/basic import PDatum, POid, NameData, Oid, oidvector
+from datatypes/basic import PDatum, POid, NameData, Oid, oidvector, safePfree
 from datatypes/heaptuples import HeapTuple, TupleDesc
 export HeapTuple, TupleDesc
 import query_builder
@@ -208,6 +208,8 @@ template query*(c: const_string, obj: untyped) =
                 let val = getvalue(tup, tupdesc, cint(colIdx))
                 let k = if colname != nil: $colname else: "col_" & $colIdx
                 let v = if val != nil: $val else: ""
+                safePfree(cast[pointer](colname))
+                safePfree(cast[pointer](val))
                 row.add([(k, v)].toTable)
               if row.len > 0:
                 obj.add(row)
@@ -243,6 +245,8 @@ proc fetchRawRows*(sqlQuery: string): seq[Table[string, string]] {.tags: [DbRead
                   let val = getvalue(tup, tupdesc, cint(colIdx))
                   let k = if colname != nil: $colname else: "col_" & $colIdx
                   let v = if val != nil: $val else: ""
+                  safePfree(cast[pointer](colname))
+                  safePfree(cast[pointer](val))
                   rowTable[k] = v
                 rows[].add(rowTable)
   return rows[]
