@@ -145,7 +145,7 @@ proc parseValue*[T](val: string): T {.tags: [].} =
   elif T is string:
     val
   elif T is cstring:
-    cstring(val)
+    {.error: "Raw 'cstring' fields in SPI row mapping are unsafe (no memory ownership). Use 'string' instead.".}
   elif T is char:
     if val.len > 0: val[0] else: '\0'
   elif T is JsonNode:

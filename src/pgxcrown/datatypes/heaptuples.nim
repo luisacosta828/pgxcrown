@@ -1,4 +1,4 @@
-from basic import Oid, Datum, NameData, OidOutputFunctionCall, PointerGetDatum, Pointer,
+from basic import Oid, Datum, NameData, OidOutputFunctionCall, PointerGetDatum, DatumGetPointer, Pointer,
   Int32GetDatum, Int64GetDatum, Int16GetDatum, Float4GetDatum, Float8GetDatum, BoolGetDatum,
   CharGetDatum, ObjectIdGetDatum, CStringGetTextDatum, TextDatumGetCString, DatumToInt32, DatumToInt64,
   DatumGetFloat8, DatumGetChar, DatumGetObjectId, DatumToCString,
@@ -145,20 +145,6 @@ proc getTupleStringAttr*(element: HeapTupleHeader, row: TupleDesc, idx: cint): s
             return result
   return ""
 
-proc getTupleCStringAttr*(element: HeapTupleHeader, row: TupleDesc, idx: cint): cstring =
-  var isNull: bool
-  if not row.isNil and not element.isNil:
-    let d = GetAttributeByNum(element, idx, isNull)
-    if not isNull and d != 0:
-      let attr = TupleDescAttr(row, idx - 1)
-      if attr != nil:
-        var outputProc: Oid
-        var isVarlena: bool
-        getTypeOutputInfo(attr.atttypid, outputProc, isVarlena)
-        if outputProc != 0:
-          return OidOutputFunctionCall(outputProc, d)
-  return ""
-
 # -----------------------------------------------------------------------------
 # High-Level Generic Deserializer: HeapTupleHeader -> object
 # -----------------------------------------------------------------------------
@@ -200,7 +186,7 @@ proc tupleHeaderToObject*[T: object | tuple](th: HeapTupleHeader): T {.tags: [].
         elif InnerT is string:
           innerVal = getTupleStringAttr(th, tupDesc, idx)
         elif InnerT is cstring:
-          innerVal = getTupleCStringAttr(th, tupDesc, idx)
+          {.error: "Raw 'cstring' fields in composite objects are unsafe (no memory ownership). Use 'string' (ORC-managed) or 'PgText' (zero-copy) instead.".}
         elif InnerT is char:
           innerVal = DatumGetChar(rawDatum)
         elif InnerT is JsonNode:
@@ -240,7 +226,7 @@ proc tupleHeaderToObject*[T: object | tuple](th: HeapTupleHeader): T {.tags: [].
         elif typeof(field) is string:
           field = getTupleStringAttr(th, tupDesc, idx)
         elif typeof(field) is cstring:
-          field = getTupleCStringAttr(th, tupDesc, idx)
+          {.error: "Raw 'cstring' fields in composite objects are unsafe (no memory ownership). Use 'string' (ORC-managed) or 'PgText' (zero-copy) instead.".}
         elif typeof(field) is char:
           field = DatumGetChar(rawDatum)
         elif typeof(field) is JsonNode:
@@ -345,6 +331,10 @@ proc htupPackSeq*[E](s: seq[E]): Datum =
     elif E is JsonNode: elemsBuf[i] = JsonNodeToDatum(s[i])
     else: elemsBuf[i] = CStringGetTextDatum(cstring($s[i]))
   let arrPtr = htup_construct_array(cast[ptr Datum](elemsBuf), s.len.cint, elmOid, elmLen, elmByVal, elmAlign)
+  if not elmByVal:
+    for i in 0 ..< s.len:
+      if elemsBuf[i] != 0:
+        htup_pfree(DatumGetPointer(elemsBuf[i]))
   htup_pfree(elemsBuf)
   return PointerGetDatum(cast[Pointer](arrPtr))
 
@@ -442,6 +432,7 @@ proc objectToHeapTuple*[T: object | tuple](obj: T, customDesc: TupleDesc = nil):
       if numFields == 0: return nil
       var values = newSeq[Datum](numFields)
       var nulls = newSeq[bool](numFields)
+      var freeAfterForm = newSeq[bool](numFields)
 
       var idx = 0
       for name, val in fieldPairs(obj):
@@ -468,13 +459,25 @@ proc objectToHeapTuple*[T: object | tuple](obj: T, customDesc: TupleDesc = nil):
               elif distinctBase(typeof(innerVal)) is float64: values[idx] = Float8GetDatum(float64(innerVal))
               elif distinctBase(typeof(innerVal)) is float32: values[idx] = Float4GetDatum(float32(innerVal))
               else: values[idx] = Datum(0)
-            elif typeof(innerVal) is string: values[idx] = CStringGetTextDatum(cstring(innerVal))
-            elif typeof(innerVal) is cstring: values[idx] = CStringGetTextDatum(innerVal)
+            elif typeof(innerVal) is string:
+              values[idx] = CStringGetTextDatum(cstring(innerVal))
+              freeAfterForm[idx] = true
+            elif typeof(innerVal) is cstring:
+              values[idx] = CStringGetTextDatum(innerVal)
+              freeAfterForm[idx] = true
             elif typeof(innerVal) is char: values[idx] = CharGetDatum(innerVal)
-            elif typeof(innerVal) is JsonNode: values[idx] = JsonNodeToDatum(innerVal)
-            elif typeof(innerVal) is seq: values[idx] = htupPackSeq(innerVal)
-            elif typeof(innerVal) is enum: values[idx] = CStringGetTextDatum(cstring($innerVal))
-            else: values[idx] = CStringGetTextDatum(cstring($innerVal))
+            elif typeof(innerVal) is JsonNode:
+              values[idx] = JsonNodeToDatum(innerVal)
+              freeAfterForm[idx] = true
+            elif typeof(innerVal) is seq:
+              values[idx] = htupPackSeq(innerVal)
+              freeAfterForm[idx] = true
+            elif typeof(innerVal) is enum:
+              values[idx] = CStringGetTextDatum(cstring($innerVal))
+              freeAfterForm[idx] = true
+            else:
+              values[idx] = CStringGetTextDatum(cstring($innerVal))
+              freeAfterForm[idx] = true
         else:
           nulls[idx] = false
           when typeof(val) is bool: values[idx] = if val: 1.Datum else: 0.Datum
@@ -493,16 +496,31 @@ proc objectToHeapTuple*[T: object | tuple](obj: T, customDesc: TupleDesc = nil):
             elif distinctBase(typeof(val)) is float64: values[idx] = Float8GetDatum(float64(val))
             elif distinctBase(typeof(val)) is float32: values[idx] = Float4GetDatum(float32(val))
             else: values[idx] = Datum(0)
-          elif typeof(val) is string: values[idx] = CStringGetTextDatum(cstring(val))
-          elif typeof(val) is cstring: values[idx] = CStringGetTextDatum(val)
+          elif typeof(val) is string:
+            values[idx] = CStringGetTextDatum(cstring(val))
+            freeAfterForm[idx] = true
+          elif typeof(val) is cstring:
+            values[idx] = CStringGetTextDatum(val)
+            freeAfterForm[idx] = true
           elif typeof(val) is char: values[idx] = CharGetDatum(val)
-          elif typeof(val) is JsonNode: values[idx] = JsonNodeToDatum(val)
-          elif typeof(val) is seq: values[idx] = htupPackSeq(val)
-          elif typeof(val) is enum: values[idx] = CStringGetTextDatum(cstring($val))
-          else: values[idx] = CStringGetTextDatum(cstring($val))
+          elif typeof(val) is JsonNode:
+            values[idx] = JsonNodeToDatum(val)
+            freeAfterForm[idx] = true
+          elif typeof(val) is seq:
+            values[idx] = htupPackSeq(val)
+            freeAfterForm[idx] = true
+          elif typeof(val) is enum:
+            values[idx] = CStringGetTextDatum(cstring($val))
+            freeAfterForm[idx] = true
+          else:
+            values[idx] = CStringGetTextDatum(cstring($val))
+            freeAfterForm[idx] = true
         idx += 1
 
       let htup = heap_form_tuple(tupDesc, cast[ptr Datum](addr values[0]), cast[ptr bool](addr nulls[0]))
+      for k in 0 ..< numFields:
+        if freeAfterForm[k] and not nulls[k] and values[k] != 0:
+          htup_pfree(DatumGetPointer(values[k]))
       return htup
 
 proc objectToDatum*[T: object | tuple](obj: T, customDesc: TupleDesc = nil): Datum {.tags: [].} =

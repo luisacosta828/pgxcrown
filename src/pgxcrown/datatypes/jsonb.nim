@@ -212,16 +212,20 @@ iterator items*(j: JsonbView): JsonbView =
   if j.found and j.container != nil:
     var it = JsonbIteratorInit(j.container)
     var val: JsonbValue
-    let startTok = JsonbIteratorNext(addr it, addr val, true)
-    if startTok == WJB_BEGIN_ARRAY:
-      while true:
-        let tok = JsonbIteratorNext(addr it, addr val, true)
-        if tok == WJB_END_ARRAY or tok == WJB_DONE: break
-        if tok in {WJB_ELEM, WJB_BEGIN_OBJECT, WJB_BEGIN_ARRAY}:
-          var elem = JsonbView(found: true, val: val, rawDatum: 0)
-          if val.`type` == jbvBinary:
-            elem.container = val.val.binary.data
-          yield elem
+    try:
+      let startTok = JsonbIteratorNext(addr it, addr val, true)
+      if startTok == WJB_BEGIN_ARRAY:
+        while true:
+          let tok = JsonbIteratorNext(addr it, addr val, true)
+          if tok == WJB_END_ARRAY or tok == WJB_DONE: break
+          if tok in {WJB_ELEM, WJB_BEGIN_OBJECT, WJB_BEGIN_ARRAY}:
+            var elem = JsonbView(found: true, val: val, rawDatum: 0)
+            if val.`type` == jbvBinary:
+              elem.container = val.val.binary.data
+            yield elem
+    finally:
+      while it != nil:
+        discard JsonbIteratorNext(addr it, addr val, true)
 
 # -----------------------------------------------------------------------------
 # Binary Streaming Deserializer from JsonbContainer to JsonNode

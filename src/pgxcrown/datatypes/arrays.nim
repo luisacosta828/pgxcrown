@@ -660,6 +660,9 @@ proc returnArrayString*(s: seq[string]): Datum =
     elemsBuf[i] = CStringGetTextDatum(cstring(s[i]))
 
   let arrPtr = construct_array(cast[ptr Datum](elemsBuf), s.len.cint, TEXTOID, -1'i32, false, 'i'.cchar)
+  for i in 0 ..< s.len:
+    if elemsBuf[i] != 0:
+      pfree(DatumGetPointer(elemsBuf[i]))
   pfree(elemsBuf)
   return PointerGetDatum(cast[Pointer](arrPtr))
 
@@ -697,6 +700,9 @@ proc returnArrayJsonNode*(s: seq[JsonNode]): Datum =
     elemsBuf[i] = JsonNodeToDatum(s[i])
 
   let arrPtr = construct_array(cast[ptr Datum](elemsBuf), s.len.cint, JSONBOID, -1'i32, false, 'i'.cchar)
+  for i in 0 ..< s.len:
+    if elemsBuf[i] != 0:
+      pfree(DatumGetPointer(elemsBuf[i]))
   pfree(elemsBuf)
   return PointerGetDatum(cast[Pointer](arrPtr))
 
