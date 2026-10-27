@@ -51,6 +51,7 @@ int pg_snprintf(char *str, size_t count, const char *fmt, ...) {
 void SetLatch(struct Latch *latch) {}
 void ResetLatch(struct Latch *latch) {}
 void pfree(void *ptr) { if (ptr) free(ptr); }
+char *pstrdup(const char *in) { return in ? strdup(in) : NULL; }
 pqsigfunc pqsignal(int signo, pqsigfunc func) { return NULL; }
 int WaitLatch(struct Latch *latch, int wakeEvents, long timeout, uint32 wait_event_info) { return 0; }
 void RegisterBackgroundWorker(BackgroundWorker *worker) {}

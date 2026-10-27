@@ -127,7 +127,25 @@ proc getTupleDesc*(heapTuple: HeapTupleHeader): TupleDesc {. inline .} =
   
   result = lookup_rowtype_tupdesc(tupTypeId, tupTypMod)
 
-proc getTupleStringAttr*(element: HeapTupleHeader, row: TupleDesc, idx: cint): cstring =
+proc getTupleStringAttr*(element: HeapTupleHeader, row: TupleDesc, idx: cint): string =
+  var isNull: bool
+  if not row.isNil and not element.isNil:
+    let d = GetAttributeByNum(element, idx, isNull)
+    if not isNull and d != 0:
+      let attr = TupleDescAttr(row, idx - 1)
+      if attr != nil:
+        var outputProc: Oid
+        var isVarlena: bool
+        getTypeOutputInfo(attr.atttypid, outputProc, isVarlena)
+        if outputProc != 0:
+          let cs = OidOutputFunctionCall(outputProc, d)
+          if cs != nil:
+            result = $cs
+            htup_pfree(cs)
+            return result
+  return ""
+
+proc getTupleCStringAttr*(element: HeapTupleHeader, row: TupleDesc, idx: cint): cstring =
   var isNull: bool
   if not row.isNil and not element.isNil:
     let d = GetAttributeByNum(element, idx, isNull)
@@ -180,29 +198,27 @@ proc tupleHeaderToObject*[T: object | tuple](th: HeapTupleHeader): T {.tags: [].
         elif InnerT is float32 or InnerT is cfloat: innerVal = InnerT(DatumGetFloat4(rawDatum))
         elif InnerT is float64 or InnerT is cdouble or InnerT is float: innerVal = InnerT(DatumGetFloat8(rawDatum))
         elif InnerT is string:
-          let cs = getTupleStringAttr(th, tupDesc, idx)
-          innerVal = if cs != nil: $cs else: ""
-        elif InnerT is cstring:
           innerVal = getTupleStringAttr(th, tupDesc, idx)
+        elif InnerT is cstring:
+          innerVal = getTupleCStringAttr(th, tupDesc, idx)
         elif InnerT is char:
           innerVal = DatumGetChar(rawDatum)
         elif InnerT is JsonNode:
           let cs = getTupleStringAttr(th, tupDesc, idx)
-          if cs != nil and cs.len > 0:
+          if cs.len > 0:
             {.cast(noSideEffect).}:
               {.cast(tags: []).}:
-                try: innerVal = parseJson($cs)
+                try: innerVal = parseJson(cs)
                 except CatchableError: innerVal = newJNull()
           else:
             innerVal = newJNull()
         elif InnerT is enum:
           let cs = getTupleStringAttr(th, tupDesc, idx)
-          if cs != nil:
-            try: innerVal = parseEnum[InnerT]($cs)
+          if cs.len > 0:
+            try: innerVal = parseEnum[InnerT](cs)
             except CatchableError: innerVal = default(InnerT)
         else:
-          let cs = getTupleStringAttr(th, tupDesc, idx)
-          innerVal = if cs != nil: $cs else: ""
+          innerVal = getTupleStringAttr(th, tupDesc, idx)
         field = some(innerVal)
       else:
         when typeof(field) is bool: field = (rawDatum != 0)
@@ -222,25 +238,24 @@ proc tupleHeaderToObject*[T: object | tuple](th: HeapTupleHeader): T {.tags: [].
           elif distinctBase(typeof(field)) is float32: field = typeof(field)(DatumGetFloat4(rawDatum))
           else: field = default(typeof(field))
         elif typeof(field) is string:
-          let cs = getTupleStringAttr(th, tupDesc, idx)
-          field = if cs != nil: $cs else: ""
-        elif typeof(field) is cstring:
           field = getTupleStringAttr(th, tupDesc, idx)
+        elif typeof(field) is cstring:
+          field = getTupleCStringAttr(th, tupDesc, idx)
         elif typeof(field) is char:
           field = DatumGetChar(rawDatum)
         elif typeof(field) is JsonNode:
           let cs = getTupleStringAttr(th, tupDesc, idx)
-          if cs != nil and cs.len > 0:
+          if cs.len > 0:
             {.cast(noSideEffect).}:
               {.cast(tags: []).}:
-                try: field = parseJson($cs)
+                try: field = parseJson(cs)
                 except CatchableError: field = newJNull()
           else:
             field = newJNull()
         elif typeof(field) is enum:
           let cs = getTupleStringAttr(th, tupDesc, idx)
-          if cs != nil:
-            try: field = parseEnum[typeof(field)]($cs)
+          if cs.len > 0:
+            try: field = parseEnum[typeof(field)](cs)
             except CatchableError: field = default(typeof(field))
         elif typeof(field) is seq:
           type ElemT = typeof(field[0])
@@ -249,9 +264,9 @@ proc tupleHeaderToObject*[T: object | tuple](th: HeapTupleHeader): T {.tags: [].
             var elemsPtr: ptr Datum
             var nullsPtr: ptr bool
             var nElems: cint
-            when ElemT is int32 or ElemT is int or ElemT is cint:
+            when ElemT is int32 or ElemT is cint:
               htup_deconstruct_array(arrPtr, 23.Oid, 4'i32, true, 'i'.cchar, addr elemsPtr, addr nullsPtr, addr nElems)
-            elif ElemT is int64 or ElemT is clonglong:
+            elif ElemT is int64 or ElemT is clonglong or ElemT is int:
               htup_deconstruct_array(arrPtr, 20.Oid, 8'i32, true, 'd'.cchar, addr elemsPtr, addr nullsPtr, addr nElems)
             elif ElemT is int16 or ElemT is cshort:
               htup_deconstruct_array(arrPtr, 21.Oid, 2'i32, true, 's'.cchar, addr elemsPtr, addr nullsPtr, addr nElems)
@@ -268,18 +283,23 @@ proc tupleHeaderToObject*[T: object | tuple](th: HeapTupleHeader): T {.tags: [].
             field = newSeq[ElemT](nElems)
             for k in 0 ..< nElems:
               if nullArr == nil or not nullArr[k]:
-                when ElemT is int32 or ElemT is int or ElemT is cint: field[k] = ElemT(DatumGetInt32(elemArr[k]))
-                elif ElemT is int64 or ElemT is clonglong: field[k] = ElemT(DatumGetInt64(elemArr[k]))
+                when ElemT is int32 or ElemT is cint: field[k] = ElemT(DatumGetInt32(elemArr[k]))
+                elif ElemT is int64 or ElemT is clonglong or ElemT is int: field[k] = ElemT(DatumGetInt64(elemArr[k]))
                 elif ElemT is int16 or ElemT is cshort: field[k] = ElemT(DatumGetInt16(elemArr[k]))
                 elif ElemT is float64 or ElemT is float or ElemT is cdouble: field[k] = ElemT(DatumGetFloat8(elemArr[k]))
                 elif ElemT is float32 or ElemT is cfloat: field[k] = ElemT(DatumGetFloat4(elemArr[k]))
                 elif ElemT is bool: field[k] = (elemArr[k] != 0)
-                else: field[k] = $TextDatumGetCString(elemArr[k])
+                else:
+                  let elemCs = TextDatumGetCString(elemArr[k])
+                  if elemCs != nil:
+                    field[k] = $elemCs
+                    htup_pfree(elemCs)
+                  else:
+                    field[k] = ""
             if elemsPtr != nil: htup_pfree(elemsPtr)
             if nullsPtr != nil: htup_pfree(nullsPtr)
         else:
-          let cs = getTupleStringAttr(th, tupDesc, idx)
-          field = if cs != nil: $cs else: ""
+          field = getTupleStringAttr(th, tupDesc, idx)
     idx += 1
 
   DecrTupleDescRefCount(tupDesc)
@@ -293,9 +313,9 @@ proc htupPackSeq*[E](s: seq[E]): Datum =
   var elmLen: cint
   var elmByVal: bool
   var elmAlign: cchar
-  when E is int32 or E is int or E is cint:
+  when E is int32 or E is cint:
     elmOid = 23.Oid; elmLen = 4; elmByVal = true; elmAlign = 'i'.cchar
-  elif E is int64 or E is clonglong:
+  elif E is int64 or E is clonglong or E is int:
     elmOid = 20.Oid; elmLen = 8; elmByVal = true; elmAlign = 'd'.cchar
   elif E is int16 or E is cshort:
     elmOid = 21.Oid; elmLen = 2; elmByVal = true; elmAlign = 's'.cchar
@@ -316,8 +336,8 @@ proc htupPackSeq*[E](s: seq[E]): Datum =
 
   let elemsBuf = cast[ptr UncheckedArray[Datum]](palloc(cuint(s.len * sizeof(Datum))))
   for i in 0 ..< s.len:
-    when E is int32 or E is int or E is cint: elemsBuf[i] = Int32GetDatum(int32(s[i]))
-    elif E is int64 or E is clonglong: elemsBuf[i] = Int64GetDatum(int64(s[i]))
+    when E is int32 or E is cint: elemsBuf[i] = Int32GetDatum(int32(s[i]))
+    elif E is int64 or E is clonglong or E is int: elemsBuf[i] = Int64GetDatum(int64(s[i]))
     elif E is int16 or E is cshort: elemsBuf[i] = Int16GetDatum(int16(s[i]))
     elif E is float64 or E is float or E is cdouble: elemsBuf[i] = Float8GetDatum(float64(s[i]))
     elif E is float32 or E is cfloat: elemsBuf[i] = Float4GetDatum(float32(s[i]))

@@ -207,6 +207,18 @@ proc SRF_PERCALL_SETUP*(): FuncCallContextPtr {.importc: "SRF_PERCALL_SETUP".}
 proc MemoryContextSwitchTo*(context: pointer): pointer {.importc: "MemoryContextSwitchTo".}
 {.pop.}
 
+{.push header: "utils/palloc.h".}
+type
+  MemoryContextCallbackFunction* = proc(arg: pointer) {.cdecl, gcsafe.}
+  MemoryContextCallback* {.importc: "MemoryContextCallback".} = object
+    cbFunc* {.importc: "func".}: MemoryContextCallbackFunction
+    arg*: pointer
+    next*: ptr MemoryContextCallback
+
+proc palloc0*(size: csize_t): pointer {.importc: "palloc0".}
+proc MemoryContextRegisterResetCallback*(context: pointer, cb: ptr MemoryContextCallback) {.importc: "MemoryContextRegisterResetCallback".}
+{.pop.}
+
 template SRF_RETURN_NEXT*(funcctx: typed, resultDatum: typed) =
   {.emit: ["SRF_RETURN_NEXT(", funcctx, ", ", resultDatum, ");"].}
 

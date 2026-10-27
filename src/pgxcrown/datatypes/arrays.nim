@@ -550,7 +550,12 @@ proc getArrayString*(arrayDatum: Datum): seq[string] =
     if nullArray != nil and nullArray[i]:
       result[i] = ""
     else:
-      result[i] = $TextDatumGetCString(elemArray[i])
+      let cs = TextDatumGetCString(elemArray[i])
+      if cs != nil:
+        result[i] = $cs
+        pfree(cs)
+      else:
+        result[i] = ""
 
   if elemsPtr != nil: pfree(elemsPtr)
   if nullsPtr != nil: pfree(nullsPtr)

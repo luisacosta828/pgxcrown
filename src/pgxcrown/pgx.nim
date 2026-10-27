@@ -402,6 +402,29 @@ macro decorateMainFunctions*() =
         el.pragma.add(newIdentNode("cdecl"))
         el.pragma.add(newIdentNode("exportc"))
         el.pragma.add(newIdentNode("dynlib"))
+        let initScoped = newTree(nnkBlockStmt, newEmptyNode(), el.body)
+        let pendingErrIdent = newIdentNode("pgxPendingErr")
+        let errCodeIdent = newIdentNode("pgxErrCode")
+        let errMsgIdent = newIdentNode("pgxErrMsg")
+        let errDetailIdent = newIdentNode("pgxErrDetail")
+        let errHintIdent = newIdentNode("pgxErrHint")
+        let eIdent = newIdentNode("e")
+        el.body = quote do:
+          var `pendingErrIdent` = false
+          var `errCodeIdent`: cint = 0
+          var `errMsgIdent`: cstring = nil
+          var `errDetailIdent`: cstring = nil
+          var `errHintIdent`: cstring = nil
+          try:
+            `initScoped`
+          except Defect as `eIdent`:
+            prepareNimDefect(`eIdent`, `errCodeIdent`, `errMsgIdent`, `errDetailIdent`, `errHintIdent`)
+            `pendingErrIdent` = true
+          except CatchableError as `eIdent`:
+            prepareNimError(`eIdent`, `errCodeIdent`, `errMsgIdent`, `errDetailIdent`, `errHintIdent`)
+            `pendingErrIdent` = true
+          if `pendingErrIdent`:
+            pgxEreportFull(ERROR, `errCodeIdent`, `errMsgIdent`, `errDetailIdent`, `errHintIdent`)
         continue
 
       if isWorkerProc(el):
@@ -440,21 +463,21 @@ macro decorateMainFunctions*() =
           prepends.add workerBody
           workerBody = prepends
 
-        var exceptDefect = newTree(nnkExceptBranch,
-          newTree(nnkInfix, newIdentNode("as"), newIdentNode("Defect"), newIdentNode("e")),
-          newTree(nnkStmtList,
-            newCall(newIdentNode("pgWarning"), newTree(nnkInfix, newIdentNode("&"), newLit("Background Worker defect: "), newDotExpr(newIdentNode("e"), newIdentNode("msg")))),
-            newCall(newIdentNode("workerExit"), newLit(1))
-          )
-        )
-        var exceptCatchable = newTree(nnkExceptBranch,
-          newTree(nnkInfix, newIdentNode("as"), newIdentNode("CatchableError"), newIdentNode("e")),
-          newTree(nnkStmtList,
-            newCall(newIdentNode("pgWarning"), newTree(nnkInfix, newIdentNode("&"), newLit("Background Worker error: "), newDotExpr(newIdentNode("e"), newIdentNode("msg")))),
-            newCall(newIdentNode("workerExit"), newLit(1))
-          )
-        )
-        el.body = newTree(nnkTryStmt, workerBody, exceptCatchable, exceptDefect)
+        let workerScoped = newTree(nnkBlockStmt, newEmptyNode(), workerBody)
+        let pendingExitIdent = newIdentNode("pgxWorkerPendingExit")
+        let eIdent = newIdentNode("e")
+        el.body = quote do:
+          var `pendingExitIdent` = false
+          try:
+            `workerScoped`
+          except CatchableError as `eIdent`:
+            pgWarning("Background Worker error: " & `eIdent`.msg)
+            `pendingExitIdent` = true
+          except Defect as `eIdent`:
+            pgWarning("Background Worker defect: " & `eIdent`.msg)
+            `pendingExitIdent` = true
+          if `pendingExitIdent`:
+            workerExit(1)
         continue
       let (role, declaredTargetType) = getFnRole(el)
       let isExp = isExportedProc(el) or role.len > 0

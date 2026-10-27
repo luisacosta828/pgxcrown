@@ -25,6 +25,7 @@ void FlushErrorState(void) {}
 void pg_re_throw(void) { abort(); }
 void FreeErrorData(ErrorData *edata) {}
 char *pstrdup(const char *in) { return in ? strdup(in) : NULL; }
+void pfree(void *ptr) { if (ptr) free(ptr); }
 
 #undef sprintf
 #undef vsprintf
@@ -156,3 +157,48 @@ suite "Pgxcrown - Advanced Error Handling & SQLSTATE Suite":
     var keyErr = newException(KeyError, "key not found")
     check keyErr of CatchableError
     check keyErr of KeyError
+
+  test "RAII-safe prepareNimError and prepareNimDefect lifecycle (zero leak before ereport)":
+    var pendingErr = false
+    var errCode: cint = 0
+    var errMsg: cstring = nil
+    var errDetail: cstring = nil
+    var errHint: cstring = nil
+    try:
+      block:
+        var localSeq = @["alpha", "beta", "gamma"]
+        check localSeq.len == 3
+        raise newPgError(ERRCODE_DATA_EXCEPTION, "Invalid payload", detail = "Field 'x' is corrupt", hint = "Fix field 'x'")
+    except CatchableError as e:
+      prepareNimError(e, errCode, errMsg, errDetail, errHint)
+      pendingErr = true
+
+    check pendingErr == true
+    check errCode == ERRCODE_DATA_EXCEPTION
+    check $errMsg == "Invalid payload"
+    check $errDetail == "Field 'x' is corrupt"
+    check $errHint == "Fix field 'x'"
+    safePfree(errMsg)
+    safePfree(errDetail)
+    safePfree(errHint)
+
+    pendingErr = false
+    errCode = 0
+    errMsg = nil
+    errDetail = nil
+    errHint = nil
+    try:
+      block:
+        var localData = "temporary buffer"
+        check localData.len > 0
+        raise newException(DivByZeroDefect, "divide by zero")
+    except Defect as e:
+      prepareNimDefect(e, errCode, errMsg, errDetail, errHint)
+      pendingErr = true
+
+    check pendingErr == true
+    check errCode == ERRCODE_DIVISION_BY_ZERO
+    check $errMsg == "Extension Defect [DivByZeroDefect]: divide by zero"
+    check errDetail == nil
+    check errHint == nil
+    safePfree(errMsg)

@@ -191,38 +191,78 @@ template pgTry*(body: untyped): untyped =
 # -----------------------------------------------------------------------------
 # Panic Shield Exception Dispatchers
 # -----------------------------------------------------------------------------
+proc pstrdup(x: cstring): cstring {.importc: "pstrdup", header: "postgres.h".}
+
+proc prepareNimDefect*(e: ref Defect, outCode: var cint, outMsg, outDetail, outHint: var cstring) =
+  ## Copies Defect diagnostic strings into PostgreSQL's CurrentMemoryContext via pstrdup
+  ## so the Nim exception and all local RAII variables can be destroyed before siglongjmp.
+  outDetail = nil
+  outHint = nil
+  if e of OverflowDefect:
+    outCode = ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE
+    outMsg = pstrdup(cstring("Extension Defect [OverflowDefect]: " & e.msg))
+  elif e of DivByZeroDefect:
+    outCode = ERRCODE_DIVISION_BY_ZERO
+    outMsg = pstrdup(cstring("Extension Defect [DivByZeroDefect]: " & e.msg))
+  elif e of IndexDefect:
+    outCode = ERRCODE_ARRAY_SUBSCRIPT_ERROR
+    outMsg = pstrdup(cstring("Extension Defect [IndexDefect]: " & e.msg))
+  elif e of RangeDefect:
+    outCode = ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE
+    outMsg = pstrdup(cstring("Extension Defect [RangeDefect]: " & e.msg))
+  elif e of NilAccessDefect:
+    outCode = ERRCODE_NULL_VALUE_NOT_ALLOWED
+    outMsg = pstrdup(cstring("Extension Defect [NilAccessDefect]: " & e.msg))
+  elif e of OutOfMemDefect:
+    outCode = ERRCODE_OUT_OF_MEMORY
+    outMsg = pstrdup(cstring("Extension Defect [OutOfMemDefect]: " & e.msg))
+  else:
+    outCode = ERRCODE_INTERNAL_ERROR
+    outMsg = pstrdup(cstring("Extension Defect [" & $e.name & "]: " & e.msg))
+
+proc prepareNimError*(e: ref CatchableError, outCode: var cint, outMsg, outDetail, outHint: var cstring) =
+  ## Copies CatchableError diagnostic strings into PostgreSQL's CurrentMemoryContext via pstrdup
+  ## so the Nim exception and all local RAII variables can be destroyed before siglongjmp.
+  outDetail = nil
+  outHint = nil
+  if e of PgError:
+    let pe = cast[ref PgError](e)
+    outCode = pe.sqlerrcode
+    outMsg = pstrdup(cstring(pe.msg))
+    if pe.detail.len > 0: outDetail = pstrdup(cstring(pe.detail))
+    if pe.hint.len > 0: outHint = pstrdup(cstring(pe.hint))
+  elif e of PostgresError:
+    let pe = cast[ref PostgresError](e)
+    outCode = pe.sqlerrcode
+    outMsg = pstrdup(cstring(pe.msg))
+    if pe.detail.len > 0: outDetail = pstrdup(cstring(pe.detail))
+    if pe.hint.len > 0: outHint = pstrdup(cstring(pe.hint))
+  elif e of ValueError:
+    outCode = ERRCODE_INVALID_PARAMETER_VALUE
+    outMsg = pstrdup(cstring("Extension Error [ValueError]: " & e.msg))
+  elif e of KeyError:
+    outCode = ERRCODE_NO_DATA_FOUND
+    outMsg = pstrdup(cstring("Extension Error [KeyError]: " & e.msg))
+  elif e of IOError:
+    outCode = ERRCODE_IO_ERROR
+    outMsg = pstrdup(cstring("Extension Error [IOError]: " & e.msg))
+  elif e of OSError:
+    outCode = ERRCODE_EXTERNAL_ROUTINE_EXCEPTION
+    outMsg = pstrdup(cstring("Extension Error [OSError]: " & e.msg))
+  else:
+    outCode = ERRCODE_RAISE_EXCEPTION
+    outMsg = pstrdup(cstring("Extension Error [" & $e.name & "]: " & e.msg))
+
 proc reportNimDefect*(e: ref Defect) {.noreturn.} =
   ## Converts unhandled Nim Defects into appropriate PostgreSQL SQLSTATE errors
-  if e of OverflowDefect:
-    reportError(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE, "Extension Defect [OverflowDefect]: " & e.msg)
-  elif e of DivByZeroDefect:
-    reportError(ERRCODE_DIVISION_BY_ZERO, "Extension Defect [DivByZeroDefect]: " & e.msg)
-  elif e of IndexDefect:
-    reportError(ERRCODE_ARRAY_SUBSCRIPT_ERROR, "Extension Defect [IndexDefect]: " & e.msg)
-  elif e of RangeDefect:
-    reportError(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE, "Extension Defect [RangeDefect]: " & e.msg)
-  elif e of NilAccessDefect:
-    reportError(ERRCODE_NULL_VALUE_NOT_ALLOWED, "Extension Defect [NilAccessDefect]: " & e.msg)
-  elif e of OutOfMemDefect:
-    reportError(ERRCODE_OUT_OF_MEMORY, "Extension Defect [OutOfMemDefect]: " & e.msg)
-  else:
-    reportError(ERRCODE_INTERNAL_ERROR, "Extension Defect [" & $e.name & "]: " & e.msg)
+  var code: cint
+  var msg, detail, hint: cstring
+  prepareNimDefect(e, code, msg, detail, hint)
+  pgxEreportFull(ERROR, code, msg, detail, hint)
 
 proc reportNimError*(e: ref CatchableError) {.noreturn.} =
   ## Converts unhandled Nim CatchableErrors into appropriate PostgreSQL SQLSTATE errors
-  if e of PgError:
-    let pe = cast[ref PgError](e)
-    reportError(pe.sqlerrcode, pe.msg, pe.detail, pe.hint)
-  elif e of PostgresError:
-    let pe = cast[ref PostgresError](e)
-    reportError(pe.sqlerrcode, pe.msg, pe.detail, pe.hint)
-  elif e of ValueError:
-    reportError(ERRCODE_INVALID_PARAMETER_VALUE, "Extension Error [ValueError]: " & e.msg)
-  elif e of KeyError:
-    reportError(ERRCODE_NO_DATA_FOUND, "Extension Error [KeyError]: " & e.msg)
-  elif e of IOError:
-    reportError(ERRCODE_IO_ERROR, "Extension Error [IOError]: " & e.msg)
-  elif e of OSError:
-    reportError(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION, "Extension Error [OSError]: " & e.msg)
-  else:
-    reportError(ERRCODE_RAISE_EXCEPTION, "Extension Error [" & $e.name & "]: " & e.msg)
+  var code: cint
+  var msg, detail, hint: cstring
+  prepareNimError(e, code, msg, detail, hint)
+  pgxEreportFull(ERROR, code, msg, detail, hint)

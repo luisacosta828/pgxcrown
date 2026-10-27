@@ -778,7 +778,7 @@ proc wrapSeqReturn(code: NimNode, retTypeStr: string): NimNode =
     of "float", "float32", "cfloat": "Float4GetDatum"
     of "float64", "cdouble": "Float8GetDatum"
     of "bool": "BoolGetDatum"
-    of "string": "CStringGetTextDatum"
+    of "string", "Text", "PgText": "returnPgText"
     of "JsonNode", "Json", "json", "Jsonb", "jsonb": "JsonNodeToDatum"
     else: "objectToDatum"
 
@@ -810,40 +810,58 @@ proc wrapSeqReturn(code: NimNode, retTypeStr: string): NimNode =
   let typeNode = newTree(nnkBracketExpr, ident("seq"), elemTypeNode)
 
   let srfStateIdent = ident("SrfState")
+  let srfCleanupCbIdent = ident("srfCleanupCb")
   let funcctxIdent = ident("funcctx")
   let oldcontextIdent = ident("oldcontext")
   let stateObjIdent = ident("stateObj")
+  let resetCbIdent = ident("resetCb")
   let callCntrIdent = ident("callCntr")
   let maxCallsIdent = ident("maxCalls")
   let itemValIdent = ident("itemVal")
   let itemDatumIdent = ident("itemDatum")
 
   result = quote do:
-    type `srfStateIdent` = ref object
+    type `srfStateIdent` = object
       items: `typeNode`
+      cleanedUp: bool
+
+    proc `srfCleanupCbIdent`(arg: pointer) {.cdecl.} =
+      let st = cast[ptr `srfStateIdent`](arg)
+      if st != nil and not st.cleanedUp:
+        st.cleanedUp = true
+        reset(st.items)
+
     var `funcctxIdent` {.importc: "funcctx", nodecl.}: FuncCallContextPtr
     if SRF_IS_FIRSTCALL():
       var `oldcontextIdent` {.importc: "oldcontext", nodecl.}: pointer
       `funcctxIdent` = SRF_FIRSTCALL_INIT()
       `oldcontextIdent` = MemoryContextSwitchTo(`funcctxIdent`.multi_call_memory_ctx)
-      `transformedCode`
-      var `stateObjIdent` = `srfStateIdent`(items: userResult)
-      GC_ref(`stateObjIdent`)
-      `funcctxIdent`.user_fctx = cast[pointer](`stateObjIdent`)
-      `funcctxIdent`.max_calls = cast[uint64](userResult.len)
-      discard MemoryContextSwitchTo(`oldcontextIdent`)
+      try:
+        `transformedCode`
+        let `stateObjIdent` = cast[ptr `srfStateIdent`](palloc0(csize_t(sizeof(`srfStateIdent`))))
+        `stateObjIdent`.items = move(userResult)
+        `stateObjIdent`.cleanedUp = false
+        let `resetCbIdent` = cast[ptr MemoryContextCallback](palloc0(csize_t(sizeof(MemoryContextCallback))))
+        `resetCbIdent`.cbFunc = `srfCleanupCbIdent`
+        `resetCbIdent`.arg = `stateObjIdent`
+        MemoryContextRegisterResetCallback(`funcctxIdent`.multi_call_memory_ctx, `resetCbIdent`)
+        `funcctxIdent`.user_fctx = `stateObjIdent`
+        `funcctxIdent`.max_calls = cast[uint64](`stateObjIdent`.items.len)
+      finally:
+        discard MemoryContextSwitchTo(`oldcontextIdent`)
 
     `funcctxIdent` = SRF_PERCALL_SETUP()
     let `callCntrIdent` = `funcctxIdent`.call_cntr
     let `maxCallsIdent` = `funcctxIdent`.max_calls
-    let `stateObjIdent` = cast[`srfStateIdent`](`funcctxIdent`.user_fctx)
+    let `stateObjIdent` = cast[ptr `srfStateIdent`](`funcctxIdent`.user_fctx)
     if `callCntrIdent` < `maxCallsIdent` and `stateObjIdent` != nil:
       let `itemValIdent` = `stateObjIdent`.items[`callCntrIdent`]
       let `itemDatumIdent` = `convIdent`(`itemValIdent`)
       SRF_RETURN_NEXT(`funcctxIdent`, `itemDatumIdent`)
     else:
-      if `stateObjIdent` != nil:
-        GC_unref(`stateObjIdent`)
+      if `stateObjIdent` != nil and not `stateObjIdent`.cleanedUp:
+        `stateObjIdent`.cleanedUp = true
+        reset(`stateObjIdent`.items)
       SRF_RETURN_DONE(`funcctxIdent`)
 
 proc wrapScalarReturn(code: NimNode, retTypeStr: string): NimNode =
@@ -1049,21 +1067,30 @@ proc explainWrapper(fn: NimNode): NimNode =
         rbody[^1] = newTree(nnkReturnStmt, rbody[^1])
     rbody = wrapScalarReturn(rbody, retTypeStr)
 
-  var shieldedBody = newTree(nnkTryStmt,
-    rbody,
-    newTree(nnkExceptBranch,
-      newTree(nnkInfix, ident("as"), ident("Defect"), ident("e")),
-      newTree(nnkStmtList,
-        newCall(ident("reportNimDefect"), ident("e"))
-      )
-    ),
-    newTree(nnkExceptBranch,
-      newTree(nnkInfix, ident("as"), ident("CatchableError"), ident("e")),
-      newTree(nnkStmtList,
-        newCall(ident("reportNimError"), ident("e"))
-      )
-    )
-  )
+  let pendingErrIdent = ident("pgxPendingErr")
+  let errCodeIdent = ident("pgxErrCode")
+  let errMsgIdent = ident("pgxErrMsg")
+  let errDetailIdent = ident("pgxErrDetail")
+  let errHintIdent = ident("pgxErrHint")
+  let eIdent = ident("e")
+
+  let scopedBody = newTree(nnkBlockStmt, newEmptyNode(), rbody)
+  let shieldedBody = quote do:
+    var `pendingErrIdent` = false
+    var `errCodeIdent`: cint = 0
+    var `errMsgIdent`: cstring = nil
+    var `errDetailIdent`: cstring = nil
+    var `errHintIdent`: cstring = nil
+    try:
+      `scopedBody`
+    except Defect as `eIdent`:
+      prepareNimDefect(`eIdent`, `errCodeIdent`, `errMsgIdent`, `errDetailIdent`, `errHintIdent`)
+      `pendingErrIdent` = true
+    except CatchableError as `eIdent`:
+      prepareNimError(`eIdent`, `errCodeIdent`, `errMsgIdent`, `errDetailIdent`, `errHintIdent`)
+      `pendingErrIdent` = true
+    if `pendingErrIdent`:
+      pgxEreportFull(ERROR, `errCodeIdent`, `errMsgIdent`, `errDetailIdent`, `errHintIdent`)
 
   pgx_proc.body = shieldedBody
   when defined(pgxDebug):
