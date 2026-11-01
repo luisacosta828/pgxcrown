@@ -172,6 +172,104 @@ proc nextValidTableColumn*(tupDesc: TupleDesc,
     else:
       break
 
+proc extractField*[FieldT](th: HeapTupleHeader, tupDesc: TupleDesc, idx: cint,
+    rawDatum: Datum): FieldT {.tags: [].} =
+  {.cast(noSideEffect).}:
+    {.cast(tags: []).}:
+      when FieldT is bool: (rawDatum != 0)
+      elif FieldT is int8: int8(rawDatum)
+      elif FieldT is int16 or FieldT is cshort: FieldT(DatumGetInt16(rawDatum))
+      elif FieldT is int32 or FieldT is cint: FieldT(DatumGetInt32(rawDatum))
+      elif FieldT is int64 or FieldT is clonglong or FieldT is int: FieldT(
+          DatumGetInt64(rawDatum))
+      elif FieldT is uint32 or FieldT is cuint: FieldT(DatumGetObjectId(rawDatum))
+      elif FieldT is float32 or FieldT is cfloat: FieldT(DatumGetFloat4(rawDatum))
+      elif FieldT is float64 or FieldT is cdouble or FieldT is float: FieldT(
+          DatumGetFloat8(rawDatum))
+      elif FieldT is distinct:
+        when distinctBase(FieldT) is int64: FieldT(DatumGetInt64(rawDatum))
+        elif distinctBase(FieldT) is int32: FieldT(DatumGetInt32(rawDatum))
+        elif distinctBase(FieldT) is int16: FieldT(DatumGetInt16(rawDatum))
+        elif distinctBase(FieldT) is uint32: FieldT(DatumGetObjectId(rawDatum))
+        elif distinctBase(FieldT) is float64: FieldT(DatumGetFloat8(rawDatum))
+        elif distinctBase(FieldT) is float32: FieldT(DatumGetFloat4(rawDatum))
+        else: default(FieldT)
+      elif FieldT is string:
+        getTupleStringAttr(th, tupDesc, idx)
+      elif FieldT is cstring:
+        {.error: "Raw 'cstring' fields in composite objects are unsafe (no memory ownership). Use 'string' (ORC-managed) or 'PgText' (zero-copy) instead.".}
+      elif FieldT is char:
+        DatumGetChar(rawDatum)
+      elif FieldT is JsonNode:
+        let cs = getTupleStringAttr(th, tupDesc, idx)
+        if cs.len > 0:
+          try: parseJson(cs)
+          except CatchableError: newJNull()
+        else:
+          newJNull()
+      elif FieldT is enum:
+        let cs = getTupleStringAttr(th, tupDesc, idx)
+        if cs.len > 0:
+          try: parseEnum[FieldT](cs)
+          except CatchableError: default(FieldT)
+        else:
+          default(FieldT)
+      elif FieldT is seq:
+        type ElemT = typeof(default(FieldT)[0])
+        let arrPtr = htup_DatumGetArrayTypeP(rawDatum)
+        if arrPtr != nil:
+          var elemsPtr: ptr Datum
+          var nullsPtr: ptr bool
+          var nElems: cint
+          when ElemT is int32 or ElemT is cint:
+            htup_deconstruct_array(arrPtr, 23.Oid, 4'i32, true, 'i'.cchar,
+                addr elemsPtr, addr nullsPtr, addr nElems)
+          elif ElemT is int64 or ElemT is clonglong or ElemT is int:
+            htup_deconstruct_array(arrPtr, 20.Oid, 8'i32, true, 'd'.cchar,
+                addr elemsPtr, addr nullsPtr, addr nElems)
+          elif ElemT is int16 or ElemT is cshort:
+            htup_deconstruct_array(arrPtr, 21.Oid, 2'i32, true, 's'.cchar,
+                addr elemsPtr, addr nullsPtr, addr nElems)
+          elif ElemT is float64 or ElemT is float or ElemT is cdouble:
+            htup_deconstruct_array(arrPtr, 701.Oid, 8'i32, true, 'd'.cchar,
+                addr elemsPtr, addr nullsPtr, addr nElems)
+          elif ElemT is float32 or ElemT is cfloat:
+            htup_deconstruct_array(arrPtr, 700.Oid, 4'i32, true, 'i'.cchar,
+                addr elemsPtr, addr nullsPtr, addr nElems)
+          elif ElemT is bool:
+            htup_deconstruct_array(arrPtr, 16.Oid, 1'i32, true, 'c'.cchar,
+                addr elemsPtr, addr nullsPtr, addr nElems)
+          else:
+            htup_deconstruct_array(arrPtr, 25.Oid, -1'i32, false, 'i'.cchar,
+                addr elemsPtr, addr nullsPtr, addr nElems)
+          let elemArr = cast[ptr UncheckedArray[Datum]](elemsPtr)
+          let nullArr = cast[ptr UncheckedArray[bool]](nullsPtr)
+          result = newSeq[ElemT](nElems)
+          for k in 0 ..< nElems:
+            if nullArr == nil or not nullArr[k]:
+              when ElemT is int32 or ElemT is cint: result[k] = ElemT(
+                  DatumGetInt32(elemArr[k]))
+              elif ElemT is int64 or ElemT is clonglong or ElemT is int: result[
+                  k] = ElemT(DatumGetInt64(elemArr[k]))
+              elif ElemT is int16 or ElemT is cshort: result[k] = ElemT(
+                  DatumGetInt16(elemArr[k]))
+              elif ElemT is float64 or ElemT is float or
+                  ElemT is cdouble: result[k] = ElemT(DatumGetFloat8(elemArr[k]))
+              elif ElemT is float32 or ElemT is cfloat: result[k] = ElemT(
+                  DatumGetFloat4(elemArr[k]))
+              elif ElemT is bool: result[k] = (elemArr[k] != 0)
+              else:
+                let elemCs = TextDatumGetCString(elemArr[k])
+                if elemCs != nil:
+                  result[k] = $elemCs
+                  htup_pfree(elemCs)
+                else:
+                  result[k] = ""
+          if elemsPtr != nil: htup_pfree(elemsPtr)
+          if nullsPtr != nil: htup_pfree(nullsPtr)
+      else:
+        getTupleStringAttr(th, tupDesc, idx)
+
 
 proc tupleHeaderToObject*[T: object | tuple](th: HeapTupleHeader): T {.tags: [].} =
   {.cast(noSideEffect).}:
@@ -180,163 +278,25 @@ proc tupleHeaderToObject*[T: object | tuple](th: HeapTupleHeader): T {.tags: [].
       let tupDesc = getTupleDesc(th)
       if tupDesc.isNil: return default(T)
 
-  var idx: cint = 1
-  for name, field in fieldPairs(result):
-    var isNull: bool
-    idx = nextValidTableColumn(tupDesc, idx)
-    let rawDatum = GetAttributeByNum(th, idx, isNull)
-    if isNull or rawDatum == 0:
-      when typeof(field) is Option:
-        field = none(typeof(field.get))
-      else:
-        field = default(typeof(field))
-    else:
-      when typeof(field) is Option:
-        type InnerT = typeof(field.get)
-        var innerVal: InnerT
-        when InnerT is bool: innerVal = (rawDatum != 0)
-        elif InnerT is int8: innerVal = int8(rawDatum)
-        elif InnerT is int16 or InnerT is cshort: innerVal = InnerT(
-            DatumGetInt16(rawDatum))
-        elif InnerT is int32 or InnerT is cint: innerVal = InnerT(DatumGetInt32(rawDatum))
-        elif InnerT is int64 or InnerT is clonglong or
-            InnerT is int: innerVal = InnerT(DatumGetInt64(rawDatum))
-        elif InnerT is uint32 or InnerT is cuint: innerVal = InnerT(
-            DatumGetObjectId(rawDatum))
-        elif InnerT is float32 or InnerT is cfloat: innerVal = InnerT(
-            DatumGetFloat4(rawDatum))
-        elif InnerT is float64 or InnerT is cdouble or
-            InnerT is float: innerVal = InnerT(DatumGetFloat8(rawDatum))
-        elif InnerT is string:
-          innerVal = getTupleStringAttr(th, tupDesc, idx)
-        elif InnerT is cstring:
-          {.error: "Raw 'cstring' fields in composite objects are unsafe (no memory ownership). Use 'string' (ORC-managed) or 'PgText' (zero-copy) instead.".}
-        elif InnerT is char:
-          innerVal = DatumGetChar(rawDatum)
-        elif InnerT is JsonNode:
-          let cs = getTupleStringAttr(th, tupDesc, idx)
-          if cs.len > 0:
-            {.cast(noSideEffect).}:
-              {.cast(tags: []).}:
-                try: innerVal = parseJson(cs)
-                except CatchableError: innerVal = newJNull()
-          else:
-            innerVal = newJNull()
-        elif InnerT is enum:
-          let cs = getTupleStringAttr(th, tupDesc, idx)
-          if cs.len > 0:
-            try: innerVal = parseEnum[InnerT](cs)
-            except CatchableError: innerVal = default(InnerT)
-        else:
-          innerVal = getTupleStringAttr(th, tupDesc, idx)
-        field = some(innerVal)
-      else:
-        when typeof(field) is bool: field = (rawDatum != 0)
-        elif typeof(field) is int8: field = int8(rawDatum)
-        elif typeof(field) is int16 or typeof(field) is cshort: field = typeof(
-            field)(DatumGetInt16(rawDatum))
-        elif typeof(field) is int32 or typeof(field) is cint: field = typeof(
-            field)(DatumGetInt32(rawDatum))
-        elif typeof(field) is int64 or typeof(field) is clonglong or typeof(
-            field) is int: field = typeof(field)(DatumGetInt64(rawDatum))
-        elif typeof(field) is uint32 or typeof(field) is cuint: field = typeof(
-            field)(DatumGetObjectId(rawDatum))
-        elif typeof(field) is float32 or typeof(
-            field) is cfloat: field = typeof(field)(DatumGetFloat4(rawDatum))
-        elif typeof(field) is float64 or typeof(field) is cdouble or typeof(
-            field) is float: field = typeof(field)(DatumGetFloat8(rawDatum))
-        elif typeof(field) is distinct:
-          when distinctBase(typeof(field)) is int64: field = typeof(field)(
-              DatumGetInt64(rawDatum))
-          elif distinctBase(typeof(field)) is int32: field = typeof(field)(
-              DatumGetInt32(rawDatum))
-          elif distinctBase(typeof(field)) is int16: field = typeof(field)(
-              DatumGetInt16(rawDatum))
-          elif distinctBase(typeof(field)) is uint32: field = typeof(field)(
-              DatumGetObjectId(rawDatum))
-          elif distinctBase(typeof(field)) is float64: field = typeof(field)(
-              DatumGetFloat8(rawDatum))
-          elif distinctBase(typeof(field)) is float32: field = typeof(field)(
-              DatumGetFloat4(rawDatum))
-          else: field = default(typeof(field))
-        elif typeof(field) is string:
-          field = getTupleStringAttr(th, tupDesc, idx)
-        elif typeof(field) is cstring:
-          {.error: "Raw 'cstring' fields in composite objects are unsafe (no memory ownership). Use 'string' (ORC-managed) or 'PgText' (zero-copy) instead.".}
-        elif typeof(field) is char:
-          field = DatumGetChar(rawDatum)
-        elif typeof(field) is JsonNode:
-          let cs = getTupleStringAttr(th, tupDesc, idx)
-          if cs.len > 0:
-            {.cast(noSideEffect).}:
-              {.cast(tags: []).}:
-                try: field = parseJson(cs)
-                except CatchableError: field = newJNull()
-          else:
-            field = newJNull()
-        elif typeof(field) is enum:
-          let cs = getTupleStringAttr(th, tupDesc, idx)
-          if cs.len > 0:
-            try: field = parseEnum[typeof(field)](cs)
-            except CatchableError: field = default(typeof(field))
-        elif typeof(field) is seq:
-          type ElemT = typeof(field[0])
-          let arrPtr = htup_DatumGetArrayTypeP(rawDatum)
-          if arrPtr != nil:
-            var elemsPtr: ptr Datum
-            var nullsPtr: ptr bool
-            var nElems: cint
-            when ElemT is int32 or ElemT is cint:
-              htup_deconstruct_array(arrPtr, 23.Oid, 4'i32, true, 'i'.cchar,
-                  addr elemsPtr, addr nullsPtr, addr nElems)
-            elif ElemT is int64 or ElemT is clonglong or ElemT is int:
-              htup_deconstruct_array(arrPtr, 20.Oid, 8'i32, true, 'd'.cchar,
-                  addr elemsPtr, addr nullsPtr, addr nElems)
-            elif ElemT is int16 or ElemT is cshort:
-              htup_deconstruct_array(arrPtr, 21.Oid, 2'i32, true, 's'.cchar,
-                  addr elemsPtr, addr nullsPtr, addr nElems)
-            elif ElemT is float64 or ElemT is float or ElemT is cdouble:
-              htup_deconstruct_array(arrPtr, 701.Oid, 8'i32, true, 'd'.cchar,
-                  addr elemsPtr, addr nullsPtr, addr nElems)
-            elif ElemT is float32 or ElemT is cfloat:
-              htup_deconstruct_array(arrPtr, 700.Oid, 4'i32, true, 'i'.cchar,
-                  addr elemsPtr, addr nullsPtr, addr nElems)
-            elif ElemT is bool:
-              htup_deconstruct_array(arrPtr, 16.Oid, 1'i32, true, 'c'.cchar,
-                  addr elemsPtr, addr nullsPtr, addr nElems)
+      try:
+        var idx: cint = 1
+        for name, field in fieldPairs(result):
+          idx = nextValidTableColumn(tupDesc, idx)
+          var isNull: bool
+          let rawDatum = GetAttributeByNum(th, idx, isNull)
+          if isNull or rawDatum == 0:
+            when typeof(field) is Option:
+              field = none(typeof(field.get))
             else:
-              htup_deconstruct_array(arrPtr, 25.Oid, -1'i32, false, 'i'.cchar,
-                  addr elemsPtr, addr nullsPtr, addr nElems)
-            let elemArr = cast[ptr UncheckedArray[Datum]](elemsPtr)
-            let nullArr = cast[ptr UncheckedArray[bool]](nullsPtr)
-            field = newSeq[ElemT](nElems)
-            for k in 0 ..< nElems:
-              if nullArr == nil or not nullArr[k]:
-                when ElemT is int32 or ElemT is cint: field[k] = ElemT(
-                    DatumGetInt32(elemArr[k]))
-                elif ElemT is int64 or ElemT is clonglong or
-                    ElemT is int: field[k] = ElemT(DatumGetInt64(elemArr[k]))
-                elif ElemT is int16 or ElemT is cshort: field[k] = ElemT(
-                    DatumGetInt16(elemArr[k]))
-                elif ElemT is float64 or ElemT is float or
-                    ElemT is cdouble: field[k] = ElemT(DatumGetFloat8(elemArr[k]))
-                elif ElemT is float32 or ElemT is cfloat: field[k] = ElemT(
-                    DatumGetFloat4(elemArr[k]))
-                elif ElemT is bool: field[k] = (elemArr[k] != 0)
-                else:
-                  let elemCs = TextDatumGetCString(elemArr[k])
-                  if elemCs != nil:
-                    field[k] = $elemCs
-                    htup_pfree(elemCs)
-                  else:
-                    field[k] = ""
-            if elemsPtr != nil: htup_pfree(elemsPtr)
-            if nullsPtr != nil: htup_pfree(nullsPtr)
-        else:
-          field = getTupleStringAttr(th, tupDesc, idx)
-    idx += 1
-
-  DecrTupleDescRefCount(tupDesc)
+              field = default(typeof(field))
+          else:
+            when typeof(field) is Option:
+              field = some(extractField[typeof(field.get)](th, tupDesc, idx, rawDatum))
+            else:
+              field = extractField[typeof(field)](th, tupDesc, idx, rawDatum)
+          idx += 1
+      finally:
+        DecrTupleDescRefCount(tupDesc)
 
 # -----------------------------------------------------------------------------
 # High-Level Generic Serializer: object -> HeapTuple / Datum
