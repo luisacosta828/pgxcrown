@@ -1,6 +1,9 @@
-from basic import Oid, Datum, NameData, OidOutputFunctionCall, PointerGetDatum, DatumGetPointer, Pointer,
-  Int32GetDatum, Int64GetDatum, Int16GetDatum, Float4GetDatum, Float8GetDatum, BoolGetDatum,
-  CharGetDatum, ObjectIdGetDatum, CStringGetTextDatum, TextDatumGetCString, DatumToInt32, DatumToInt64,
+from basic import Oid, Datum, NameData, OidOutputFunctionCall, PointerGetDatum,
+    DatumGetPointer, Pointer,
+  Int32GetDatum, Int64GetDatum, Int16GetDatum, Float4GetDatum, Float8GetDatum,
+      BoolGetDatum,
+  CharGetDatum, ObjectIdGetDatum, CStringGetTextDatum, TextDatumGetCString,
+      DatumToInt32, DatumToInt64,
   DatumGetFloat8, DatumGetChar, DatumGetObjectId, DatumToCString,
   DatumGetInt32, DatumGetInt64, DatumGetInt16, DatumGetFloat4, palloc, MemoryContextSwitchTo
 
@@ -19,11 +22,12 @@ proc htup_deconstruct_array(
   elemsp: ptr ptr Datum, nullsp: ptr ptr bool, nelemsp: ptr cint
 ) {.importc: "deconstruct_array".}
 proc htup_construct_array(
-  elems: ptr Datum, nelems: cint, elmtype: Oid, elmlen: cint, elmbyval: bool, elmalign: cchar
+  elems: ptr Datum, nelems: cint, elmtype: Oid, elmlen: cint, elmbyval: bool,
+      elmalign: cchar
 ): pointer {.importc: "construct_array".}
 {.pop.}
 
-{.push header: "access/htup_details.h" .}
+{.push header: "access/htup_details.h".}
 type
   DatumTupleFields {.importc: "struct DatumTupleFields".} = object
     datum_len*: int32
@@ -31,17 +35,17 @@ type
     datum_typeid*: Oid
 
   HeapTupleHeaderChoice {.importc: "union".} = object
-    t_heap:  pointer
+    t_heap: pointer
     t_datum*: DatumTupleFields
 
   HeapTupleHeaderData* {.importc: "HeapTupleHeaderData".} = object
-    t_choice*:   HeapTupleHeaderChoice
-    t_ctid*:     pointer # ItemPointerData
+    t_choice*: HeapTupleHeaderChoice
+    t_ctid*: pointer # ItemPointerData
     t_infomask2*: uint16
-    t_infomask*:  uint16
-    t_hoff*:      uint8
+    t_infomask*: uint16
+    t_hoff*: uint8
 
-  HeapTupleHeader* = ptr HeapTupleHeaderData 
+  HeapTupleHeader* = ptr HeapTupleHeaderData
 
   HeapTupleData* {.importc: "HeapTupleData".} = object
     t_len*: uint32
@@ -57,10 +61,11 @@ type
     atttypid*: Oid
     attnum*: int16
     attisdropped*: bool
-  
+
   Form_pg_attribute* = ptr FormData_pg_attribute
 
-proc heap_form_tuple*(tupleDescriptor: pointer, values: ptr Datum, isnull: ptr bool): HeapTuple {.importc: "heap_form_tuple".}
+proc heap_form_tuple*(tupleDescriptor: pointer, values: ptr Datum,
+    isnull: ptr bool): HeapTuple {.importc: "heap_form_tuple".}
 proc heap_freetuple*(htup: HeapTuple) {.importc: "heap_freetuple".}
 
 {.pop.}
@@ -79,25 +84,30 @@ type
 
 proc DecrTupleDescRefCount*(tup: TupleDesc) {.importc.}
 proc CreateTemplateTupleDesc*(natts: cint): TupleDesc {.importc: "CreateTemplateTupleDesc".}
-proc TupleDescInitEntry*(desc: TupleDesc, attnum: int16, attname: cstring, oidtypeid: Oid, typmod: int32, attdim: cint) {.importc: "TupleDescInitEntry".}
+proc TupleDescInitEntry*(desc: TupleDesc, attnum: int16, attname: cstring,
+    oidtypeid: Oid, typmod: int32,
+    attdim: cint) {.importc: "TupleDescInitEntry".}
 proc BlessTupleDesc*(tupdesc: TupleDesc): TupleDesc {.importc: "BlessTupleDesc".}
 proc TupleDescAttr*(tupdesc: TupleDesc, i: cint): Form_pg_attribute {.importc: "TupleDescAttr".}
 {.pop.}
 
 {.push header: "utils/typcache.h".}
 proc lookup_rowtype_tupdesc*(type_id: Oid, typmod: cint): TupleDesc {.importc.}
-proc lookup_rowtype_tupdesc_noerror*(type_id: Oid, typmod: int32, noError: bool): TupleDesc {.importc: "lookup_rowtype_tupdesc_noerror".}
+proc lookup_rowtype_tupdesc_noerror*(type_id: Oid, typmod: int32,
+    noError: bool): TupleDesc {.importc: "lookup_rowtype_tupdesc_noerror".}
 {.pop.}
 
-{.push header: "executor/executor.h" .}
-proc GetAttributeByNum*(tup: HeapTupleHeader, attrno: cint, isNull: var bool): Datum {.importc.}
+{.push header: "executor/executor.h".}
+proc GetAttributeByNum*(tup: HeapTupleHeader, attrno: cint,
+    isNull: var bool): Datum {.importc.}
 {.pop.}
 
 {.push header: "fmgr.h".}
-proc getHeapTupleHeader*(value: cuint): HeapTupleHeader {.importc: "PG_GETARG_HEAPTUPLEHEADER" .}
+proc getHeapTupleHeader*(value: cuint): HeapTupleHeader {.importc: "PG_GETARG_HEAPTUPLEHEADER".}
 {.pop.}
 
-proc get_tuple_attr*[T](element: HeapTupleHeader, row: TupleDesc, idx: cint): T =
+proc get_tuple_attr*[T](element: HeapTupleHeader, row: TupleDesc,
+    idx: cint): T =
   var isNull: bool
   if not row.isNil and not element.isNil:
     var attr = GetAttributeByNum(element, idx, isNull)
@@ -117,17 +127,19 @@ proc getTypeMod*(tup: HeapTupleHeader): cint =
   return -1
 
 {.push header: "utils/lsyscache.h".}
-proc getTypeOutputInfo*(typeId: Oid, typOutput: var Oid, typIsVarlena: var bool) {.importc: "getTypeOutputInfo".}
+proc getTypeOutputInfo*(typeId: Oid, typOutput: var Oid,
+    typIsVarlena: var bool) {.importc: "getTypeOutputInfo".}
 {.pop.}
 
-proc getTupleDesc*(heapTuple: HeapTupleHeader): TupleDesc {. inline .} =
-  var 
+proc getTupleDesc*(heapTuple: HeapTupleHeader): TupleDesc {.inline.} =
+  var
     tupTypeId = getTypeId(heapTuple)
     tupTypMod = getTypeMod(heapTuple)
-  
+
   result = lookup_rowtype_tupdesc(tupTypeId, tupTypMod)
 
-proc getTupleStringAttr*(element: HeapTupleHeader, row: TupleDesc, idx: cint): string =
+proc getTupleStringAttr*(element: HeapTupleHeader, row: TupleDesc,
+    idx: cint): string =
   var isNull: bool
   if not row.isNil and not element.isNil:
     let d = GetAttributeByNum(element, idx, isNull)
@@ -149,6 +161,18 @@ proc getTupleStringAttr*(element: HeapTupleHeader, row: TupleDesc, idx: cint): s
 # High-Level Generic Deserializer: HeapTupleHeader -> object
 # -----------------------------------------------------------------------------
 
+proc nextValidTableColumn*(tupDesc: TupleDesc,
+    startIdx: cint): cint {.inline.} =
+  result = startIdx
+  let natts = if tupDesc != nil: cast[TupleDescStruct](tupDesc).natts else: 0
+  while result <= natts:
+    let attr = TupleDescAttr(tupDesc, result - 1)
+    if attr != nil and attr.attisdropped:
+      result += 1
+    else:
+      break
+
+
 proc tupleHeaderToObject*[T: object | tuple](th: HeapTupleHeader): T {.tags: [].} =
   {.cast(noSideEffect).}:
     {.cast(tags: []).}:
@@ -156,15 +180,10 @@ proc tupleHeaderToObject*[T: object | tuple](th: HeapTupleHeader): T {.tags: [].
       let tupDesc = getTupleDesc(th)
       if tupDesc.isNil: return default(T)
 
-      var idx: cint = 1
+  var idx: cint = 1
   for name, field in fieldPairs(result):
-    while tupDesc != nil and idx <= cast[TupleDescStruct](tupDesc).natts:
-      let attr = TupleDescAttr(tupDesc, idx - 1)
-      if attr != nil and attr.attisdropped:
-        idx += 1
-      else:
-        break
     var isNull: bool
+    idx = nextValidTableColumn(tupDesc, idx)
     let rawDatum = GetAttributeByNum(th, idx, isNull)
     if isNull or rawDatum == 0:
       when typeof(field) is Option:
@@ -177,12 +196,17 @@ proc tupleHeaderToObject*[T: object | tuple](th: HeapTupleHeader): T {.tags: [].
         var innerVal: InnerT
         when InnerT is bool: innerVal = (rawDatum != 0)
         elif InnerT is int8: innerVal = int8(rawDatum)
-        elif InnerT is int16 or InnerT is cshort: innerVal = InnerT(DatumGetInt16(rawDatum))
+        elif InnerT is int16 or InnerT is cshort: innerVal = InnerT(
+            DatumGetInt16(rawDatum))
         elif InnerT is int32 or InnerT is cint: innerVal = InnerT(DatumGetInt32(rawDatum))
-        elif InnerT is int64 or InnerT is clonglong or InnerT is int: innerVal = InnerT(DatumGetInt64(rawDatum))
-        elif InnerT is uint32 or InnerT is cuint: innerVal = InnerT(DatumGetObjectId(rawDatum))
-        elif InnerT is float32 or InnerT is cfloat: innerVal = InnerT(DatumGetFloat4(rawDatum))
-        elif InnerT is float64 or InnerT is cdouble or InnerT is float: innerVal = InnerT(DatumGetFloat8(rawDatum))
+        elif InnerT is int64 or InnerT is clonglong or
+            InnerT is int: innerVal = InnerT(DatumGetInt64(rawDatum))
+        elif InnerT is uint32 or InnerT is cuint: innerVal = InnerT(
+            DatumGetObjectId(rawDatum))
+        elif InnerT is float32 or InnerT is cfloat: innerVal = InnerT(
+            DatumGetFloat4(rawDatum))
+        elif InnerT is float64 or InnerT is cdouble or
+            InnerT is float: innerVal = InnerT(DatumGetFloat8(rawDatum))
         elif InnerT is string:
           innerVal = getTupleStringAttr(th, tupDesc, idx)
         elif InnerT is cstring:
@@ -209,19 +233,31 @@ proc tupleHeaderToObject*[T: object | tuple](th: HeapTupleHeader): T {.tags: [].
       else:
         when typeof(field) is bool: field = (rawDatum != 0)
         elif typeof(field) is int8: field = int8(rawDatum)
-        elif typeof(field) is int16 or typeof(field) is cshort: field = typeof(field)(DatumGetInt16(rawDatum))
-        elif typeof(field) is int32 or typeof(field) is cint: field = typeof(field)(DatumGetInt32(rawDatum))
-        elif typeof(field) is int64 or typeof(field) is clonglong or typeof(field) is int: field = typeof(field)(DatumGetInt64(rawDatum))
-        elif typeof(field) is uint32 or typeof(field) is cuint: field = typeof(field)(DatumGetObjectId(rawDatum))
-        elif typeof(field) is float32 or typeof(field) is cfloat: field = typeof(field)(DatumGetFloat4(rawDatum))
-        elif typeof(field) is float64 or typeof(field) is cdouble or typeof(field) is float: field = typeof(field)(DatumGetFloat8(rawDatum))
+        elif typeof(field) is int16 or typeof(field) is cshort: field = typeof(
+            field)(DatumGetInt16(rawDatum))
+        elif typeof(field) is int32 or typeof(field) is cint: field = typeof(
+            field)(DatumGetInt32(rawDatum))
+        elif typeof(field) is int64 or typeof(field) is clonglong or typeof(
+            field) is int: field = typeof(field)(DatumGetInt64(rawDatum))
+        elif typeof(field) is uint32 or typeof(field) is cuint: field = typeof(
+            field)(DatumGetObjectId(rawDatum))
+        elif typeof(field) is float32 or typeof(
+            field) is cfloat: field = typeof(field)(DatumGetFloat4(rawDatum))
+        elif typeof(field) is float64 or typeof(field) is cdouble or typeof(
+            field) is float: field = typeof(field)(DatumGetFloat8(rawDatum))
         elif typeof(field) is distinct:
-          when distinctBase(typeof(field)) is int64: field = typeof(field)(DatumGetInt64(rawDatum))
-          elif distinctBase(typeof(field)) is int32: field = typeof(field)(DatumGetInt32(rawDatum))
-          elif distinctBase(typeof(field)) is int16: field = typeof(field)(DatumGetInt16(rawDatum))
-          elif distinctBase(typeof(field)) is uint32: field = typeof(field)(DatumGetObjectId(rawDatum))
-          elif distinctBase(typeof(field)) is float64: field = typeof(field)(DatumGetFloat8(rawDatum))
-          elif distinctBase(typeof(field)) is float32: field = typeof(field)(DatumGetFloat4(rawDatum))
+          when distinctBase(typeof(field)) is int64: field = typeof(field)(
+              DatumGetInt64(rawDatum))
+          elif distinctBase(typeof(field)) is int32: field = typeof(field)(
+              DatumGetInt32(rawDatum))
+          elif distinctBase(typeof(field)) is int16: field = typeof(field)(
+              DatumGetInt16(rawDatum))
+          elif distinctBase(typeof(field)) is uint32: field = typeof(field)(
+              DatumGetObjectId(rawDatum))
+          elif distinctBase(typeof(field)) is float64: field = typeof(field)(
+              DatumGetFloat8(rawDatum))
+          elif distinctBase(typeof(field)) is float32: field = typeof(field)(
+              DatumGetFloat4(rawDatum))
           else: field = default(typeof(field))
         elif typeof(field) is string:
           field = getTupleStringAttr(th, tupDesc, idx)
@@ -251,29 +287,41 @@ proc tupleHeaderToObject*[T: object | tuple](th: HeapTupleHeader): T {.tags: [].
             var nullsPtr: ptr bool
             var nElems: cint
             when ElemT is int32 or ElemT is cint:
-              htup_deconstruct_array(arrPtr, 23.Oid, 4'i32, true, 'i'.cchar, addr elemsPtr, addr nullsPtr, addr nElems)
+              htup_deconstruct_array(arrPtr, 23.Oid, 4'i32, true, 'i'.cchar,
+                  addr elemsPtr, addr nullsPtr, addr nElems)
             elif ElemT is int64 or ElemT is clonglong or ElemT is int:
-              htup_deconstruct_array(arrPtr, 20.Oid, 8'i32, true, 'd'.cchar, addr elemsPtr, addr nullsPtr, addr nElems)
+              htup_deconstruct_array(arrPtr, 20.Oid, 8'i32, true, 'd'.cchar,
+                  addr elemsPtr, addr nullsPtr, addr nElems)
             elif ElemT is int16 or ElemT is cshort:
-              htup_deconstruct_array(arrPtr, 21.Oid, 2'i32, true, 's'.cchar, addr elemsPtr, addr nullsPtr, addr nElems)
+              htup_deconstruct_array(arrPtr, 21.Oid, 2'i32, true, 's'.cchar,
+                  addr elemsPtr, addr nullsPtr, addr nElems)
             elif ElemT is float64 or ElemT is float or ElemT is cdouble:
-              htup_deconstruct_array(arrPtr, 701.Oid, 8'i32, true, 'd'.cchar, addr elemsPtr, addr nullsPtr, addr nElems)
+              htup_deconstruct_array(arrPtr, 701.Oid, 8'i32, true, 'd'.cchar,
+                  addr elemsPtr, addr nullsPtr, addr nElems)
             elif ElemT is float32 or ElemT is cfloat:
-              htup_deconstruct_array(arrPtr, 700.Oid, 4'i32, true, 'i'.cchar, addr elemsPtr, addr nullsPtr, addr nElems)
+              htup_deconstruct_array(arrPtr, 700.Oid, 4'i32, true, 'i'.cchar,
+                  addr elemsPtr, addr nullsPtr, addr nElems)
             elif ElemT is bool:
-              htup_deconstruct_array(arrPtr, 16.Oid, 1'i32, true, 'c'.cchar, addr elemsPtr, addr nullsPtr, addr nElems)
+              htup_deconstruct_array(arrPtr, 16.Oid, 1'i32, true, 'c'.cchar,
+                  addr elemsPtr, addr nullsPtr, addr nElems)
             else:
-              htup_deconstruct_array(arrPtr, 25.Oid, -1'i32, false, 'i'.cchar, addr elemsPtr, addr nullsPtr, addr nElems)
+              htup_deconstruct_array(arrPtr, 25.Oid, -1'i32, false, 'i'.cchar,
+                  addr elemsPtr, addr nullsPtr, addr nElems)
             let elemArr = cast[ptr UncheckedArray[Datum]](elemsPtr)
             let nullArr = cast[ptr UncheckedArray[bool]](nullsPtr)
             field = newSeq[ElemT](nElems)
             for k in 0 ..< nElems:
               if nullArr == nil or not nullArr[k]:
-                when ElemT is int32 or ElemT is cint: field[k] = ElemT(DatumGetInt32(elemArr[k]))
-                elif ElemT is int64 or ElemT is clonglong or ElemT is int: field[k] = ElemT(DatumGetInt64(elemArr[k]))
-                elif ElemT is int16 or ElemT is cshort: field[k] = ElemT(DatumGetInt16(elemArr[k]))
-                elif ElemT is float64 or ElemT is float or ElemT is cdouble: field[k] = ElemT(DatumGetFloat8(elemArr[k]))
-                elif ElemT is float32 or ElemT is cfloat: field[k] = ElemT(DatumGetFloat4(elemArr[k]))
+                when ElemT is int32 or ElemT is cint: field[k] = ElemT(
+                    DatumGetInt32(elemArr[k]))
+                elif ElemT is int64 or ElemT is clonglong or
+                    ElemT is int: field[k] = ElemT(DatumGetInt64(elemArr[k]))
+                elif ElemT is int16 or ElemT is cshort: field[k] = ElemT(
+                    DatumGetInt16(elemArr[k]))
+                elif ElemT is float64 or ElemT is float or
+                    ElemT is cdouble: field[k] = ElemT(DatumGetFloat8(elemArr[k]))
+                elif ElemT is float32 or ElemT is cfloat: field[k] = ElemT(
+                    DatumGetFloat4(elemArr[k]))
                 elif ElemT is bool: field[k] = (elemArr[k] != 0)
                 else:
                   let elemCs = TextDatumGetCString(elemArr[k])
@@ -323,14 +371,17 @@ proc htupPackSeq*[E](s: seq[E]): Datum =
   let elemsBuf = cast[ptr UncheckedArray[Datum]](palloc(cuint(s.len * sizeof(Datum))))
   for i in 0 ..< s.len:
     when E is int32 or E is cint: elemsBuf[i] = Int32GetDatum(int32(s[i]))
-    elif E is int64 or E is clonglong or E is int: elemsBuf[i] = Int64GetDatum(int64(s[i]))
+    elif E is int64 or E is clonglong or E is int: elemsBuf[i] = Int64GetDatum(
+        int64(s[i]))
     elif E is int16 or E is cshort: elemsBuf[i] = Int16GetDatum(int16(s[i]))
-    elif E is float64 or E is float or E is cdouble: elemsBuf[i] = Float8GetDatum(float64(s[i]))
+    elif E is float64 or E is float or E is cdouble: elemsBuf[
+        i] = Float8GetDatum(float64(s[i]))
     elif E is float32 or E is cfloat: elemsBuf[i] = Float4GetDatum(float32(s[i]))
     elif E is bool: elemsBuf[i] = BoolGetDatum(s[i])
     elif E is JsonNode: elemsBuf[i] = JsonNodeToDatum(s[i])
     else: elemsBuf[i] = CStringGetTextDatum(cstring($s[i]))
-  let arrPtr = htup_construct_array(cast[ptr Datum](elemsBuf), s.len.cint, elmOid, elmLen, elmByVal, elmAlign)
+  let arrPtr = htup_construct_array(cast[ptr Datum](elemsBuf), s.len.cint,
+      elmOid, elmLen, elmByVal, elmAlign)
   if not elmByVal:
     for i in 0 ..< s.len:
       if elemsBuf[i] != 0:
@@ -343,7 +394,7 @@ proc buildTupleDescFor*[T: object | tuple](): TupleDesc =
   var dummy: T
   for name, val in fieldPairs(dummy):
     numFields += 1
-  
+
   if numFields == 0: return nil
   let desc = CreateTemplateTupleDesc(numFields)
   var attrNum: int16 = 1
@@ -352,10 +403,12 @@ proc buildTupleDescFor*[T: object | tuple](): TupleDesc =
                    elif typeof(val) is int8: 18.Oid
                    elif typeof(val) is int16 or typeof(val) is cshort: 21.Oid
                    elif typeof(val) is int32 or typeof(val) is cint: 23.Oid
-                   elif typeof(val) is int64 or typeof(val) is clonglong or typeof(val) is int: 20.Oid
+                   elif typeof(val) is int64 or typeof(val) is clonglong or
+                       typeof(val) is int: 20.Oid
                    elif typeof(val) is uint32 or typeof(val) is cuint: 26.Oid
                    elif typeof(val) is float32 or typeof(val) is cfloat: 700.Oid
-                   elif typeof(val) is float64 or typeof(val) is cdouble or typeof(val) is float: 701.Oid
+                   elif typeof(val) is float64 or typeof(val) is cdouble or
+                       typeof(val) is float: 701.Oid
                    elif typeof(val) is distinct:
                      when distinctBase(typeof(val)) is int64: 20.Oid
                      elif distinctBase(typeof(val)) is int32: 23.Oid
@@ -369,22 +422,34 @@ proc buildTupleDescFor*[T: object | tuple](): TupleDesc =
                    elif typeof(val) is JsonNode: 3802.Oid
                    elif typeof(val) is seq:
                      when typeof(val[0]) is bool: 1000.Oid
-                     elif typeof(val[0]) is int16 or typeof(val[0]) is cshort: 1005.Oid
-                     elif typeof(val[0]) is int32 or typeof(val[0]) is cint: 1007.Oid
-                     elif typeof(val[0]) is int64 or typeof(val[0]) is clonglong or typeof(val[0]) is int: 1016.Oid
-                     elif typeof(val[0]) is float32 or typeof(val[0]) is cfloat: 1021.Oid
-                     elif typeof(val[0]) is float64 or typeof(val[0]) is cdouble or typeof(val[0]) is float: 1022.Oid
+                     elif typeof(val[0]) is int16 or typeof(val[
+                         0]) is cshort: 1005.Oid
+                     elif typeof(val[0]) is int32 or typeof(val[
+                         0]) is cint: 1007.Oid
+                     elif typeof(val[0]) is int64 or typeof(val[
+                         0]) is clonglong or typeof(val[0]) is int: 1016.Oid
+                     elif typeof(val[0]) is float32 or typeof(val[
+                         0]) is cfloat: 1021.Oid
+                     elif typeof(val[0]) is float64 or typeof(val[
+                         0]) is cdouble or typeof(val[0]) is float: 1022.Oid
                      elif typeof(val[0]) is JsonNode: 3807.Oid
                      else: 1009.Oid
                    elif typeof(val) is Option:
                      when typeof(val.get) is bool: 16.Oid
                      elif typeof(val.get) is int8: 18.Oid
-                     elif typeof(val.get) is int16 or typeof(val.get) is cshort: 21.Oid
-                     elif typeof(val.get) is int32 or typeof(val.get) is cint: 23.Oid
-                     elif typeof(val.get) is int64 or typeof(val.get) is clonglong or typeof(val.get) is int: 20.Oid
-                     elif typeof(val.get) is uint32 or typeof(val.get) is cuint: 26.Oid
-                     elif typeof(val.get) is float32 or typeof(val.get) is cfloat: 700.Oid
-                     elif typeof(val.get) is float64 or typeof(val.get) is cdouble or typeof(val.get) is float: 701.Oid
+                     elif typeof(val.get) is int16 or typeof(
+                         val.get) is cshort: 21.Oid
+                     elif typeof(val.get) is int32 or typeof(
+                         val.get) is cint: 23.Oid
+                     elif typeof(val.get) is int64 or typeof(
+                         val.get) is clonglong or typeof(val.get) is int: 20.Oid
+                     elif typeof(val.get) is uint32 or typeof(
+                         val.get) is cuint: 26.Oid
+                     elif typeof(val.get) is float32 or typeof(
+                         val.get) is cfloat: 700.Oid
+                     elif typeof(val.get) is float64 or typeof(
+                         val.get) is cdouble or typeof(
+                         val.get) is float: 701.Oid
                      elif typeof(val.get) is distinct:
                        when distinctBase(typeof(val.get)) is int64: 20.Oid
                        elif distinctBase(typeof(val.get)) is int32: 23.Oid
@@ -393,7 +458,8 @@ proc buildTupleDescFor*[T: object | tuple](): TupleDesc =
                        elif distinctBase(typeof(val.get)) is float64: 701.Oid
                        elif distinctBase(typeof(val.get)) is float32: 700.Oid
                        else: 25.Oid
-                     elif typeof(val.get) is string or typeof(val.get) is cstring: 25.Oid
+                     elif typeof(val.get) is string or typeof(
+                         val.get) is cstring: 25.Oid
                      elif typeof(val.get) is char: 18.Oid
                      elif typeof(val.get) is JsonNode: 3802.Oid
                      else: 25.Oid
@@ -411,7 +477,8 @@ proc getCachedTupleDescFor*[T: object | tuple](): TupleDesc =
   ## to avoid both repeated BlessTupleDesc leaks and dangling pointers across queries.
   var cached {.global.}: TupleDesc = nil
   if cached.isNil:
-    let oldCtx = if TopMemoryContext != nil: MemoryContextSwitchTo(TopMemoryContext) else: nil
+    let oldCtx = if TopMemoryContext != nil: MemoryContextSwitchTo(
+        TopMemoryContext) else: nil
     try:
       cached = buildTupleDescFor[T]()
     finally:
@@ -419,7 +486,8 @@ proc getCachedTupleDescFor*[T: object | tuple](): TupleDesc =
         discard MemoryContextSwitchTo(oldCtx)
   return cached
 
-proc objectToHeapTuple*[T: object | tuple](obj: T, customDesc: TupleDesc = nil): HeapTuple {.tags: [].} =
+proc objectToHeapTuple*[T: object | tuple](obj: T,
+    customDesc: TupleDesc = nil): HeapTuple {.tags: [].} =
   {.cast(noSideEffect).}:
     {.cast(tags: []).}:
       let tupDesc = if customDesc != nil: customDesc else: getCachedTupleDescFor[T]()
@@ -443,21 +511,34 @@ proc objectToHeapTuple*[T: object | tuple](obj: T, customDesc: TupleDesc = nil):
           else:
             nulls[idx] = false
             let innerVal = val.get
-            when typeof(innerVal) is bool: values[idx] = if innerVal: 1.Datum else: 0.Datum
+            when typeof(innerVal) is bool: values[
+                idx] = if innerVal: 1.Datum else: 0.Datum
             elif typeof(innerVal) is int8: values[idx] = Datum(innerVal)
-            elif typeof(innerVal) is int16 or typeof(innerVal) is cshort: values[idx] = Datum(innerVal)
-            elif typeof(innerVal) is int32 or typeof(innerVal) is cint: values[idx] = Int32GetDatum(int32(innerVal))
-            elif typeof(innerVal) is int64 or typeof(innerVal) is clonglong or typeof(innerVal) is int: values[idx] = Int64GetDatum(int64(innerVal))
-            elif typeof(innerVal) is uint32 or typeof(innerVal) is cuint: values[idx] = ObjectIdGetDatum(Oid(innerVal))
-            elif typeof(innerVal) is float32 or typeof(innerVal) is cfloat: values[idx] = Float4GetDatum(float32(innerVal))
-            elif typeof(innerVal) is float64 or typeof(innerVal) is cdouble or typeof(innerVal) is float: values[idx] = Float8GetDatum(float64(innerVal))
+            elif typeof(innerVal) is int16 or typeof(
+                innerVal) is cshort: values[idx] = Datum(innerVal)
+            elif typeof(innerVal) is int32 or typeof(innerVal) is cint: values[
+                idx] = Int32GetDatum(int32(innerVal))
+            elif typeof(innerVal) is int64 or typeof(innerVal) is clonglong or
+                typeof(innerVal) is int: values[idx] = Int64GetDatum(int64(innerVal))
+            elif typeof(innerVal) is uint32 or typeof(
+                innerVal) is cuint: values[idx] = ObjectIdGetDatum(Oid(innerVal))
+            elif typeof(innerVal) is float32 or typeof(
+                innerVal) is cfloat: values[idx] = Float4GetDatum(float32(innerVal))
+            elif typeof(innerVal) is float64 or typeof(innerVal) is cdouble or
+                typeof(innerVal) is float: values[idx] = Float8GetDatum(float64(innerVal))
             elif typeof(innerVal) is distinct:
-              when distinctBase(typeof(innerVal)) is int64: values[idx] = Int64GetDatum(int64(innerVal))
-              elif distinctBase(typeof(innerVal)) is int32: values[idx] = Int32GetDatum(int32(innerVal))
-              elif distinctBase(typeof(innerVal)) is int16: values[idx] = Int16GetDatum(int16(innerVal))
-              elif distinctBase(typeof(innerVal)) is uint32: values[idx] = ObjectIdGetDatum(Oid(uint32(innerVal)))
-              elif distinctBase(typeof(innerVal)) is float64: values[idx] = Float8GetDatum(float64(innerVal))
-              elif distinctBase(typeof(innerVal)) is float32: values[idx] = Float4GetDatum(float32(innerVal))
+              when distinctBase(typeof(innerVal)) is int64: values[
+                  idx] = Int64GetDatum(int64(innerVal))
+              elif distinctBase(typeof(innerVal)) is int32: values[
+                  idx] = Int32GetDatum(int32(innerVal))
+              elif distinctBase(typeof(innerVal)) is int16: values[
+                  idx] = Int16GetDatum(int16(innerVal))
+              elif distinctBase(typeof(innerVal)) is uint32: values[
+                  idx] = ObjectIdGetDatum(Oid(uint32(innerVal)))
+              elif distinctBase(typeof(innerVal)) is float64: values[
+                  idx] = Float8GetDatum(float64(innerVal))
+              elif distinctBase(typeof(innerVal)) is float32: values[
+                  idx] = Float4GetDatum(float32(innerVal))
               else: values[idx] = Datum(0)
             elif typeof(innerVal) is string:
               values[idx] = CStringGetTextDatum(cstring(innerVal))
@@ -482,19 +563,31 @@ proc objectToHeapTuple*[T: object | tuple](obj: T, customDesc: TupleDesc = nil):
           nulls[idx] = false
           when typeof(val) is bool: values[idx] = if val: 1.Datum else: 0.Datum
           elif typeof(val) is int8: values[idx] = Datum(val)
-          elif typeof(val) is int16 or typeof(val) is cshort: values[idx] = Datum(val)
-          elif typeof(val) is int32 or typeof(val) is cint: values[idx] = Int32GetDatum(int32(val))
-          elif typeof(val) is int64 or typeof(val) is clonglong or typeof(val) is int: values[idx] = Int64GetDatum(int64(val))
-          elif typeof(val) is uint32 or typeof(val) is cuint: values[idx] = ObjectIdGetDatum(Oid(val))
-          elif typeof(val) is float32 or typeof(val) is cfloat: values[idx] = Float4GetDatum(float32(val))
-          elif typeof(val) is float64 or typeof(val) is cdouble or typeof(val) is float: values[idx] = Float8GetDatum(float64(val))
+          elif typeof(val) is int16 or typeof(val) is cshort: values[
+              idx] = Datum(val)
+          elif typeof(val) is int32 or typeof(val) is cint: values[
+              idx] = Int32GetDatum(int32(val))
+          elif typeof(val) is int64 or typeof(val) is clonglong or typeof(
+              val) is int: values[idx] = Int64GetDatum(int64(val))
+          elif typeof(val) is uint32 or typeof(val) is cuint: values[
+              idx] = ObjectIdGetDatum(Oid(val))
+          elif typeof(val) is float32 or typeof(val) is cfloat: values[
+              idx] = Float4GetDatum(float32(val))
+          elif typeof(val) is float64 or typeof(val) is cdouble or typeof(
+              val) is float: values[idx] = Float8GetDatum(float64(val))
           elif typeof(val) is distinct:
-            when distinctBase(typeof(val)) is int64: values[idx] = Int64GetDatum(int64(val))
-            elif distinctBase(typeof(val)) is int32: values[idx] = Int32GetDatum(int32(val))
-            elif distinctBase(typeof(val)) is int16: values[idx] = Int16GetDatum(int16(val))
-            elif distinctBase(typeof(val)) is uint32: values[idx] = ObjectIdGetDatum(Oid(uint32(val)))
-            elif distinctBase(typeof(val)) is float64: values[idx] = Float8GetDatum(float64(val))
-            elif distinctBase(typeof(val)) is float32: values[idx] = Float4GetDatum(float32(val))
+            when distinctBase(typeof(val)) is int64: values[
+                idx] = Int64GetDatum(int64(val))
+            elif distinctBase(typeof(val)) is int32: values[
+                idx] = Int32GetDatum(int32(val))
+            elif distinctBase(typeof(val)) is int16: values[
+                idx] = Int16GetDatum(int16(val))
+            elif distinctBase(typeof(val)) is uint32: values[
+                idx] = ObjectIdGetDatum(Oid(uint32(val)))
+            elif distinctBase(typeof(val)) is float64: values[
+                idx] = Float8GetDatum(float64(val))
+            elif distinctBase(typeof(val)) is float32: values[
+                idx] = Float4GetDatum(float32(val))
             else: values[idx] = Datum(0)
           elif typeof(val) is string:
             values[idx] = CStringGetTextDatum(cstring(val))
@@ -517,13 +610,15 @@ proc objectToHeapTuple*[T: object | tuple](obj: T, customDesc: TupleDesc = nil):
             freeAfterForm[idx] = true
         idx += 1
 
-      let htup = heap_form_tuple(tupDesc, cast[ptr Datum](addr values[0]), cast[ptr bool](addr nulls[0]))
+      let htup = heap_form_tuple(tupDesc, cast[ptr Datum](addr values[0]), cast[
+          ptr bool](addr nulls[0]))
       for k in 0 ..< numFields:
         if freeAfterForm[k] and not nulls[k] and values[k] != 0:
           htup_pfree(DatumGetPointer(values[k]))
       return htup
 
-proc objectToDatum*[T: object | tuple](obj: T, customDesc: TupleDesc = nil): Datum {.tags: [].} =
+proc objectToDatum*[T: object | tuple](obj: T,
+    customDesc: TupleDesc = nil): Datum {.tags: [].} =
   {.cast(noSideEffect).}:
     {.cast(tags: []).}:
       let htup = objectToHeapTuple[T](obj, customDesc)
