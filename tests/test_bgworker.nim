@@ -1,7 +1,9 @@
 import std/strutils
 const pgIncludeDirServer = staticExec("pg_config --includedir-server").strip()
 const pgIncludeDir = staticExec("pg_config --includedir").strip()
-{.passC: "-I" & (if pgIncludeDirServer.len > 0: pgIncludeDirServer else: "/usr/include/postgresql/14/server") & " -I" & (if pgIncludeDir.len > 0: pgIncludeDir else: "/usr/include/postgresql").}
+{.passC: "-I" & (if pgIncludeDirServer.len >
+    0: pgIncludeDirServer else: "/usr/include/postgresql/14/server") & " -I" & (
+    if pgIncludeDir.len > 0: pgIncludeDir else: "/usr/include/postgresql").}
 import std/unittest
 
 {.emit: """
@@ -119,6 +121,7 @@ bool IsSubTransaction(void) { return false; }
 
 int SPI_connect(void) { return 0; }
 int SPI_finish(void) { return 0; }
+const char* SPI_result_code_string(int code) { return "SPI_MOCK_ERROR" ;}
 char mockLastSpiSql[512] = {0};
 int SPI_exec(const char *cmd, long count) {
     if (cmd) strncpy(mockLastSpiSql, cmd, sizeof(mockLastSpiSql) - 1);

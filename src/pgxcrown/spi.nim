@@ -53,24 +53,36 @@ type
     INSERT_RETURNING, DELETE_RETURNING, UPDATE_RETURNING,
     REWRITTEN, REL_REGISTER, REL_UNREGISTER, TD_REGISTER
 
-  SpiError* {.pure.} = enum
-    CONNECT = 1,
-    COPY, OPUNKNOWN, UNCONNECTED,
-    ARGUMENT = 6,
-    PARAM, TRANSACTION, NOATTRIBUTE, NOOUTFUNC,
-    TYPEUNKNOWN, REL_DUPLICATE, REL_NOT_FOUND
+  SpiError* {.pure, size: sizeof(cint).} = enum
+    REL_NOT_FOUND = -13,
+    REL_DUPLICATE,
+    TYPUNKNOWN,
+    NOOUTFUNC,
+    NOATTRIBUTE,
+    TRANSACTION,
+    PARAM,
+    ARGUMENT,
+    CURSOR,
+    UNCONNECTED,
+    OPUNKNOWN,
+    COPY,
+    CONNECT
 
 
 {.push header: "executor/spi.h".}
 proc connect*(): cint {.importc: "SPI_connect".}
 proc finish*(): cint {.importc: "SPI_finish".}
 proc exec*(c: const_string, count: clong): cint {.importc: "SPI_exec".}
-proc execute*(c: const_string, read_only: cchar, count: clong): cint {.importc: "SPI_execute".}
+proc execute*(c: const_string, read_only: cchar,
+    count: clong): cint {.importc: "SPI_execute".}
 proc execute_with_args*(c: const_string, nargs: cint, argtypes: POid, values: PDatum, Nulls: const_string,
-                        read_only: cchar, count: clong): cint {.importc: "SPI_execute_with_args".}
+                        read_only: cchar,
+                            count: clong): cint {.importc: "SPI_execute_with_args".}
 proc fname*(tupdesc: TupleDesc, fnumber: cint): const_string {.importc: "SPI_fname".}
 proc gettype*(tupdesc: TupleDesc, fnumber: cint): const_string {.importc: "SPI_gettype".}
-proc getvalue*(tupl: HeapTuple, tupdesc: TupleDesc, fnumber: cint): const_string {.importc: "SPI_getvalue".}
+proc getvalue*(tupl: HeapTuple, tupdesc: TupleDesc,
+    fnumber: cint): const_string {.importc: "SPI_getvalue".}
+proc result_code_string*(code: cint): const_string {.importc: "SPI_result_code_string".}
 {.pop.}
 
 proc getTupdescRaw(tuptable: TupleTable): TupleDesc {.importc: "pgx_spi_get_tupdesc", nodecl.}
@@ -79,7 +91,8 @@ proc getTupleRaw(tuptable: TupleTable, idx: uint64): HeapTuple {.importc: "pgx_s
 
 proc getTupdesc*(tuptable: TupleTable): TupleDesc = getTupdescRaw(tuptable)
 proc getNatts*(tupdesc: TupleDesc): cint = getNattsRaw(tupdesc)
-proc getTuple*(tuptable: TupleTable, idx: uint64): HeapTuple = getTupleRaw(tuptable, idx)
+proc getTuple*(tuptable: TupleTable, idx: uint64): HeapTuple = getTupleRaw(
+    tuptable, idx)
 
 # =============================================================================
 # Type Converters & Row Mapper
@@ -185,6 +198,11 @@ var SPI_tuptable* {.importc: "SPI_tuptable".}: TupleTable
 
 template spi_init*(statements: untyped) =
   var connection_status {.used.} = connect()
+  if connection_status < 0:
+    let errName = result_code_string(connection_status)
+    var ex = newException(PostgresError, "SPI_connect failed: " & $errName)
+    ex.sqlerrcode = ERRCODE_INTERNAL_ERROR
+    raise ex
   try:
     statements
   finally:
@@ -223,7 +241,8 @@ proc validateNoNullBytes*(sql: string) =
   if '\0' in sql:
     raise newException(ValueError, "SQL query contains prohibited null byte character (SQL injection defense)")
 
-proc fetchRawRows*(sqlQuery: string): seq[Table[string, string]] {.tags: [DbReadEffect].} =
+proc fetchRawRows*(sqlQuery: string): seq[Table[string, string]] {.tags: [
+    DbReadEffect].} =
   ## Internal: Executes raw SQL via SPI and returns a flat seq of row tables
   validateNoNullBytes(sqlQuery)
   var rows = new(seq[Table[string, string]])
@@ -251,28 +270,33 @@ proc fetchRawRows*(sqlQuery: string): seq[Table[string, string]] {.tags: [DbRead
                 rows[].add(rowTable)
   return rows[]
 
-proc fetchRows*(query: ExecutableQuery): seq[Table[string, string]] {.tags: [DbReadEffect].} =
+proc fetchRows*(query: ExecutableQuery): seq[Table[string, string]] {.tags: [
+    DbReadEffect].} =
   ## Executes a fluent query via SPI and returns rows as key-value string tables
   fetchRawRows($query)
 
-proc fetch*[T: object](query: ExecutableQuery): seq[T] {.tags: [DbReadEffect].} =
+proc fetch*[T: object](query: ExecutableQuery): seq[T] {.tags: [
+    DbReadEffect].} =
   ## Maps fluent query result rows directly into a sequence of typed Nim objects
   let rawRows = fetchRawRows($query)
   result = @[]
   for r in rawRows:
     result.add(mapRowTo[T](r))
 
-proc fetch*[T: object](query: ExecutableQuery, _: typedesc[T]): seq[T] {.tags: [DbReadEffect].} =
+proc fetch*[T: object](query: ExecutableQuery, _: typedesc[T]): seq[T] {.tags: [
+    DbReadEffect].} =
   fetch[T](query)
 
-proc fetchOne*[T: object](query: ExecutableQuery): Option[T] {.tags: [DbReadEffect].} =
+proc fetchOne*[T: object](query: ExecutableQuery): Option[T] {.tags: [
+    DbReadEffect].} =
   ## Fetches the first row of a fluent query as an Option[T], or none(T) if empty
   let items = fetch[T](query)
   if items.len > 0:
     return some(items[0])
   return none(T)
 
-proc fetchOne*[T: object](query: ExecutableQuery, _: typedesc[T]): Option[T] {.tags: [DbReadEffect].} =
+proc fetchOne*[T: object](query: ExecutableQuery, _: typedesc[T]): Option[
+    T] {.tags: [DbReadEffect].} =
   fetchOne[T](query)
 
 proc fetchScalar*[T](query: ExecutableQuery): T {.tags: [DbReadEffect].} =
@@ -292,7 +316,8 @@ proc fetchCount*(query: ExecutableQuery): int {.tags: [DbReadEffect].} =
 # Fluent Terminal Chain Methods (.scalar, .first, .all, .rows, .run, .execute)
 # =============================================================================
 
-proc scalar*[T](query: ExecutableQuery, _: typedesc[T]): T {.tags: [DbReadEffect].} =
+proc scalar*[T](query: ExecutableQuery, _: typedesc[T]): T {.tags: [
+    DbReadEffect].} =
   ## Fetches a single scalar value by passing type as argument: query.scalar(float64)
   fetchScalar[T](query)
 
@@ -300,15 +325,18 @@ proc scalar*[T](query: ExecutableQuery): T {.tags: [DbReadEffect].} =
   ## Fetches a single scalar value using generic parameter: query.scalar[float64]()
   fetchScalar[T](query)
 
-proc first*[T: object](query: ExecutableQuery, _: typedesc[T]): Option[T] {.tags: [DbReadEffect].} =
+proc first*[T: object](query: ExecutableQuery, _: typedesc[T]): Option[
+    T] {.tags: [DbReadEffect].} =
   ## Fetches the first row as an Option[T] by passing type as argument: query.first(User)
   fetchOne[T](query)
 
-proc first*[T: object](query: ExecutableQuery): Option[T] {.tags: [DbReadEffect].} =
+proc first*[T: object](query: ExecutableQuery): Option[T] {.tags: [
+    DbReadEffect].} =
   ## Fetches the first row as an Option[T] using generic parameter: query.first[User]()
   fetchOne[T](query)
 
-proc all*[T: object](query: ExecutableQuery, _: typedesc[T]): seq[T] {.tags: [DbReadEffect].} =
+proc all*[T: object](query: ExecutableQuery, _: typedesc[T]): seq[T] {.tags: [
+    DbReadEffect].} =
   ## Fetches all rows mapped to object T by passing type as argument: query.all(User)
   fetch[T](query)
 
@@ -316,7 +344,8 @@ proc all*[T: object](query: ExecutableQuery): seq[T] {.tags: [DbReadEffect].} =
   ## Fetches all rows mapped to object T using generic parameter: query.all[User]()
   fetch[T](query)
 
-proc rows*(query: ExecutableQuery): seq[Table[string, string]] {.tags: [DbReadEffect].} =
+proc rows*(query: ExecutableQuery): seq[Table[string, string]] {.tags: [
+    DbReadEffect].} =
   ## Fetches dynamic key-value rows: query.rows()
   fetchRows(query)
 
@@ -337,14 +366,19 @@ proc run*(query: ExecutableQuery): int {.discardable, tags: [DbWriteEffect].} =
 # Subtransactions & Savepoints (Internal Nested Transactions)
 # =============================================================================
 
-proc BeginInternalSubTransaction*(name: cstring = nil) {.importc, header: "access/xact.h".}
+proc BeginInternalSubTransaction*(name: cstring = nil) {.importc,
+    header: "access/xact.h".}
 proc ReleaseCurrentSubTransaction*() {.importc, header: "access/xact.h".}
-proc RollbackAndReleaseCurrentSubTransaction*() {.importc, header: "access/xact.h".}
+proc RollbackAndReleaseCurrentSubTransaction*() {.importc,
+    header: "access/xact.h".}
 proc IsSubTransaction*(): bool {.importc, header: "access/xact.h".}
 
-var CurrentMemoryContext* {.importc: "CurrentMemoryContext", header: "utils/palloc.h".}: pointer
-var CurrentResourceOwner* {.importc: "CurrentResourceOwner", header: "utils/resowner.h".}: pointer
-proc subxMemoryContextSwitchTo*(context: pointer): pointer {.importc: "MemoryContextSwitchTo", header: "utils/palloc.h", discardable.}
+var CurrentMemoryContext* {.importc: "CurrentMemoryContext",
+    header: "utils/palloc.h".}: pointer
+var CurrentResourceOwner* {.importc: "CurrentResourceOwner",
+    header: "utils/resowner.h".}: pointer
+proc subxMemoryContextSwitchTo*(context: pointer): pointer {.importc: "MemoryContextSwitchTo",
+    header: "utils/palloc.h", discardable.}
 
 template subTransaction*(body: untyped) =
   ## Executes body inside an internal nested subtransaction (savepoint).
@@ -402,7 +436,8 @@ template savepoint*(body: untyped, onError: untyped) =
 
 
 
-proc execute*(query: ExecutableQuery): int {.discardable, tags: [DbWriteEffect].} =
+proc execute*(query: ExecutableQuery): int {.discardable, tags: [
+    DbWriteEffect].} =
   ## Alias for .run()
   run(query)
 
@@ -414,19 +449,23 @@ proc firstOption*[T](items: openArray[T]): Option[T] =
   ## Returns the first item as an Option or none
   if items.len > 0: some(items[0]) else: none(T)
 
-proc toTable*[T, K, V](items: openArray[T], keySelector: proc(x: T): K {.closure.}, valSelector: proc(x: T): V {.closure.}): Table[K, V] {.effectsOf: keySelector, effectsOf: valSelector.} =
+proc toTable*[T, K, V](items: openArray[T], keySelector: proc(
+    x: T): K {.closure.}, valSelector: proc(x: T): V {.closure.}): Table[K,
+    V] {.effectsOf: keySelector, effectsOf: valSelector.} =
   ## Transforms a collection of items into a key-value Table
   result = initTable[K, V]()
   for item in items:
     result[keySelector(item)] = valSelector(item)
 
-proc any*[T](items: openArray[T], predicate: proc(x: T): bool {.closure.}): bool {.effectsOf: predicate.} =
+proc any*[T](items: openArray[T], predicate: proc(
+    x: T): bool {.closure.}): bool {.effectsOf: predicate.} =
   ## Returns true if any item matches the predicate
   for item in items:
     if predicate(item): return true
   return false
 
-proc all*[T](items: openArray[T], predicate: proc(x: T): bool {.closure.}): bool {.effectsOf: predicate.} =
+proc all*[T](items: openArray[T], predicate: proc(
+    x: T): bool {.closure.}): bool {.effectsOf: predicate.} =
   ## Returns true if all items match the predicate
   for item in items:
     if not predicate(item): return false
@@ -436,7 +475,9 @@ proc all*[T](items: openArray[T], predicate: proc(x: T): bool {.closure.}): bool
 # Direct Object Schema & Entity Operations via SPI
 # =============================================================================
 
-proc spiCreateTableFrom*[T: object](tableName: string = "", ifNotExists: bool = true, primaryKey: string = "id"): int {.tags: [DbWriteEffect].} =
+proc spiCreateTableFrom*[T: object](tableName: string = "",
+    ifNotExists: bool = true, primaryKey: string = "id"): int {.tags: [
+    DbWriteEffect].} =
   ## Inspects properties of object type T, generates CREATE TABLE DDL, and executes it via SPI
   let ddl = createTableFromType[T](tableName, ifNotExists, primaryKey)
   validateNoNullBytes(ddl)
@@ -446,15 +487,20 @@ proc spiCreateTableFrom*[T: object](tableName: string = "", ifNotExists: bool = 
       ret = int(exec(const_string(ddl), 0))
   return ret
 
-proc spiCreateTableFrom*[T: object](obj: T, tableName: string = "", ifNotExists: bool = true, primaryKey: string = "id"): int {.tags: [DbWriteEffect].} =
+proc spiCreateTableFrom*[T: object](obj: T, tableName: string = "",
+    ifNotExists: bool = true, primaryKey: string = "id"): int {.tags: [
+    DbWriteEffect].} =
   ## Inspects properties of an object instance, generates CREATE TABLE DDL, and executes it via SPI
   spiCreateTableFrom[T](tableName, ifNotExists, primaryKey)
 
-proc spiCreateTableFrom*[T: object](t: typedesc[T], tableName: string = "", ifNotExists: bool = true, primaryKey: string = "id"): int {.tags: [DbWriteEffect].} =
+proc spiCreateTableFrom*[T: object](t: typedesc[T], tableName: string = "",
+    ifNotExists: bool = true, primaryKey: string = "id"): int {.tags: [
+    DbWriteEffect].} =
   ## Inspects properties of a typedesc[T], generates CREATE TABLE DDL, and executes it via SPI
   spiCreateTableFrom[T](tableName, ifNotExists, primaryKey)
 
-proc spiInsertFrom*[T: object](obj: T, tableName: string = ""): int {.tags: [DbWriteEffect].} =
+proc spiInsertFrom*[T: object](obj: T, tableName: string = ""): int {.tags: [
+    DbWriteEffect].} =
   ## Inspects object instance, generates INSERT statement, and executes it via SPI
   let q = insertFrom(obj, tableName)
   let sql = $q
@@ -465,7 +511,8 @@ proc spiInsertFrom*[T: object](obj: T, tableName: string = ""): int {.tags: [DbW
       ret = int(exec(const_string(sql), 0))
   return ret
 
-proc spiInsertManyFrom*[T: object](objs: openArray[T], tableName: string = ""): int {.tags: [DbWriteEffect].} =
+proc spiInsertManyFrom*[T: object](objs: openArray[T],
+    tableName: string = ""): int {.tags: [DbWriteEffect].} =
   ## Inspects collection of object instances, generates multi-row bulk INSERT statement, and executes it via SPI.
   ## Returns 0 immediately if sequence is empty.
   if objs.len == 0: return 0
@@ -478,6 +525,7 @@ proc spiInsertManyFrom*[T: object](objs: openArray[T], tableName: string = ""): 
       ret = int(exec(const_string(sql), 0))
   return ret
 
-proc spiInsertFrom*[T: object](objs: openArray[T], tableName: string = ""): int {.tags: [DbWriteEffect], inline.} =
+proc spiInsertFrom*[T: object](objs: openArray[T],
+    tableName: string = ""): int {.tags: [DbWriteEffect], inline.} =
   ## Overload of spiInsertFrom accepting openArray[T]
   spiInsertManyFrom[T](objs, tableName)
