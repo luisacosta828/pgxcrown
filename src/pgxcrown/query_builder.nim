@@ -245,6 +245,9 @@ type
     whens*: seq[(string, string)] # (condition, result)
     elseExpr*: string
 
+when (NimMajor, NimMinor) >= (2, 2):
+  {.push warning[InvalidCmpOp]: off.}
+
 # Column to Column comparison (e.g. orders.user_id == users.id)
 proc `==`*(a: ColumnRef, b: ColumnRef): SqlExpr = SqlExpr(sql: $a & " = " & $b)
 proc `!=`*(a: ColumnRef, b: ColumnRef): SqlExpr = SqlExpr(sql: $a & " != " & $b)
@@ -405,6 +408,9 @@ proc `!=`*(c: ColumnExpr, val: JsonNode): SqlExpr =
     SqlExpr(sql: c.expr & " IS NOT NULL")
   else:
     SqlExpr(sql: c.expr & " != " & quoteLiteral($val))
+
+when (NimMajor, NimMinor) >= (2, 2):
+  {.pop.}
 
 # String helper operators for ColumnExpr
 proc like*(c: ColumnExpr, pattern: string): SqlExpr = SqlExpr(sql: c.expr & " LIKE " & quoteLiteral(pattern))

@@ -29,6 +29,8 @@ void pfree(void *ptr) { if (ptr) free(ptr); }
 
 #undef sprintf
 #undef vsprintf
+#undef snprintf
+#undef vsnprintf
 #undef strerror
 int pg_sprintf(char *str, const char *fmt, ...) {
     va_list args;
@@ -36,6 +38,16 @@ int pg_sprintf(char *str, const char *fmt, ...) {
     int ret = vsprintf(str, fmt, args);
     va_end(args);
     return ret;
+}
+int pg_snprintf(char *str, size_t count, const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    int ret = vsnprintf(str, count, fmt, args);
+    va_end(args);
+    return ret;
+}
+int pg_vsnprintf(char *str, size_t count, const char *fmt, va_list args) {
+    return vsnprintf(str, count, fmt, args);
 }
 char *pg_strerror(int errnum) {
     return strerror(errnum);

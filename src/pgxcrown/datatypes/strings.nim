@@ -93,18 +93,12 @@ proc `==`*(a, b: PgText): bool =
   if a.dataPtr == b.dataPtr: return true
   equalMem(a.dataPtr, b.dataPtr, a.len)
 
-proc `!=`*(a, b: PgText): bool {.inline.} = not (a == b)
-
 proc `==`*(a: PgText, b: string): bool =
   if a.len != b.len: return false
   if a.len == 0: return true
   equalMem(a.dataPtr, unsafeAddr b[0], a.len)
 
-proc `!=`*(a: PgText, b: string): bool {.inline.} = not (a == b)
-
 proc `==`*(a: string, b: PgText): bool {.inline.} = b == a
-
-proc `!=`*(a: string, b: PgText): bool {.inline.} = not (a == b)
 
 proc `==`*(a: PgText, b: cstring): bool =
   if b == nil: return a.len == 0
@@ -113,11 +107,7 @@ proc `==`*(a: PgText, b: cstring): bool =
   if a.len == 0: return true
   equalMem(a.dataPtr, cast[pointer](b), a.len)
 
-proc `!=`*(a: PgText, b: cstring): bool {.inline.} = not (a == b)
-
 proc `==`*(a: cstring, b: PgText): bool {.inline.} = b == a
-
-proc `!=`*(a: cstring, b: PgText): bool {.inline.} = not (a == b)
 
 proc `<`*(a, b: PgText): bool =
   let minLen = min(a.len, b.len)

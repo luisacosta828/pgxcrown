@@ -49,6 +49,10 @@ int pg_snprintf(char *str, size_t count, const char *fmt, ...) {
     return ret;
 }
 
+int pg_vsnprintf(char *str, size_t count, const char *fmt, va_list args) {
+    return vsnprintf(str, count, fmt, args);
+}
+
 
 void SetLatch(struct Latch *latch) {}
 void ResetLatch(struct Latch *latch) {}
