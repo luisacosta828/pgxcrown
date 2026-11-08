@@ -12,6 +12,7 @@ export HeapTuple, TupleDesc
 import query_builder
 import reports/reports
 export reports
+import ./memcontext
 
 {.emit: """/*INCLUDESECTION*/
 #include "postgres.h"
@@ -373,12 +374,10 @@ proc RollbackAndReleaseCurrentSubTransaction*() {.importc,
     header: "access/xact.h".}
 proc IsSubTransaction*(): bool {.importc, header: "access/xact.h".}
 
-var CurrentMemoryContext* {.importc: "CurrentMemoryContext",
-    header: "utils/palloc.h".}: pointer
 var CurrentResourceOwner* {.importc: "CurrentResourceOwner",
     header: "utils/resowner.h".}: pointer
-proc subxMemoryContextSwitchTo*(context: pointer): pointer {.importc: "MemoryContextSwitchTo",
-    header: "utils/palloc.h", discardable.}
+proc subxMemoryContextSwitchTo*(context: pointer): pointer {.inline, discardable.} =
+  MemoryContextSwitchTo(context)
 
 template subTransaction*(body: untyped) =
   ## Executes body inside an internal nested subtransaction (savepoint).

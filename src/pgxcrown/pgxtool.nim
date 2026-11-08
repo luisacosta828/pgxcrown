@@ -268,6 +268,8 @@ proc emit_pgx_c_extension*(module: string, targetPgVersion: int = 0, nimcacheDir
     extraDefines.add " -d:pgTargetVersion=" & $targetPgVersion
   if debug:
     extraDefines.add " -d:pgxDebug"
+  when defined(linux):
+    extraDefines.add " -d:useMalloc --passL:\"-Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=free\""
   var cacheFlag = ""
   if nimcacheDir.len > 0:
     cacheFlag = " --nimcache:" & wrap(nimcacheDir)

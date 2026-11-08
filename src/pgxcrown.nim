@@ -10,6 +10,8 @@ import pgxcrown/query_builder
 import pgxcrown/spi
 import pgxcrown/bgworker
 import pgxcrown/native_functions
+import pgxcrown/allocator
+import pgxcrown/memcontext
 
 template trusted*() {.pragma: [raises: [ValueError], forbids: [IOEffect, TimeEffect], tags: []].}
 template immutable*() {.pragma: [noSideEffect, trusted, forbids: [DbReadEffect, DbWriteEffect]].}
@@ -133,4 +135,6 @@ export spi
 export strings
 export bgworker
 export native_functions
+export allocator
+export memcontext
 

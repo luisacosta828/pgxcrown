@@ -6,7 +6,7 @@
 
 [![Nim Version](https://img.shields.io/badge/Nim-2.0%2B-FFE953?logo=nim&logoColor=white)](https://nim-lang.org/)
 [![PostgreSQL Support](https://img.shields.io/badge/PostgreSQL-14%20--%2017-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![Release](https://img.shields.io/badge/Release-v0.25.1-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
+[![Release](https://img.shields.io/badge/Release-v0.26.0-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Memory Safety](https://img.shields.io/badge/Safety-Memory%20Safe-success)](#-fail-safe-panic-shield--sqlstate-mapping)
 
@@ -25,6 +25,7 @@
 ## ⚡ Key Highlights
 
 - **Zero-Copy Memory-Mapped Views**: Direct pointer-slice [`PgText`](#1-zero-copy-string-processing-pgtext) (zero allocation, zero `strlen`) and SIMD-aligned [`PgVector[T]`](#2-high-performance-arrays--pgvectort) for high-throughput vector and array processing.
+- **PostgreSQL-Integrated Allocator (`0 Leaks on Abort`)**: Dynamic allocations (`seq`, `string`, `ref object`) route transparently to PostgreSQL's `MemoryContext` (`palloc`). If a query is aborted or cancelled (`siglongjmp`), 100% of memory is reclaimed instantly.
 - **Fail-Safe Panic Shield (`0 SIGABRTs`)**: Compiles automatic `PG_TRY` boundaries into every UDF—intercepting panics, overflows, and defects to safely abort transactions without crashing the PostgreSQL backend process.
 - **Advanced SQLSTATE Error Mapping**: First-class typed exceptions ([`PgError`](#4-advanced-error-handling--sqlstate-shield) and `PostgresError`) with automatic mapping to standard PostgreSQL error codes (`ERRCODE_DATA_EXCEPTION`, `ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE`, etc.).
 - **Fluent In-Database SPI Engine**: Ergonomic, left-to-right query execution (`.scalar()`, `.first()`, `.all()`, `.rows()`, `.run()`) with multi-column `RETURNING` support and zero `discard` boilerplate.
@@ -213,7 +214,73 @@ proc transfer_credits*(userId: int32, amount: int64): bool {.volatile.} =
 
 ---
 
-### 5. Type-Safe SQL Query Builder & Fluent SPI
+### 5. PostgreSQL-Integrated Memory Management & RAII Contexts
+
+Pgxcrown seamlessly couples Nim's ARC/ORC runtime with PostgreSQL's hierarchical `MemoryContext` system via GNU `ld` linker wrapping (`--wrap=malloc,free,...`). All standard heap allocations (`string`, `seq[T]`, `ref object`) born inside an extension transparently allocate inside PostgreSQL's active `CurrentMemoryContext`.
+
+#### Why This Matters (Zero Leaks on Cancellation):
+When PostgreSQL aborts a query (via `statement_timeout`, client disconnection, or `pg_cancel_backend()`), it executes a hardware-level `siglongjmp` back to the main query dispatcher. This skips standard language destructors. With Pgxcrown's custom allocator, **PostgreSQL's `AtError_Memory()` automatically sweeps and reclaims 100% of Nim's memory in $O(1)$**, preventing cumulative memory leaks in long-running backend connections.
+
+#### Case 1: Everyday Transparent Usage (Zero Boilerplate)
+Write standard, idiomatic Nim code. You don't manage pointers, call `palloc`, or manually free anything:
+
+```nim
+import pgxcrown
+
+proc parse_tags*(raw: PgText): seq[string] =
+  # All allocations (seq, strings, split) born in CurrentMemoryContext
+  var tags = newSeq[string]()
+  for item in raw.toString().split(','):
+    tags.add("tag: " & item.strip())
+  return tags
+  # Upon query completion or abort, memory is reclaimed automatically by PostgreSQL.
+```
+
+#### Case 2: Long-Lived Global Caches (`withTopMemoryContext`)
+Per-tuple or per-query memory contexts are reset after each row or statement. To store lookup tables, ML models, or configurations that must survive across queries for the entire duration of the client connection, use `withTopMemoryContext`:
+
+```nim
+import pgxcrown
+import pgxcrown/memcontext
+import std/tables
+
+var gConfigCache {.global.}: Table[string, string]
+var gInitialized {.global.} = false
+
+proc get_setting*(key: PgText): PgText =
+  if not gInitialized:
+    # Memory allocated within this block lives in TopMemoryContext:
+    withTopMemoryContext:
+      gConfigCache = initTable[string, string]()
+      gConfigCache["timeout_ms"] = "5000"
+      gConfigCache["region"] = "us-east-1"
+      gInitialized = true
+
+  return returnPgText(gConfigCache.getOrDefault(key.toString(), "not_found"))
+```
+
+#### Case 3: Heavy Ephemeral Computations (`withSubContext`)
+When processing large payloads (e.g. parsing a 100MB JSON document), allocating millions of temporary strings inside the query's main context can cause transient memory spikes. Use `withSubContext` to isolate the scratchpad:
+
+```nim
+import pgxcrown
+import pgxcrown/memcontext
+
+proc extract_summary*(hugePayload: PgText): int32 =
+  var resultCount = 0
+
+  # Creates an isolated child memory context, executes body, and deletes it in finally:
+  withSubContext("bulk_parser_ctx"):
+    let parsedNodes = parseHeavyData(hugePayload.toString())
+    resultCount = parsedNodes.len
+
+  # Child context is destroyed here—RAM returns to baseline BEFORE query finishes!
+  return resultCount.int32
+```
+
+---
+
+### 6. Type-Safe SQL Query Builder & Fluent SPI
 
 Execute in-database SQL operations via PostgreSQL's Server Programming Interface (SPI) with zero network latency and fluent left-to-right method chaining:
 
@@ -260,7 +327,7 @@ let topUsers  = Select(u.id, u.username, u.score).From(u).OrderBy(u.score.desc).
 
 ---
 
-### 6. Autonomous Background Workers (In-Database Daemons)
+### 7. Autonomous Background Workers (In-Database Daemons)
 
 Deploy persistent or dynamic background processes directly inside PostgreSQL using pure Nim—with zero `Datum` leaks, instant startup, real-time DBA observablity, and failure isolation:
 
