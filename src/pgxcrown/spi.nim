@@ -210,6 +210,7 @@ template spi_init*(statements: untyped) =
     var finish_status {.used.} = finish()
 
 template query*(c: const_string, obj: untyped) =
+  let callerContext {.used.} = CurrentMemoryContext
   var obj {.inject.}: ResultSet = @[]
   pgTry:
     discard exec(const_string(c), 0)
@@ -218,6 +219,7 @@ template query*(c: const_string, obj: untyped) =
       if tupdesc != nil:
         let natts = int(getNatts(tupdesc))
         if SPI_processed > 0 and natts > 0:
+          let spiContext = if callerContext != nil: MemoryContextSwitchTo(callerContext) else: nil
           for rowIdx in 0 ..< int(SPI_processed):
             let tup = getTuple(SPI_tuptable, uint64(rowIdx))
             if tup != nil:
@@ -232,6 +234,8 @@ template query*(c: const_string, obj: untyped) =
                 row.add([(k, v)].toTable)
               if row.len > 0:
                 obj.add(row)
+          if spiContext != nil:
+            discard MemoryContextSwitchTo(spiContext)
 
 # =============================================================================
 # High-Level SPI Consumer Procs (Eager Fetch, Optionals, Reducers)
@@ -246,6 +250,7 @@ proc fetchRawRows*(sqlQuery: string): seq[Table[string, string]] {.tags: [
     DbReadEffect].} =
   ## Internal: Executes raw SQL via SPI and returns a flat seq of row tables
   validateNoNullBytes(sqlQuery)
+  let callerContext = CurrentMemoryContext
   var rows = new(seq[Table[string, string]])
   spi_init:
     pgTry:
@@ -256,6 +261,7 @@ proc fetchRawRows*(sqlQuery: string): seq[Table[string, string]] {.tags: [
           let natts = int(getNatts(tupdesc))
           if SPI_processed > 0 and natts > 0:
             let numRows = min(SPI_processed, uint64(high(int)))
+            let spiContext = if callerContext != nil: MemoryContextSwitchTo(callerContext) else: nil
             for rowIdx in 0 ..< int(numRows):
               let tup = getTuple(SPI_tuptable, uint64(rowIdx))
               if tup != nil:
@@ -269,6 +275,8 @@ proc fetchRawRows*(sqlQuery: string): seq[Table[string, string]] {.tags: [
                   safePfree(cast[pointer](val))
                   rowTable[k] = v
                 rows[].add(rowTable)
+            if spiContext != nil:
+              discard MemoryContextSwitchTo(spiContext)
   return rows[]
 
 proc fetchRows*(query: ExecutableQuery): seq[Table[string, string]] {.tags: [
