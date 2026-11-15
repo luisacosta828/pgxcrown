@@ -7,6 +7,7 @@
 [![Nim Version](https://img.shields.io/badge/Nim-2.0%2B-FFE953?logo=nim&logoColor=white)](https://nim-lang.org/)
 [![PostgreSQL Support](https://img.shields.io/badge/PostgreSQL-14%20--%2017-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![Release](https://img.shields.io/badge/Release-v0.27.0-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
+[![GHCR Containers](https://img.shields.io/badge/GHCR-PG%2014%20--%2017-2496ED?logo=docker&logoColor=white)](https://github.com/luisacosta828/pgxcrown/pkgs/container/pgxcrown)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Memory Safety](https://img.shields.io/badge/Safety-Memory%20Safe-success)](#-fail-safe-panic-shield--sqlstate-mapping)
 
@@ -81,12 +82,22 @@ proc get_top_stats*(minScore: float64): seq[UserStats] {.stable.} =
 
 ### 4. Test in Isolated Docker Containers (PG 14–17)
 ```bash
-# Run regression tests in an ephemeral PostgreSQL 16 container sandbox
+# Run regression tests in an ephemeral PostgreSQL 16 sandbox (or pick 14/15/17)
 pgxtool test analytics
+pgxtool test analytics --pg 17
+
+# Run directly inside the extension directory (CWD mode) or via explicit path
+(cd analytics && pgxtool test --pg 14)
+pgxtool test ./analytics --pg 15 --bless
 
 # Or test across the entire multi-version matrix (14, 15, 16, 17)
 pgxtool test analytics --all
+
+# Force pulling/using the official GHCR image repository explicitly
+PGXCROWN_IMAGE=ghcr.io/luisacosta828/pgxcrown pgxtool test analytics --pg 17
 ```
+
+> **Note:** When installed via `nimble install -y pgxcrown` outside a git checkout, `pgxtool test` automatically pulls `ghcr.io/luisacosta828/pgxcrown:<pg>`. Inside a repository checkout, it reuses local `pgxcrown:<pg>` / GHCR images or builds `docker/Dockerfile` automatically if missing.
 
 ### 5. Build & Install Locally
 ```bash
@@ -443,7 +454,7 @@ SELECT stop_order_archiver_worker();
 | **`install`** | `pgxtool install <name>` | Automatically copies `.so`, `.control`, and `.sql` to PostgreSQL directories. |
 | **`create-type`** | `pgxtool create-type <name> --base-type <type>` | Generates a custom distinct base type with dynamic parsing for 15 scalar types. |
 | **`create-hook`** | `pgxtool create-hook <name>` | Scaffolds a Postgres kernel hook template (`emit_log`, `post_parse_analyze`). |
-| **`test`** | `pgxtool test <name> [--debug] [--pg <v>] [--all] [--bless]` | Spawns isolated Docker containers (PG 14–17) to run SQL regression tests. |
+| **`test`** | `pgxtool test [project\|path] [--pg <v>] [--all] [--local] [--bless] [--debug]` | Runs SQL regression tests in Docker/GHCR sandboxes (PG 14–17) or natively inside a container (`--local`). |
 
 ---
 
@@ -469,13 +480,57 @@ SELECT stop_order_archiver_worker();
 
 ---
 
+---
+
+## 🐳 Official Docker & GHCR Images (PostgreSQL 14–17)
+
+Prebuilt all-in-one container images are published to GitHub Container Registry (`ghcr.io/luisacosta828/pgxcrown`, `linux/amd64`). Each image bundles official `postgres:<ver>`, `postgresql-server-dev-<ver>`, `gcc`, **Nim 2.4.0 + Nimble**, and **`pgxcrown` (`pgxtool`)** so engineers and CI runners can compile, install, and test C/Nim PostgreSQL extensions with zero host PostgreSQL setup.
+
+### Published GHCR Image Matrix (`v0.27.0`)
+
+| PostgreSQL Version | Rolling Major Tag | Pinned Release Tag |
+| :--- | :--- | :--- |
+| **PostgreSQL 17** | `ghcr.io/luisacosta828/pgxcrown:17` / `:latest` | `ghcr.io/luisacosta828/pgxcrown:17-0.27.0` |
+| **PostgreSQL 16** | `ghcr.io/luisacosta828/pgxcrown:16` | `ghcr.io/luisacosta828/pgxcrown:16-0.27.0` |
+| **PostgreSQL 15** | `ghcr.io/luisacosta828/pgxcrown:15` | `ghcr.io/luisacosta828/pgxcrown:15-0.27.0` |
+| **PostgreSQL 14** | `ghcr.io/luisacosta828/pgxcrown:14` | `ghcr.io/luisacosta828/pgxcrown:14-0.27.0` |
+
+### Real-World Workflows
+
+```bash
+# 1) Pull any version directly from GHCR
+docker pull ghcr.io/luisacosta828/pgxcrown:17
+
+# 2) Compile inside an ephemeral GHCR container (zero host PG/Nim toolchain needed)
+docker run --rm -v "$PWD":/workspace -w /workspace \
+  ghcr.io/luisacosta828/pgxcrown:17 pgxtool build-extension analytics
+
+# 3) Start a PostgreSQL 17 dev container and compile + install + run SQL tests (--local)
+docker run -d --name pgxcrown-17 -e POSTGRES_PASSWORD=postgres -p 5417:5432 \
+  -v "$PWD":/workspace -w /workspace ghcr.io/luisacosta828/pgxcrown:17
+docker exec -it pgxcrown-17 pgxtool test analytics --local
+
+# 4) Refresh pgxcrown inside an existing container image when a newer release ships
+nimble refresh && nimble install -y pgxcrown
+```
+
+### How `pgxtool` Resolves Images
+
+1. If `PGXCROWN_IMAGE` is set (e.g. `PGXCROWN_IMAGE=ghcr.io/luisacosta828/pgxcrown`), `pgxtool test` pulls and runs `<PGXCROWN_IMAGE>:<pg>`.
+2. Otherwise, if local `pgxcrown:<pg>` or cached `ghcr.io/luisacosta828/pgxcrown:<pg>` already exists locally, it reuses it immediately.
+3. Inside a repository checkout containing `docker/Dockerfile`, missing images are built locally as `pgxcrown:<pg>`; outside a checkout (e.g. `nimble install -y pgxcrown`), `pgxtool` automatically pulls `ghcr.io/luisacosta828/pgxcrown:<pg>`.
+
+You can also build images locally with `./docker/build.sh` or orchestrate all four PostgreSQL versions via `docker/compose.yaml`. See [docker/README.md](docker/README.md) for the complete container reference.
+
+---
+
 ## 🖥️ Platform & System Requirements
 
 - **Operating System**: Linux (`x86_64`, `aarch64`), macOS. *(Windows: use WSL2 or Docker).*
 - **PostgreSQL**: Version 14, 15, 16, or 17 (with `postgresql-server-dev-*` or `pg_config`).
 - **Nim Compiler**: Version $\ge 2.0.0$.
 - **C Compiler**: GCC or Clang.
-- **Docker** *(optional)*: Required for running `pgxtool test` multi-version container sandboxes.
+- **Docker** *(optional)*: Required on the host for `pgxtool test` sandboxes (automatically uses local builds or `ghcr.io/luisacosta828/pgxcrown:{14,15,16,17}`) or for zero-setup containerized development.
 
 ---
 

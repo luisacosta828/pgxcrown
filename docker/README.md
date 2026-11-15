@@ -2,7 +2,26 @@
 
 Official all-in-one container images pairing each PostgreSQL major version (`14`, `15`, `16`, `17`) with its matching `postgresql-server-dev-<ver>` headers, `gcc`, **Nim 2.4.0 + Nimble**, and **pgxcrown** (`pgxtool`) ready to compile, install, and test native extensions inside the container.
 
-## Build Images
+## Option A: Prebuilt Images from GHCR (`v0.27.0`)
+
+Published images live on GitHub Container Registry (`linux/amd64`, matching upstream `nimlang/nim:2.4.0`):
+
+| PostgreSQL | Rolling Major Tag | Pinned Release Tag |
+| :--- | :--- | :--- |
+| **PostgreSQL 17** | `ghcr.io/luisacosta828/pgxcrown:17` / `:latest` | `ghcr.io/luisacosta828/pgxcrown:17-0.27.0` |
+| **PostgreSQL 16** | `ghcr.io/luisacosta828/pgxcrown:16` | `ghcr.io/luisacosta828/pgxcrown:16-0.27.0` |
+| **PostgreSQL 15** | `ghcr.io/luisacosta828/pgxcrown:15` | `ghcr.io/luisacosta828/pgxcrown:15-0.27.0` |
+| **PostgreSQL 14** | `ghcr.io/luisacosta828/pgxcrown:14` | `ghcr.io/luisacosta828/pgxcrown:14-0.27.0` |
+
+```bash
+# Pull the PostgreSQL 17 image directly
+docker pull ghcr.io/luisacosta828/pgxcrown:17
+
+# Or pin explicitly to pgxcrown 0.27.0 on PostgreSQL 16
+docker pull ghcr.io/luisacosta828/pgxcrown:16-0.27.0
+```
+
+## Option B: Build Images Locally
 
 From the repository root:
 
@@ -22,10 +41,10 @@ PGXCROWN_SOURCE=nimble ./docker/build.sh 17
 
 ## Quick Start (Try Pgxcrown in 30 Seconds)
 
-Start a container (for example PostgreSQL 17):
+Start a container directly from GHCR (replace with `pgxcrown:17` if you built locally):
 
 ```bash
-docker run -d --name pgxcrown-17 -e POSTGRES_PASSWORD=postgres -p 5417:5432 pgxcrown:17
+docker run -d --name pgxcrown-17 -e POSTGRES_PASSWORD=postgres -p 5417:5432 ghcr.io/luisacosta828/pgxcrown:17
 ```
 
 Or with Docker Compose:
@@ -72,7 +91,14 @@ docker exec -it pgxcrown-17 bash -c '
 
 ## Automated SQL Regression Tests (`pgxtool test`)
 
-From the host (without needing PostgreSQL headers locally), `pgxtool test` starts `pgxcrown:<version>` (building from `docker/Dockerfile` automatically if not present), copies your project folder inside, compiles & installs natively, and executes `tests/sql/*.sql`:
+From the host (without needing PostgreSQL headers locally), `pgxtool test` resolves the sandbox image automatically:
+
+- Uses local `pgxcrown:<version>` or already-pulled `ghcr.io/luisacosta828/pgxcrown:<version>` if present.
+- In a repository checkout with `docker/Dockerfile`, builds `pgxcrown:<version>` automatically when missing.
+- In standalone `nimble install -y pgxcrown` setups (where `docker/` is not packaged), automatically pulls `ghcr.io/luisacosta828/pgxcrown:<version>`.
+- Respects `PGXCROWN_IMAGE` to force a custom registry/repository (e.g. `PGXCROWN_IMAGE=ghcr.io/luisacosta828/pgxcrown pgxtool test analytics --pg 17`).
+
+Once running, `pgxtool` copies your project folder inside, compiles & installs natively, and executes `tests/sql/*.sql` (pass `<name>`, `./path`, or run with no project argument inside the extension directory; add `--pg <v>`, `--all`, `--bless`, or `--local` when already inside the container):
 
 ```bash
 # Test against a specific PostgreSQL version (copies project into pgxcrown:<ver> and compiles inside)

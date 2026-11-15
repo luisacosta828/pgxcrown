@@ -219,20 +219,20 @@
           </div>
         </div>
 
-        <!-- Bento 4: Multi-Version Docker Matrix -->
+        <!-- Bento 4: Multi-Version Docker & GHCR Matrix -->
         <div class="bento-card glass-card">
           <div>
             <div class="bento-header">
               <div class="bento-icon bento-icon-purple">🐳</div>
-              <h3 class="bento-title">Multi-Version Docker Sandboxes</h3>
+              <h3 class="bento-title">Prebuilt GHCR &amp; Docker Sandboxes</h3>
             </div>
             <p class="bento-text">
-              Run SQL regression tests in ephemeral Docker containers across PostgreSQL 14, 15, 16, and 17. Features colored visual diffing and automated golden snapshot blessing (<code>--bless</code>) with zero host database mutation.
+              Pull all-in-one <code>ghcr.io/luisacosta828/pgxcrown</code> containers (PG 14, 15, 16, 17 + Nim + pgxtool) or let <code>pgxtool test --all</code> isolate regression suites with visual diffs and <code>--bless</code> golden snapshots.
             </p>
           </div>
           <div class="bento-footer">
-            <span class="bento-metric">PostgreSQL 14–17 Matrix | Diff Engine</span>
-            <span class="bento-pill">Quality</span>
+            <span class="bento-metric">GHCR PG 14–17 | Diff Engine</span>
+            <span class="bento-pill">Containers</span>
           </div>
         </div>
 
@@ -329,6 +329,8 @@
           <button class="cli-btn" data-cmd="pgxtool clean analytics">pgxtool clean</button>
           <button class="cli-btn" data-cmd="pgxtool test analytics">pgxtool test</button>
           <button class="cli-btn" data-cmd="pgxtool test analytics --all">pgxtool test --all</button>
+          <button class="cli-btn" data-cmd="PGXCROWN_IMAGE=ghcr.io/luisacosta828/pgxcrown pgxtool test analytics --pg 17">ghcr.io sandbox (--pg 17)</button>
+          <button class="cli-btn" data-cmd='docker exec -it pgxcrown-17 pgxtool test analytics --local'>docker exec --local</button>
           <button class="cli-btn" data-cmd="pgxtool create-worker order_archiver">pgxtool create-worker</button>
           <button class="cli-btn" data-cmd="pgxtool create-type nickname --base-type string">pgxtool create-type</button>
           <button class="cli-btn" data-cmd="pgxtool create-project analytics">pgxtool create-project</button>
@@ -353,25 +355,36 @@
           <div class="qs-step">
             <div class="step-num">1</div>
             <div class="step-content">
-              <h4>Install Framework via Nimble</h4>
-              <pre><code>nimble install -y pgxcrown</code></pre>
+              <h4>Install Framework via Nimble (or Pull Official GHCR Image)</h4>
+              <pre><code>nimble install -y pgxcrown
+docker pull ghcr.io/luisacosta828/pgxcrown:17   # or :14, :15, :16, :latest</code></pre>
             </div>
           </div>
 
           <div class="qs-step">
             <div class="step-num">2</div>
             <div class="step-content">
-              <h4>Scaffold &amp; Build Extension</h4>
-              <pre><code>pgxtool init && pgxtool create-project analytics
-pgxtool build-extension analytics</code></pre>
+              <h4>Scaffold &amp; Test Across PostgreSQL 14–17</h4>
+              <pre><code>pgxtool init &amp;&amp; pgxtool create-project analytics
+pgxtool test analytics --all --bless   # auto-pulls GHCR images if needed</code></pre>
             </div>
           </div>
 
           <div class="qs-step">
             <div class="step-num">3</div>
             <div class="step-content">
-              <h4>Install &amp; Enable in PostgreSQL</h4>
-              <pre><code>sudo ./analytics/src/install.sh
+              <h4>Or Develop Inside a Running GHCR Container (Zero Host PG Headers)</h4>
+              <pre><code>docker run -d --name pgxcrown-17 -e POSTGRES_PASSWORD=postgres \
+  -v "$PWD":/workspace -w /workspace ghcr.io/luisacosta828/pgxcrown:17
+docker exec -it pgxcrown-17 pgxtool test analytics --local</code></pre>
+            </div>
+          </div>
+
+          <div class="qs-step">
+            <div class="step-num">4</div>
+            <div class="step-content">
+              <h4>Build &amp; Enable on Host PostgreSQL</h4>
+              <pre><code>pgxtool build-extension analytics &amp;&amp; sudo pgxtool install analytics
 psql -U postgres -c "CREATE EXTENSION analytics;"</code></pre>
             </div>
           </div>

@@ -98,8 +98,9 @@ const heroCodeSnippets = {
     <span class="syn-fn">raisePgError</span>(ERRCODE_DIVISION_BY_ZERO, <span class="syn-str">"Cannot divide by zero"</span>)
   <span class="syn-kw">return</span> a <span class="syn-kw">div</span> b <span class="syn-cmt"># Defect caught cleanly inside PG_TRY; server never crashes!</span>`,
 
-  testing: `<span class="syn-cmt"># Ephemeral Docker Sandbox Matrix (PG 14, 15, 16, 17)</span>
-<span class="syn-cmt"># Run: pgxtool test analytics --all --bless</span>
+  testing: `<span class="syn-cmt"># Prebuilt GHCR Images &amp; Sandbox Matrix (PG 14, 15, 16, 17)</span>
+<span class="syn-cmt"># Host sandbox: pgxtool test analytics --all --bless</span>
+<span class="syn-cmt"># Running container: docker exec -it pgxcrown-17 pgxtool test analytics --local</span>
 
 <span class="syn-sql">CREATE EXTENSION</span> analytics;
 
@@ -279,20 +280,19 @@ const pillarData = {
     desc: 'pgxtool manages extension scaffolding, incremental compilation caching, automated gitignore management, and multi-version Docker sandbox testing.',
     checklist: [
       '<strong>Sub-15ms Incremental Rebuilds</strong>: Deterministic SHA-256 source hashing with .pgx_build manifest.',
-      '<strong>Isolated Nimcache</strong>: Per-project C artifacts prevent global cache invalidation.',
-      '<strong>Instant Clean Command</strong>: <code>pgxtool clean &lt;name&gt;</code> removes build cache and artifacts instantly.',
-      '<strong>Ephemeral Docker Sandboxes</strong>: Test extensions against PostgreSQL 14–17 with golden diff snapshots (<code>--bless</code>).'
+      '<strong>Prebuilt GHCR Images (PG 14–17)</strong>: <code>ghcr.io/luisacosta828/pgxcrown:{14,15,16,17,latest}</code> bundles PG headers, gcc, Nim 2.4.0, and pgxtool.',
+      '<strong>Ephemeral Docker &amp; In-Container Tests</strong>: Run <code>pgxtool test --all --bless</code> on host or <code>pgxtool test --local</code> inside containers.',
+      '<strong>Instant Clean Command</strong>: <code>pgxtool clean &lt;name&gt;</code> removes build cache and artifacts instantly.'
     ],
-    tags: ['< 15ms Cache', 'Isolated Nimcache', 'Docker PG 14-17', 'Golden Snapshots', 'pgxtool clean'],
+    tags: ['< 15ms Cache', 'GHCR PG 14-17', 'pgxtool test --local', 'Golden Snapshots', 'pgxtool clean'],
     codeHeader: 'Terminal Commands',
-    code: `<span class="syn-cmt"># Instant sub-15ms incremental build:</span>
-$ pgxtool build-extension analytics
+    code: `<span class="syn-cmt"># Multi-version sandbox testing (auto-pulls GHCR when installed via Nimble):</span>
+$ pgxtool test analytics --all --bless
 
-<span class="syn-cmt"># Clean build cache and generated artifacts:</span>
-$ pgxtool clean analytics
-
-<span class="syn-cmt"># Run regression tests in isolated ephemeral Docker container:</span>
-$ pgxtool test analytics --all --bless`
+<span class="syn-cmt"># Zero-setup container workflow with prebuilt GHCR PostgreSQL 17:</span>
+$ docker run -d --name pgxcrown-17 -e POSTGRES_PASSWORD=postgres \\
+  -v "$PWD":/workspace -w /workspace ghcr.io/luisacosta828/pgxcrown:17
+$ docker exec -it pgxcrown-17 pgxtool test analytics --local`
   }
 };
 
@@ -406,17 +406,37 @@ const cliLogs = {
   ],
   'pgxtool test analytics': [
     { text: '🔍 Container Engine: Docker (/usr/bin/docker)', type: 'info' },
+    { text: '📦 Image: pgxcrown:16 (fallback: ghcr.io/luisacosta828/pgxcrown:16)', type: 'info' },
     { text: '🐘 Pgxcrown Test Runner [PostgreSQL 16 via Docker]', type: 'info' },
     { text: '🚀 [1/4] Starting PostgreSQL 16 sandbox container...', type: 'info' },
-    { text: '📦 [2/4] Injecting extension "analytics" into PostgreSQL engine...', type: 'info' },
+    { text: '📦 [2/4] Building & installing extension "analytics" inside container...', type: 'info' },
     { text: '🗄️  [3/4] Creating clean database "pgxtool_test_analytics" and loading extension...', type: 'info' },
     { text: '🧪 [4/4] Executing SQL regression tests...', type: 'info' },
     { text: '   • tests/sql/01_basic.sql ...... ✅ PASSED (14ms)', type: 'success' },
     { text: '🎉 PG 16 ALL TESTS PASSED (1/1)', type: 'success' }
   ],
+  'PGXCROWN_IMAGE=ghcr.io/luisacosta828/pgxcrown pgxtool test analytics --pg 17': [
+    { text: '🔍 Container Engine: Docker (/usr/bin/docker)', type: 'info' },
+    { text: '🌐 Pulling ghcr.io/luisacosta828/pgxcrown:17...', type: 'info' },
+    { text: '🐘 Pgxcrown Test Runner [PostgreSQL 17 via GHCR]', type: 'info' },
+    { text: '🚀 [1/4] Starting ghcr.io/luisacosta828/pgxcrown:17 container...', type: 'info' },
+    { text: '📦 [2/4] Compiling against PG 17 headers & installing "analytics"...', type: 'info' },
+    { text: '🗄️  [3/4] Running SQL regression suite on pgxtool_test_analytics...', type: 'info' },
+    { text: '   • tests/sql/01_basic.sql ...... ✅ PASSED (11ms)', type: 'success' },
+    { text: '🎉 PG 17 ALL TESTS PASSED (1/1)', type: 'success' }
+  ],
+  'docker exec -it pgxcrown-17 pgxtool test analytics --local': [
+    { text: '🐘 Pgxcrown Test Runner [PostgreSQL 17 — local engine]', type: 'info' },
+    { text: '📦 [1/3] Compiling extension natively for local PostgreSQL 17...', type: 'info' },
+    { text: '🛡️  [SECURITY AUDIT PASSED] No blacklisted OS system calls detected', type: 'success' },
+    { text: '🗄️  [2/3] Creating clean database "pgxtool_test_analytics" and loading extension...', type: 'info' },
+    { text: '🧪 [3/3] Executing SQL regression tests...', type: 'info' },
+    { text: '   • tests/sql/01_basic.sql ...... ✅ PASSED (26ms)', type: 'success' },
+    { text: '🎉 PG 17 ALL TESTS PASSED (1/1)', type: 'success' }
+  ],
   'pgxtool test analytics --all': [
     { text: '🔍 Container Engine: Docker (/usr/bin/docker)', type: 'info' },
-    { text: '🐘 Pgxcrown Multi-Version Test Matrix (PG 14, 15, 16, 17)', type: 'info' },
+    { text: '🐘 Pgxcrown Multi-Version Test Matrix (PG 14, 15, 16, 17 | GHCR / Local)', type: 'info' },
     { text: '  ├─ [PG 14] tests/sql/01_basic.sql ...... ✅ PASSED (16ms)', type: 'success' },
     { text: '  ├─ [PG 15] tests/sql/01_basic.sql ...... ✅ PASSED (15ms)', type: 'success' },
     { text: '  ├─ [PG 16] tests/sql/01_basic.sql ...... ✅ PASSED (14ms)', type: 'success' },
