@@ -111,18 +111,19 @@ proc buildBaseTypeFunctionSQL(fn: NimNode, role: string, targetType: string, sql
   var paramsStr = ""
   var returnTypeStr = ""
   
+  let quotedTarget = "\"" & targetType & "\""
   case role
   of "input":
     paramsStr = "cstring"
-    returnTypeStr = targetType
+    returnTypeStr = quotedTarget
   of "output":
-    paramsStr = targetType
+    paramsStr = quotedTarget
     returnTypeStr = "cstring"
   of "receive":
     paramsStr = "internal"
-    returnTypeStr = targetType
+    returnTypeStr = quotedTarget
   of "send":
-    paramsStr = targetType
+    paramsStr = quotedTarget
     returnTypeStr = "bytea"
   else:
     discard
@@ -245,7 +246,7 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
 
 proc buildEnumType(element: NimNode, sql_scripts: var string) =
   var 
-    enum_template = "\nCREATE TYPE $ENUM_NAME AS ENUM ($ENUM_LIST);\n"
+    enum_template = "\nCREATE TYPE \"$ENUM_NAME\" AS ENUM ($ENUM_LIST);\n"
     enum_name     = element[0].repr.strip(chars = {'*'})
     enum_list: seq[string] = @[]
 
@@ -339,7 +340,7 @@ macro decorateMainFunctions*() =
           baseTypes[info.name] = info
           custom_datatypes[info.name] = info.baseType
           recordType.add info.name
-          sql_shell_types.add "\nCREATE TYPE " & info.name & ";\n"
+          sql_shell_types.add "\nCREATE TYPE \"" & info.name & "\";\n"
         else:
           var pragmaexpr = newNimNode(nnkPragmaExpr)
           var type_checked = check_type_section(e)
@@ -400,8 +401,9 @@ macro decorateMainFunctions*() =
         if el.pragma.kind == nnkEmpty:
           el.pragma = newNimNode(nnkPragma)
         el.pragma.add(newIdentNode("cdecl"))
-        el.pragma.add(newIdentNode("exportc"))
+        el.pragma.add(newColonExpr(newIdentNode("exportc"), newLit("_PG_init")))
         el.pragma.add(newIdentNode("dynlib"))
+        el.pragma.add(newColonExpr(newIdentNode("stackTrace"), newIdentNode("off")))
         let initScoped = newTree(nnkBlockStmt, newEmptyNode(), el.body)
         let pendingErrIdent = newIdentNode("pgxPendingErr")
         let errCodeIdent = newIdentNode("pgxErrCode")
@@ -409,22 +411,26 @@ macro decorateMainFunctions*() =
         let errDetailIdent = newIdentNode("pgxErrDetail")
         let errHintIdent = newIdentNode("pgxErrHint")
         let eIdent = newIdentNode("e")
+        let initImplIdent = newIdentNode("pgxInitGuardedImpl")
         el.body = quote do:
-          var `pendingErrIdent` = false
-          var `errCodeIdent`: cint = 0
-          var `errMsgIdent`: cstring = nil
-          var `errDetailIdent`: cstring = nil
-          var `errHintIdent`: cstring = nil
-          try:
-            `initScoped`
-          except Defect as `eIdent`:
-            prepareNimDefect(`eIdent`, `errCodeIdent`, `errMsgIdent`, `errDetailIdent`, `errHintIdent`)
-            `pendingErrIdent` = true
-          except CatchableError as `eIdent`:
-            prepareNimError(`eIdent`, `errCodeIdent`, `errMsgIdent`, `errDetailIdent`, `errHintIdent`)
-            `pendingErrIdent` = true
-          if `pendingErrIdent`:
-            pgxEreportFull(ERROR, `errCodeIdent`, `errMsgIdent`, `errDetailIdent`, `errHintIdent`)
+          proc `initImplIdent`() =
+            var `pendingErrIdent` = false
+            var `errCodeIdent`: cint = 0
+            var `errMsgIdent`: cstring = nil
+            var `errDetailIdent`: cstring = nil
+            var `errHintIdent`: cstring = nil
+            try:
+              pgxWithTopMemoryContext:
+                `initScoped`
+            except Defect as `eIdent`:
+              prepareNimDefect(`eIdent`, `errCodeIdent`, `errMsgIdent`, `errDetailIdent`, `errHintIdent`)
+              `pendingErrIdent` = true
+            except CatchableError as `eIdent`:
+              prepareNimError(`eIdent`, `errCodeIdent`, `errMsgIdent`, `errDetailIdent`, `errHintIdent`)
+              `pendingErrIdent` = true
+            if `pendingErrIdent`:
+              pgxEreportFull(ERROR, `errCodeIdent`, `errMsgIdent`, `errDetailIdent`, `errHintIdent`)
+          pgxRunVoidGuarded(`initImplIdent`)
         continue
 
       if isWorkerProc(el):
@@ -522,7 +528,7 @@ macro decorateMainFunctions*() =
   # Pass 3: Finalize Base Type DDLs
   for typeName, info in baseTypes:
     if info.inputFn.len > 0 and info.outputFn.len > 0:
-      var ddl = "\nCREATE TYPE " & info.name & " (\n"
+      var ddl = "\nCREATE TYPE \"" & info.name & "\" (\n"
       ddl.add "  INPUT = " & info.inputFn & ",\n"
       ddl.add "  OUTPUT = " & info.outputFn
       if info.receiveFn.len > 0:
@@ -549,6 +555,31 @@ macro decorateMainFunctions*() =
   for el in v1fns:
     source.add quote do:
       PG_FUNCTION_INFO_V1(`el.repr`)
+
+  source.add newNimNode(nnkPragma).add(
+    newColonExpr(
+      newIdentNode("emit"),
+      newLit("""
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak)) int pgx_force_libc_alloc = 0;
+__attribute__((constructor(101))) static void pgx_pre_nim_init(void) {
+  pgx_force_libc_alloc++;
+}
+static void pgx_post_nim_init(void) {
+  if (pgx_force_libc_alloc > 0) {
+    pgx_force_libc_alloc--;
+  }
+}
+#else
+static void pgx_post_nim_init(void) {}
+#endif
+""")
+    )
+  )
+  let postInitIdent = newIdentNode("pgxPostNimInitHook")
+  source.add quote do:
+    proc `postInitIdent`() {.importc: "pgx_post_nim_init", nodecl.}
+    `postInitIdent`()
 
   res.add source[0..^1]
   writeFile(entrypoint, res.repr)

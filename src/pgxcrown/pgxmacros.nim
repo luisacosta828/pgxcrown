@@ -42,6 +42,7 @@ template NimTypes(dt: string): string =
   of "int64": "clonglong"
   of "uint64": "culonglong"
   of "uint16": "cushort"
+  of "uint8": "uint8"
   of "char": "cchar"
   of "bool": "bool"
   of "string": "string"
@@ -54,8 +55,11 @@ template PgxToNim(dt: string): string =
   case dt
   of "int", "int32": "getInt32"
   of "int16": "getInt16"
+  of "int8": "getInt8"
   of "uint16": "getUInt16"
+  of "uint8": "getUInt8"
   of "int64": "getInt64"
+  of "uint64": "getUInt64"
   of "char": "getChar"
   of "bool": "getBool"
   of "uint", "uint32": "getUInt32"
@@ -409,8 +413,15 @@ template move_nim_params_as_locals =
         of "PgText": newTree(nnkObjConstr, ident("PgText"))
         of "bool": newLit(false)
         of "int", "int32", "cint": newLit(int32(0))
+        of "int16": newLit(int16(0))
+        of "int8": newLit(int8(0))
         of "int64": newLit(int64(0))
-        of "float", "float64": newLit(float64(0.0))
+        of "uint", "uint32": newLit(uint32(0))
+        of "uint16": newLit(uint16(0))
+        of "uint8": newLit(uint8(0))
+        of "uint64": newLit(uint64(0))
+        of "float", "float32": newLit(float32(0.0))
+        of "float64": newLit(float64(0.0))
         of "JsonNode", "Json", "json", "Jsonb", "jsonb": newCall(ident("newJNull"))
         else:
           if ptype.startsWith("seq["):
@@ -432,7 +443,7 @@ template move_nim_params_as_locals =
       else:
         getValue = rawFetch
 
-    let isPrimitiveOrJson = ptype in ["int", "int32", "int16", "uint16", "int64", "char", "bool", "uint", "uint32", "float", "float32", "float64", "string", "cstring", "PgText", "JsonNode", "Json", "json", "Jsonb", "jsonb"]
+    let isPrimitiveOrJson = ptype in ["int", "int32", "int16", "int8", "int64", "char", "bool", "uint", "uint32", "uint16", "uint8", "uint64", "float", "float32", "float64", "string", "cstring", "PgText", "JsonNode", "Json", "json", "Jsonb", "jsonb"]
     let isPrimitiveSeq = ptype in ["seq[int]", "seq[int32]", "seq[int64]", "seq[float]", "seq[float32]", "seq[float64]", "seq[bool]", "seq[string]", "seq[JsonNode]", "seq[Jsonb]", "seq[jsonb]"]
     let isPrimitiveVector = ptype.startsWith("PgVector[")
     var idx = $cacheIteration & "type"
@@ -538,9 +549,13 @@ proc analyze_node(code: NimNode): NimNode =
       result = check_call_section(code)
   of nnkCommand:
     if code[0].repr == "echo":
-      result = newCall(ident("report"), [ident("notice"), code[1]]) 
+      result = newCall(ident("report"), [ident("notice"), analyze_node(code[1])])
+    elif code[0].repr in pgxFunctions:
+      result = check_call_section(code)
     else:
-      result = code
+      result.add code[0]
+      for i in 1 ..< code.len:
+        result.add analyze_node(code[i])
     
   of nnkBlockStmt:
     result.add code[0]
@@ -689,23 +704,32 @@ template clean_tuple_desc =
         rbody.add anonTuplConstr[key]
   
 
+proc resolveDatumConverter(typeStr: string): string =
+  ## Maps a normalized Nim return/element type name to its PostgreSQL Datum converter proc.
+  case typeStr:
+  of "int", "int32", "cint": "Int32GetDatum"
+  of "int64", "clonglong": "Int64GetDatum"
+  of "int16", "cshort": "Int16GetDatum"
+  of "int8": "Int8GetDatum"
+  of "uint", "uint32", "cuint": "UInt32GetDatum"
+  of "uint64", "culonglong": "UInt64GetDatum"
+  of "uint16", "cushort": "UInt16GetDatum"
+  of "uint8": "UInt8GetDatum"
+  of "float", "float32", "cfloat": "Float4GetDatum"
+  of "float64", "cdouble": "Float8GetDatum"
+  of "bool": "BoolGetDatum"
+  of "string", "cstring", "Text", "PgText": "returnPgText"
+  of "JsonNode", "Json", "json", "Jsonb", "jsonb": "JsonNodeToDatum"
+  of "PgVector[float64]": "returnPgVectorFloat64"
+  of "PgVector[float32]", "PgVector[float]": "returnPgVectorFloat32"
+  of "PgVector[int32]", "PgVector[int]": "returnPgVectorInt32"
+  of "PgVector[int64]": "returnPgVectorInt64"
+  of "PgVector[int16]": "returnPgVectorInt16"
+  of "PgVector[bool]": "returnPgVectorBool"
+  else: "objectToDatum"
+
 proc wrapOptionReturn(code: NimNode, innerTypeStr: string): NimNode =
-  let datumConverter = case innerTypeStr:
-    of "int", "int32", "cint": "Int32GetDatum"
-    of "int64", "clonglong": "Int64GetDatum"
-    of "int16", "cshort": "Int16GetDatum"
-    of "float", "float32", "cfloat": "Float4GetDatum"
-    of "float64", "cdouble": "Float8GetDatum"
-    of "bool": "BoolGetDatum"
-    of "string", "Text", "PgText": "returnPgText"
-    of "JsonNode", "Json", "json", "Jsonb", "jsonb": "JsonNodeToDatum"
-    of "PgVector[float64]": "returnPgVectorFloat64"
-    of "PgVector[float32]", "PgVector[float]": "returnPgVectorFloat32"
-    of "PgVector[int32]", "PgVector[int]": "returnPgVectorInt32"
-    of "PgVector[int64]": "returnPgVectorInt64"
-    of "PgVector[int16]": "returnPgVectorInt16"
-    of "PgVector[bool]": "returnPgVectorBool"
-    else: "objectToDatum"
+  let datumConverter = resolveDatumConverter(innerTypeStr)
 
   proc transformReturn(n: NimNode): NimNode =
     if n.kind == nnkReturnStmt:
@@ -764,16 +788,7 @@ proc wrapOptionReturn(code: NimNode, innerTypeStr: string): NimNode =
 
 proc wrapSeqReturn(code: NimNode, retTypeStr: string): NimNode =
   let elemTypeStr = retTypeStr[4 .. ^2]
-  let datumConverter = case elemTypeStr:
-    of "int", "int32", "cint": "Int32GetDatum"
-    of "int64", "clonglong": "Int64GetDatum"
-    of "int16", "cshort": "Int16GetDatum"
-    of "float", "float32", "cfloat": "Float4GetDatum"
-    of "float64", "cdouble": "Float8GetDatum"
-    of "bool": "BoolGetDatum"
-    of "string", "Text", "PgText": "returnPgText"
-    of "JsonNode", "Json", "json", "Jsonb", "jsonb": "JsonNodeToDatum"
-    else: "objectToDatum"
+  let datumConverter = resolveDatumConverter(elemTypeStr)
 
   proc replaceResult(n: NimNode): NimNode =
     if n.kind == nnkIdent and n.repr == "result":
@@ -878,22 +893,7 @@ proc wrapScalarReturn(code: NimNode, retTypeStr: string): NimNode =
       result.add newTree(nnkReturnStmt, newCall(ident("Datum"), newLit(0)))
     return result
 
-  let datumConverter = case retTypeStr:
-    of "int", "int32", "cint": "Int32GetDatum"
-    of "int64", "clonglong": "Int64GetDatum"
-    of "int16", "cshort": "Int16GetDatum"
-    of "float", "float32", "cfloat": "Float4GetDatum"
-    of "float64", "cdouble": "Float8GetDatum"
-    of "bool": "BoolGetDatum"
-    of "string", "cstring", "Text", "PgText": "returnPgText"
-    of "JsonNode", "Json", "json", "Jsonb", "jsonb": "JsonNodeToDatum"
-    of "PgVector[float64]": "returnPgVectorFloat64"
-    of "PgVector[float32]", "PgVector[float]": "returnPgVectorFloat32"
-    of "PgVector[int32]", "PgVector[int]": "returnPgVectorInt32"
-    of "PgVector[int64]": "returnPgVectorInt64"
-    of "PgVector[int16]": "returnPgVectorInt16"
-    of "PgVector[bool]": "returnPgVectorBool"
-    else: "objectToDatum"
+  let datumConverter = resolveDatumConverter(retTypeStr)
 
   proc transformReturn(n: NimNode): NimNode =
     if n.kind == nnkReturnStmt:
@@ -934,6 +934,12 @@ proc wrapScalarReturn(code: NimNode, retTypeStr: string): NimNode =
         return newTree(nnkReturnStmt, newCall(ident("BoolGetDatum"), newCall(ident("bool"), retExpr)))
       elif retTypeStr in ["uint", "uint32"]:
         return newTree(nnkReturnStmt, newCall(ident("UInt32GetDatum"), newCall(ident("uint32"), retExpr)))
+      elif retTypeStr in ["uint16", "cushort"]:
+        return newTree(nnkReturnStmt, newCall(ident("UInt16GetDatum"), newCall(ident("uint16"), retExpr)))
+      elif retTypeStr in ["uint8"]:
+        return newTree(nnkReturnStmt, newCall(ident("UInt8GetDatum"), newCall(ident("uint8"), retExpr)))
+      elif retTypeStr in ["int8"]:
+        return newTree(nnkReturnStmt, newCall(ident("Int8GetDatum"), newCall(ident("int8"), retExpr)))
       elif retTypeStr in ["uint64"]:
         return newTree(nnkReturnStmt, newCall(ident("UInt64GetDatum"), newCall(ident("uint64"), retExpr)))
       else:
@@ -1025,9 +1031,16 @@ proc explainWrapper(fn: NimNode): NimNode =
     forbidsList.add(ident("DbWriteEffect"))
   forbidsExpr.add(forbidsList)
 
+  var innerPragma = newNimNode(nnkPragma)
+  innerPragma.add(ident("nimcall"))
+  innerPragma.add(forbidsExpr)
+  if isImmutable:
+    innerPragma.add(ident("noSideEffect"))
+
   var trustedPragma = newNimNode(nnkPragma)
   trustedPragma.add(ident("pgv1"))
   trustedPragma.add(ident("trusted"))
+  trustedPragma.add(newColonExpr(ident("stackTrace"), ident("off")))
   trustedPragma.add(forbidsExpr)
   if isImmutable:
     trustedPragma.add(ident("noSideEffect"))
@@ -1085,16 +1098,36 @@ proc explainWrapper(fn: NimNode): NimNode =
     if `pendingErrIdent`:
       pgxEreportFull(ERROR, `errCodeIdent`, `errMsgIdent`, `errDetailIdent`, `errHintIdent`)
 
-  pgx_proc.body = shieldedBody
+  var innerProc = copyNimTree(pgx_proc)
+  let innerProcIdent = ident("pgxImpl_" & $fn.name & "_" & $fnIdx)
+  innerProc[0] = innerProcIdent
+  innerPragma.add(newColonExpr(ident("codegenDecl"), newLit("static $# $#(PG_FUNCTION_ARGS)")))
+  innerProc.pragma = innerPragma
+  innerProc.body = shieldedBody
+
+  pgx_proc.body = quote do:
+    return pgxRunV1Guarded(Datum, `innerProcIdent`)
   when defined(pgxDebug):
+    echo innerProc.repr
     echo pgx_proc.repr
-  
-  result = pgx_proc
+
+  result = newStmtList(innerProc, pgx_proc)
   fnIdx += 1
 
-proc registerPGXEnum(obj: NimNode) = pgxEnums[obj[0][0].repr] = obj
-proc registerPGXTupleConstr(obj: NimNode) = pgxTupleConstr[obj[0][0].repr] = obj
-proc registerPGXObjectTy(obj: NimNode) = pgxObjectTy[obj[0][0].repr] = obj
+proc registerPGXEnum(obj: NimNode) =
+  let rawName = obj[0][0].repr
+  pgxEnums[rawName] = obj
+  pgxEnums[rawName.strip(chars = {'*'}).strip()] = obj
+
+proc registerPGXTupleConstr(obj: NimNode) =
+  let rawName = obj[0][0].repr
+  pgxTupleConstr[rawName] = obj
+  pgxTupleConstr[rawName.strip(chars = {'*'}).strip()] = obj
+
+proc registerPGXObjectTy(obj: NimNode) =
+  let rawName = obj[0][0].repr
+  pgxObjectTy[rawName] = obj
+  pgxObjectTy[rawName.strip(chars = {'*'}).strip()] = obj
 
 macro pgx*(fn: untyped): untyped = 
   if fn.kind != nnkTypeDef:

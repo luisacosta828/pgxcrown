@@ -183,6 +183,12 @@ proc DirectFunctionCall9*(fn: PGType, arg1: Datum, arg2: Datum, arg3: Datum, arg
 proc OidOutputFunctionCall*(functionId: Oid, value: Datum): cstring {. importc, noconv, cdecl, noSideEffect, gcsafe .}
 {.pop.}
 
+template getUInt64*(value: cuint): uint64 = DatumGetUInt64(getDatum(value))
+
+template getInt8*(value: cuint): int8 = cast[int8](DatumGetChar(getDatum(value)))
+
+template getUInt8*(value: cuint): uint8 = DatumGetUInt8(getDatum(value))
+
 {.push header: "utils/fmgrprotos.h".}
 proc enum_out*(fcinfo: FunctionCallInfo): Datum {.importc: "enum_out", noconv, cdecl, noSideEffect, gcsafe.}
 proc jsonb_in*(fcinfo: FunctionCallInfo): Datum {.importc: "jsonb_in", noconv, cdecl, noSideEffect, gcsafe.}
