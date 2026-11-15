@@ -481,7 +481,7 @@ proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = fa
   createDir(nimcacheDir)
 
   let currentSourceHash = computeSourceHash(projectDir)
-  const currentPgxcrownVersion = "0.26.1-arc"
+  const currentPgxcrownVersion = "0.27.0-arc"
 
   # Smart incremental check: if target library exists and sources haven't changed, skip build (unless debug or force)
   if not force and not cleanBefore and not debug and targetLib.len > 0 and fileExists(targetLib) and fileExists(manifestFile):
