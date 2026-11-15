@@ -26,13 +26,16 @@ import ./compiler
 #undef strerror
 
 __attribute__((weak)) MemoryContext CurrentMemoryContext = (MemoryContext)0;
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak))
+#endif
+int pgx_force_libc_alloc = 0;
+int pgx_libc_forced(void) {
+  return pgx_force_libc_alloc != 0;
+}
 __attribute__((weak)) void *palloc(Size size) { return malloc(size); }
 __attribute__((weak)) void pfree(void *ptr) { if (ptr) free(ptr); }
 __attribute__((weak)) void *repalloc(void *ptr, Size size) { return realloc(ptr, size); }
-__attribute__((weak)) void *__real_malloc(size_t size) { return malloc(size); }
-__attribute__((weak)) void *__real_calloc(size_t nmemb, size_t size) { return calloc(nmemb, size); }
-__attribute__((weak)) void *__real_realloc(void *ptr, size_t size) { return realloc(ptr, size); }
-__attribute__((weak)) void __real_free(void *ptr) { free(ptr); }
 
 __attribute__((weak)) int pg_sprintf(char *str, const char *fmt, ...) {
     va_list args;
@@ -57,6 +60,16 @@ __attribute__((weak)) int pg_snprintf(char *str, size_t count, const char *fmt, 
 __attribute__((weak)) int pg_vsnprintf(char *str, size_t count, const char *fmt, va_list args) {
     return vsnprintf(str, count, fmt, args);
 }
+#endif
+""".}
+
+when not defined(useMalloc):
+  {.emit: """
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(PGX_WRAP_MALLOC)
+__attribute__((weak)) void *__real_malloc(size_t size) { return malloc(size); }
+__attribute__((weak)) void *__real_calloc(size_t nmemb, size_t size) { return calloc(nmemb, size); }
+__attribute__((weak)) void *__real_realloc(void *ptr, size_t size) { return realloc(ptr, size); }
+__attribute__((weak)) void __real_free(void *ptr) { free(ptr); }
 #endif
 """.}
 
@@ -98,9 +111,11 @@ proc real_free*(p: pointer) {.importc: "__real_free", cdecl.}
 # C library memset
 proc memset(dest: pointer, c: cint, n: csize_t): pointer {.importc: "memset", header: "<string.h>".}
 
+proc pgxLibcForced(): cint {.cdecl, importc: "pgx_libc_forced".}
+
 proc isPostgresAllocActive*(): bool {.inline.} =
   ## Returns true if PostgreSQL memory context subsystem is active in the current thread/process.
-  CurrentMemoryContext != nil
+  (CurrentMemoryContext != nil) and (pgxLibcForced() == 0)
 
 proc wrap_malloc*(size: csize_t): pointer {.cdecl, exportc: "__wrap_malloc".} =
   if size > csize_t.high - sizeof(PgxChunkHeader).csize_t:

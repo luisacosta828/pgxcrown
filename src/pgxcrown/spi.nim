@@ -197,17 +197,91 @@ proc mapRowTo*[T: object](row: Table[string, string]): T {.tags: [].} =
 var SPI_processed* {.importc: "SPI_processed".}: uint64
 var SPI_tuptable* {.importc: "SPI_tuptable".}: TupleTable
 
+{.emit: """
+#include "utils/memutils.h"
+void *pgx_spi_get_current_ctx(void) {
+  return (void *)CurrentMemoryContext;
+}
+void *pgx_spi_set_current_ctx(void *ctx) {
+  if (ctx != NULL) {
+    return (void *)MemoryContextSwitchTo((MemoryContext)ctx);
+  }
+  MemoryContext old = CurrentMemoryContext;
+  CurrentMemoryContext = (MemoryContext)0;
+  return (void *)old;
+}
+""".}
+
+proc pgxSpiGetCurrentCtx*(): pointer {.importc: "pgx_spi_get_current_ctx".}
+proc pgxSpiSetCurrentCtx*(ctx: pointer): pointer {.importc: "pgx_spi_set_current_ctx".}
+
+proc pgxSpiCopyStr(s: string): string =
+  if s.len == 0:
+    return ""
+  result = newString(s.len)
+  copyMem(addr result[0], unsafeAddr s[0], s.len)
+
+proc pgxCloneExceptionBase[T: Exception](src: ref Exception): ref T =
+  var cloned: ref T
+  new(cloned)
+  cloned.name = src.name
+  cloned.msg = pgxSpiCopyStr(src.msg)
+  result = cloned
+
+proc pgxClonePgFields[T](dst, src: ref T) =
+  dst.sqlerrcode = src.sqlerrcode
+  dst.detail = pgxSpiCopyStr(src.detail)
+  dst.hint = pgxSpiCopyStr(src.hint)
+  dst.context = pgxSpiCopyStr(src.context)
+
+proc pgxReallocCaughtError*(e: ref CatchableError, outerCtx: pointer): ref CatchableError =
+  let savedCtx = pgxSpiSetCurrentCtx(outerCtx)
+  try:
+    if e of PostgresError:
+      let pg = pgxCloneExceptionBase[PostgresError](e)
+      pgxClonePgFields(pg, (ref PostgresError)(e))
+      result = pg
+    elif e of PgError:
+      let pg = pgxCloneExceptionBase[PgError](e)
+      pgxClonePgFields(pg, (ref PgError)(e))
+      result = pg
+    elif e of ValueError:
+      result = pgxCloneExceptionBase[ValueError](e)
+    else:
+      result = pgxCloneExceptionBase[CatchableError](e)
+  finally:
+    discard pgxSpiSetCurrentCtx(savedCtx)
+
+proc pgxReallocCaughtDefect*(d: ref Defect, outerCtx: pointer): ref Defect =
+  let savedCtx = pgxSpiSetCurrentCtx(outerCtx)
+  try:
+    result = pgxCloneExceptionBase[Defect](d)
+  finally:
+    discard pgxSpiSetCurrentCtx(savedCtx)
+
 template spi_init*(statements: untyped) =
+  var spiOuterCtx = pgxSpiGetCurrentCtx()
   var connection_status {.used.} = connect()
   if connection_status < 0:
     let errName = result_code_string(connection_status)
     var ex = newException(PostgresError, "SPI_connect failed: " & $errName)
     ex.sqlerrcode = ERRCODE_INTERNAL_ERROR
     raise ex
+  if spiOuterCtx != nil:
+    discard pgxSpiSetCurrentCtx(spiOuterCtx)
+  var spiPendingErr: ref CatchableError = nil
+  var spiPendingDefect: ref Defect = nil
   try:
     statements
-  finally:
-    var finish_status {.used.} = finish()
+  except CatchableError as e:
+    spiPendingErr = pgxReallocCaughtError(e, spiOuterCtx)
+  except Defect as d:
+    spiPendingDefect = pgxReallocCaughtDefect(d, spiOuterCtx)
+  var finish_status {.used.} = finish()
+  if spiPendingDefect != nil:
+    raise spiPendingDefect
+  if spiPendingErr != nil:
+    raise spiPendingErr
 
 template query*(c: const_string, obj: untyped) =
   let callerContext {.used.} = CurrentMemoryContext

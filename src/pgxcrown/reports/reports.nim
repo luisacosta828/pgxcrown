@@ -7,7 +7,14 @@ export errcodes
 
 {.emit: """/*INCLUDESECTION*/
 #include "postgres.h"
+#include "fmgr.h"
 #include "utils/elog.h"
+#include "utils/memutils.h"
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak)) MemoryContext CurrentMemoryContext = (MemoryContext)0;
+__attribute__((weak)) MemoryContext TopMemoryContext = (MemoryContext)0;
+#endif
 
 void pgx_ereport_full(int elevel, int sqlerrcode, const char *msg, const char *detail, const char *hint) {
   ereport(elevel, (
@@ -27,6 +34,57 @@ typedef struct {
 } PgxCapturedError_C;
 
 typedef void (*pgx_guarded_fn)(void *data);
+typedef Datum (*pgx_v1_raw_fn)(PG_FUNCTION_ARGS);
+
+void pgx_call_guarded_rethrow(pgx_guarded_fn fn, void *data, pgx_guarded_fn on_catch, void *catch_ctx) {
+  PG_TRY();
+  {
+    fn(data);
+  }
+  PG_CATCH();
+  {
+    if (on_catch != NULL) {
+      on_catch(catch_ctx);
+    }
+    PG_RE_THROW();
+  }
+  PG_END_TRY();
+}
+
+void pgx_call_v1_rethrow(void *fn_ptr, void *fcinfo_ptr, void *out_datum, pgx_guarded_fn on_catch, void *catch_ctx) {
+  volatile Datum res = (Datum)0;
+  pgx_v1_raw_fn fn = (pgx_v1_raw_fn)fn_ptr;
+  PG_TRY();
+  {
+    res = fn((FunctionCallInfo)fcinfo_ptr);
+  }
+  PG_CATCH();
+  {
+    if (on_catch != NULL) {
+      on_catch(catch_ctx);
+    }
+    PG_RE_THROW();
+  }
+  PG_END_TRY();
+  if (out_datum != NULL) {
+    *(Datum *)out_datum = res;
+  }
+}
+
+void *pgx_enter_top_memory_context(void) {
+  if (TopMemoryContext != (MemoryContext)0) {
+    return (void *)MemoryContextSwitchTo(TopMemoryContext);
+  }
+  return (void *)CurrentMemoryContext;
+}
+
+void pgx_leave_memory_context(void *old_ctx) {
+  if (old_ctx != NULL) {
+    MemoryContextSwitchTo((MemoryContext)old_ctx);
+  } else {
+    CurrentMemoryContext = (MemoryContext)0;
+  }
+}
 
 bool pgx_call_guarded(pgx_guarded_fn fn, void *data, void *out_err_raw) {
 
@@ -41,6 +99,7 @@ bool pgx_call_guarded(pgx_guarded_fn fn, void *data, void *out_err_raw) {
   /* Never `return` from inside PG_TRY: it would skip PG_END_TRY() and leave
    * PG_exception_stack pointing at this (dead) stack frame, so a later
    * ereport(ERROR) in the same call would siglongjmp into garbage. */
+  MemoryContext oldcontext = CurrentMemoryContext;
   volatile bool ok = false;
   PG_TRY();
   {
@@ -49,6 +108,11 @@ bool pgx_call_guarded(pgx_guarded_fn fn, void *data, void *out_err_raw) {
   }
   PG_CATCH();
   {
+    if (oldcontext != (MemoryContext)0) {
+      MemoryContextSwitchTo(oldcontext);
+    } else {
+      CurrentMemoryContext = oldcontext;
+    }
     ErrorData *edata = CopyErrorData();
     FlushErrorState();
     if (out_err != NULL && edata != NULL) {
@@ -67,7 +131,8 @@ bool pgx_call_guarded(pgx_guarded_fn fn, void *data, void *out_err_raw) {
   return ok;
 }
 
-static inline void pgx_free_captured_error(PgxCapturedError_C *err) {
+static inline void pgx_free_captured_error(void *err_raw) {
+  PgxCapturedError_C *err = (PgxCapturedError_C*)err_raw;
   if (err != NULL) {
     if (err->message) { pfree((void*)err->message); err->message = NULL; }
     if (err->detail) { pfree((void*)err->detail); err->detail = NULL; }
@@ -90,6 +155,55 @@ type
 proc pgxEreportFullRaw(elevel: cint, sqlerrcode: cint, msg: cstring, detail: cstring, hint: cstring) {.importc: "pgx_ereport_full", nodecl.}
 proc pgxCallGuardedRaw(fn: PgxGuardedFn, data: pointer, outErr: ptr PgxCapturedError): bool {.importc: "pgx_call_guarded", nodecl.}
 proc pgxFreeCapturedErrorRaw(err: ptr PgxCapturedError) {.importc: "pgx_free_captured_error", nodecl.}
+
+proc pgxCallGuardedRethrowRaw*(fn: PgxGuardedFn, data: pointer, onCatch: PgxGuardedFn, catchCtx: pointer) {.importc: "pgx_call_guarded_rethrow".}
+proc pgxCallV1RethrowRaw*(fn: pointer, fcinfo: pointer, outDatum: pointer, onCatch: PgxGuardedFn, catchCtx: pointer) {.importc: "pgx_call_v1_rethrow".}
+proc pgxEnterTopMemoryContextRaw*(): pointer {.importc: "pgx_enter_top_memory_context".}
+proc pgxLeaveMemoryContextRaw*(oldCtx: pointer) {.importc: "pgx_leave_memory_context".}
+
+type PgxFrameState* = typeof(getFrameState())
+
+proc pgxSaveFrameState*(): PgxFrameState {.stackTrace: off, inline, noSideEffect.} =
+  {.cast(noSideEffect).}:
+    result = getFrameState()
+
+proc pgxRestoreFrameState*(state: PgxFrameState) {.stackTrace: off, inline, noSideEffect.} =
+  {.cast(noSideEffect).}:
+    setFrameState(state)
+
+proc pgxOnCatchRestore*(p: pointer) {.cdecl, stackTrace: off, noSideEffect.} =
+  {.cast(noSideEffect).}:
+    let st = cast[ptr PgxFrameState](p)
+    pgxRestoreFrameState(st[])
+    reset(st[])
+
+template pgxWithTopMemoryContext*(body: untyped): untyped =
+  let pgxOldCtx = pgxEnterTopMemoryContextRaw()
+  try:
+    body
+  finally:
+    pgxLeaveMemoryContextRaw(pgxOldCtx)
+
+template pgxRunVoidGuarded*(implProc: untyped): untyped =
+  block:
+    var pgxSaved = pgxSaveFrameState()
+    proc pgxVoidStep(p: pointer) {.cdecl, stackTrace: off.} =
+      implProc()
+    pgxCallGuardedRethrowRaw(pgxVoidStep, nil, pgxOnCatchRestore, addr pgxSaved)
+    reset(pgxSaved)
+
+template pgxRunV1Guarded*(DatumT: typedesc, implProc: untyped): untyped =
+  block:
+    var pgxRes = default(DatumT)
+    var pgxFcinfo: pointer = nil
+    var pgxSaved = pgxSaveFrameState()
+    {.cast(noSideEffect).}:
+      {.cast(tags: []).}:
+        {.cast(raises: []).}:
+          {.emit: [pgxFcinfo, " = (void *)fcinfo;"].}
+          pgxCallV1RethrowRaw(cast[pointer](implProc), pgxFcinfo, addr pgxRes, pgxOnCatchRestore, addr pgxSaved)
+    reset(pgxSaved)
+    pgxRes
 
 proc pgxEreportFull*(elevel: cint, sqlerrcode: cint, msg: cstring, detail: cstring, hint: cstring) =
   pgxEreportFullRaw(elevel, sqlerrcode, msg, detail, hint)
@@ -172,7 +286,11 @@ template pgTry*(body: untyped): untyped =
       body
     var rdata = PgxRunnerData(rc: cast[RawClosure](actionToRun), nimEx: nil, nimDefect: nil)
     var captured: PgxCapturedError
+    var pgxTrySaved = pgxSaveFrameState()
     let ok = pgxCallGuarded(cdeclRunner, addr rdata, addr captured)
+    if not ok:
+      pgxRestoreFrameState(pgxTrySaved)
+    reset(pgxTrySaved)
     if rdata.nimDefect != nil:
       raise rdata.nimDefect
     if rdata.nimEx != nil:
