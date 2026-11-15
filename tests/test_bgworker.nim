@@ -152,6 +152,7 @@ char *pstrdup(const char *in) { return in ? strdup(in) : NULL; }
 
 import ../src/pgxcrown/bgworker
 import ../src/pgxcrown/pgxtool
+import ../src/pgxcrown/datatypes/strings
 
 suite "Pgxcrown - PostgreSQL Background Worker (BGWorker) Suite":
 
@@ -386,4 +387,34 @@ suite "Pgxcrown - PostgreSQL Background Worker (BGWorker) Suite":
     let sqlImplicit = $cast[cstring](addr mockLastSpiSql[0])
     check "WHERE name = 'auto_heartbeat_worker'" in sqlImplicit
     MyBgworkerEntry = nil
+
+  test "bgWorker DSL accepts PgText values from rewritten string UDF parameters":
+    let dbTxt = toPgText("analytics_pg")
+    let userTxt = toPgText("worker_role")
+    let extraTxt = toPgText("shard=pgtext")
+    let cfg = bgWorker("PgTextWorker"):
+      database dbTxt
+      user userTxt
+      extra extraTxt
+    check $cfg.dbName == "analytics_pg"
+    check $cfg.userName == "worker_role"
+    check $cfg.extra == "shard=pgtext"
+    check (cfg.flags and BGWORKER_BACKEND_DATABASE_CONNECTION) != 0
+
+  test "ensureWorkersCatalog skips DDL when catalog relation exists":
+    var mockLastSpiSql {.importc.}: array[512, char]
+    var mockSpiProcessed {.importc: "SPI_processed".}: uint64
+
+    mockSpiProcessed = 1'u64
+    mockLastSpiSql[0] = '\0'
+    ensureWorkersCatalog()
+    let fastPathSql = $cast[cstring](addr mockLastSpiSql[0])
+    check "to_regclass('pgxcrown_workers')" in fastPathSql
+    check "CREATE TABLE" notin fastPathSql
+
+    mockSpiProcessed = 0'u64
+    mockLastSpiSql[0] = '\0'
+    ensureWorkersCatalog()
+    let ddlSql = $cast[cstring](addr mockLastSpiSql[0])
+    check "CREATE TABLE IF NOT EXISTS pgxcrown_workers" in ddlSql
 

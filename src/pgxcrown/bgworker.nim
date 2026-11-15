@@ -10,7 +10,7 @@ const
   BGW_EXTRALEN* = 128
 
   BGWORKER_SHMEM_ACCESS* = 0x0001'i32
-  BGWORKER_BACKEND_DATABASE_CONNECTION* = 0x0002'i32
+  BGWORKER_BACKEND_DATABASE_CONNECTION * = 0x0002'i32
   BGWORKER_CLASS_PARALLEL* = 0x0010'i32
   BGWORKER_BYPASS_ALLOWCONN* = 1'u32
 
@@ -29,7 +29,11 @@ type
     bgwStopped = 2
     bgwPostmasterDied = 3
 
+const pgTargetVersion {.intdefine.}: int = 0
+const PGMaxLength = when pgTargetVersion >= 17: 1024 else: BGW_MAXLEN
+
 {.push header: "postmaster/bgworker.h".}
+
 
 type
   BackgroundWorkerHandle* {.importc: "BackgroundWorkerHandle".} = object
@@ -41,16 +45,19 @@ type
     bgw_flags*: cint
     bgw_start_time*: BgWorkerStartTime
     bgw_restart_time*: cint
-    bgw_library_name*: array[BGW_MAXLEN, char]
+    bgw_library_name*: array[PGMaxLength, char]
     bgw_function_name*: array[BGW_MAXLEN, char]
     bgw_main_arg*: Datum
     bgw_extra*: array[BGW_EXTRALEN, char]
     bgw_notify_pid*: cint
 
 proc RegisterBackgroundWorker*(worker: ptr BackgroundWorker) {.importc.}
-proc RegisterDynamicBackgroundWorker*(worker: ptr BackgroundWorker, handle: ptr BackgroundWorkerHandlePtr): bool {.importc.}
-proc GetBackgroundWorkerPid*(handle: BackgroundWorkerHandlePtr, pid: var cint): BgwHandleStatus {.importc.}
-proc WaitForBackgroundWorkerStartup*(handle: BackgroundWorkerHandlePtr, pid: var cint): BgwHandleStatus {.importc.}
+proc RegisterDynamicBackgroundWorker*(worker: ptr BackgroundWorker,
+    handle: ptr BackgroundWorkerHandlePtr): bool {.importc.}
+proc GetBackgroundWorkerPid*(handle: BackgroundWorkerHandlePtr,
+    pid: var cint): BgwHandleStatus {.importc.}
+proc WaitForBackgroundWorkerStartup*(handle: BackgroundWorkerHandlePtr,
+    pid: var cint): BgwHandleStatus {.importc.}
 proc WaitForBackgroundWorkerShutdown*(handle: BackgroundWorkerHandlePtr): BgwHandleStatus {.importc.}
 proc GetBackgroundWorkerTypeByPid*(pid: cint): cstring {.importc.}
 proc TerminateBackgroundWorker*(handle: BackgroundWorkerHandlePtr) {.importc.}
@@ -133,7 +140,8 @@ proc getWorkerBypassAllowConn*(): bool =
 
 proc hasWorkerDbConnection*(): bool =
   ## Returns true if the current background worker was registered with database connection access
-  MyBgworkerEntry != nil and (MyBgworkerEntry.bgw_flags and BGWORKER_BACKEND_DATABASE_CONNECTION) != 0
+  MyBgworkerEntry != nil and (MyBgworkerEntry.bgw_flags and
+      BGWORKER_BACKEND_DATABASE_CONNECTION) != 0
 
 
 type
@@ -141,19 +149,27 @@ type
     raw*: BackgroundWorkerHandlePtr
 
   WorkerConfig* = object
-    name*: cstring
-    workerType*: cstring
-    libraryName*: cstring
-    functionName*: cstring
-    dbName*: cstring
-    userName*: cstring
+    name*: string
+    workerType*: string
+    libraryName*: string
+    functionName*: string
+    dbName*: string
+    userName*: string
     flags*: int32
     startTime*: BgWorkerStartTime
     restartIntervalSec*: int32
     mainArg*: Datum
-    extra*: cstring
+    extra*: string
     notifyPid*: int32
     bypassAllowConn*: bool
+
+template toBgwString(val: untyped): string =
+  ## Converts string-like values (string, cstring, PgText, etc.) to an owned Nim string
+  ## so WorkerConfig retains valid storage under ARC without dangling temporary cstrings.
+  when typeof(val) is string:
+    val
+  else:
+    $val
 
 macro bgWorker*(workerName: untyped, body: untyped = nil): untyped =
   let b = genSym(nskVar, "workerConfig")
@@ -162,10 +178,10 @@ macro bgWorker*(workerName: untyped, body: untyped = nil): untyped =
   initStmts.add quote do:
     let `nameSym` = `workerName`
     var `b`: WorkerConfig
-    `b`.name = cstring(`nameSym`)
-    `b`.workerType = cstring(`nameSym`)
-    `b`.libraryName = cstring(`nameSym`)
-    `b`.functionName = cstring(`nameSym` & "_worker")
+    `b`.name = toBgwString(`nameSym`)
+    `b`.workerType = toBgwString(`nameSym`)
+    `b`.libraryName = toBgwString(`nameSym`)
+    `b`.functionName = $`nameSym` & "_worker"
     `b`.flags = BGWORKER_SHMEM_ACCESS
     `b`.startTime = bwRecoveryFinished
     `b`.restartIntervalSec = BGW_NEVER_RESTART
@@ -173,7 +189,7 @@ macro bgWorker*(workerName: untyped, body: untyped = nil): untyped =
   if body != nil and body.kind != nnkNilLit:
     if body.kind != nnkStmtList:
       initStmts.add quote do:
-        `b`.functionName = cstring(`body`)
+        `b`.functionName = toBgwString(`body`)
     else:
       for stmt in body:
         if stmt.kind in {nnkCall, nnkCommand} and stmt.len >= 2:
@@ -181,23 +197,23 @@ macro bgWorker*(workerName: untyped, body: untyped = nil): untyped =
           let val = stmt[1]
           case directive
           of "entrypoint", "function", "functionName":
-            initStmts.add quote do: `b`.functionName = cstring(`val`)
+            initStmts.add quote do: `b`.functionName = toBgwString(`val`)
           of "database", "db", "dbName":
             initStmts.add quote do:
-              `b`.dbName = cstring(`val`)
+              `b`.dbName = toBgwString(`val`)
               `b`.flags = `b`.flags or BGWORKER_BACKEND_DATABASE_CONNECTION
           of "user", "userName":
-            initStmts.add quote do: `b`.userName = cstring(`val`)
+            initStmts.add quote do: `b`.userName = toBgwString(`val`)
           of "library", "lib", "libraryName":
-            initStmts.add quote do: `b`.libraryName = cstring(`val`)
+            initStmts.add quote do: `b`.libraryName = toBgwString(`val`)
           of "workerType", "type":
-            initStmts.add quote do: `b`.workerType = cstring(`val`)
+            initStmts.add quote do: `b`.workerType = toBgwString(`val`)
           of "restart", "restartInterval", "restartIntervalSec":
             initStmts.add quote do: `b`.restartIntervalSec = int32(`val`)
           of "mainArg", "arg":
             initStmts.add quote do: `b`.mainArg = cast[Datum](`val`)
           of "extra":
-            initStmts.add quote do: `b`.extra = cstring(`val`)
+            initStmts.add quote do: `b`.extra = toBgwString(`val`)
           of "notifyPid":
             initStmts.add quote do: `b`.notifyPid = int32(`val`)
           of "flags":
@@ -224,9 +240,10 @@ macro bgWorker*(workerName: untyped, body: untyped = nil): untyped =
   result = newTree(nnkStmtListExpr, initStmts)
 
 
-proc copyToFixed[N: static int](dest: var array[N, char], src: cstring) {.inline.} =
-  if src != nil and src[0] != '\0':
-    copyMem(addr dest[0], src, min(src.len, N - 1))
+proc copyToFixed[N: static int](dest: var array[N, char],
+    src: string) {.inline.} =
+  if src.len > 0:
+    copyMem(addr dest[0], unsafeAddr src[0], min(src.len, N - 1))
 
 proc toRawWorker*(cfg: WorkerConfig): BackgroundWorker =
   copyToFixed(result.bgw_name, cfg.name)
@@ -238,12 +255,11 @@ proc toRawWorker*(cfg: WorkerConfig): BackgroundWorker =
   copyToFixed(result.bgw_function_name, cfg.functionName)
   result.bgw_main_arg = cfg.mainArg
   copyToFixed(result.bgw_extra, cfg.extra)
-  let dbStr = if cfg.dbName != nil and cfg.dbName[0] != '\0': $cfg.dbName else: ""
-  let userStr = if cfg.userName != nil and cfg.userName[0] != '\0': $cfg.userName else: ""
-  if dbStr.len > 0 or userStr.len > 0 or cfg.bypassAllowConn:
-    let extraLen = if cfg.extra != nil: min(cfg.extra.len, BGW_EXTRALEN - 1) else: 0
+  if cfg.dbName.len > 0 or cfg.userName.len > 0 or cfg.bypassAllowConn:
+    let extraLen = min(cfg.extra.len, BGW_EXTRALEN - 1)
     let metaStart = extraLen + 1
-    let meta = pgxConnMetaPrefix & dbStr & "\x1F" & userStr & "\x1F" & (if cfg.bypassAllowConn: "1" else: "0")
+    let meta = pgxConnMetaPrefix & cfg.dbName & "\x1F" & cfg.userName & "\x1F" & (
+        if cfg.bypassAllowConn: "1" else: "0")
     if metaStart + meta.len < BGW_EXTRALEN:
       copyMem(addr result.bgw_extra[metaStart], cstring(meta), meta.len)
   result.bgw_notify_pid = cint(cfg.notifyPid)
@@ -303,7 +319,8 @@ type
     stateIdleInTransactionAborted = 5
     stateDisabled = 6
 
-proc pgstat_report_activity*(state: BackendState, cmd_str: cstring) {.importc, header: "utils/backend_status.h".}
+proc pgstat_report_activity*(state: BackendState, cmd_str: cstring) {.importc,
+    header: "utils/backend_status.h".}
 
 proc setWorkerActivity*(activity: string, state: BackendState = stateRunning) =
   ## Updates the current worker activity in pg_stat_activity (query and state columns)
@@ -333,8 +350,25 @@ template workerSavepoint*(body: untyped, onError: untyped) =
 # Worker Registry & Catalog Tracking (pgxcrown_workers)
 # =============================================================================
 
+proc workersCatalogExists(): bool =
+  var exists = false
+  spi_init:
+    pgTry:
+      let rc = exec(const_string("SELECT 1 WHERE to_regclass('pgxcrown_workers') IS NOT NULL;"), 0)
+      if rc >= 0 and SPI_processed > 0:
+        exists = true
+  result = exists
+
 proc ensureWorkersCatalog*() =
-  ## Ensures the tracking table pgxcrown_workers exists
+  ## Ensures the tracking table pgxcrown_workers exists without emitting duplicate
+  ## NOTICEs or racing across concurrent backend/worker transactions.
+  if workersCatalogExists():
+    return
+  spi_init:
+    pgTry:
+      discard exec(const_string("SELECT pg_advisory_xact_lock(746972675769::bigint);"), 0)
+  if workersCatalogExists():
+    return
   spi_init:
     pgTry:
       let ddl = "CREATE TABLE IF NOT EXISTS pgxcrown_workers (" &
@@ -351,7 +385,8 @@ proc trackWorkerStarted*(name: string, pid: int) =
   spi_init:
     pgTry:
       let q = "INSERT INTO pgxcrown_workers (name, pid, started_at, status, last_seen) " &
-              "VALUES (" & quoteLiteral(name) & ", " & $pid & ", clock_timestamp(), 'running', clock_timestamp()) " &
+              "VALUES (" & quoteLiteral(name) & ", " & $pid &
+                  ", clock_timestamp(), 'running', clock_timestamp()) " &
               "ON CONFLICT (name) DO UPDATE SET " &
               "pid = EXCLUDED.pid, started_at = EXCLUDED.started_at, " &
               "status = 'running', last_seen = clock_timestamp();"
@@ -384,7 +419,8 @@ proc stopWorkerByName*(name: string): bool =
   ## Verifies PID liveness and background worker identity to prevent terminating recycled client PIDs.
   ensureWorkersCatalog()
   var targetPid = 0
-  let findQ = "SELECT pid FROM pgxcrown_workers WHERE name = " & quoteLiteral(name) & " AND status = 'running';"
+  let findQ = "SELECT pid FROM pgxcrown_workers WHERE name = " & quoteLiteral(
+      name) & " AND status = 'running';"
   let rows = fetchRawRows(findQ)
   if rows.len > 0 and "pid" in rows[0]:
     try:
@@ -409,7 +445,8 @@ proc getWorkerStatusByName*(name: string): string =
   ensureWorkersCatalog()
   var recordedStatus = ""
   var targetPid = 0
-  let q = "SELECT pid, status FROM pgxcrown_workers WHERE name = " & quoteLiteral(name) & ";"
+  let q = "SELECT pid, status FROM pgxcrown_workers WHERE name = " &
+      quoteLiteral(name) & ";"
   let rows = fetchRawRows(q)
   if rows.len > 0:
     recordedStatus = rows[0].getOrDefault("status", "")
@@ -438,12 +475,12 @@ proc getWorkerStatusByName*(name: string): string =
     return "stopped"
 
 const
-  WL_LATCH_SET* = 1'i32 shl 0          # 0x01
-  WL_TIMEOUT* = 1'i32 shl 3            # 0x08 (storage/latch.h:128)
-  WL_POSTMASTER_DEATH* = 1'i32 shl 4   # 0x10 (storage/latch.h:129)
-  WL_EXIT_ON_PM_DEATH* = 1'i32 shl 5   # 0x20 (storage/latch.h:130)
-  PG_WAIT_EXTENSION* = 0x07000000'u32  # utils/wait_event.h:23
-  PGC_SIGHUP* = 2'i32                  # utils/guc.h:72
+  WL_LATCH_SET* = 1'i32 shl 0         # 0x01
+  WL_TIMEOUT* = 1'i32 shl 3           # 0x08 (storage/latch.h:128)
+  WL_POSTMASTER_DEATH* = 1'i32 shl 4  # 0x10 (storage/latch.h:129)
+  WL_EXIT_ON_PM_DEATH* = 1'i32 shl 5  # 0x20 (storage/latch.h:130)
+  PG_WAIT_EXTENSION* = 0x07000000'u32 # utils/wait_event.h:23
+  PGC_SIGHUP* = 2'i32                 # utils/guc.h:72
 
   SIGTERM* = 15'i32
   SIGHUP* = 1'i32
@@ -453,14 +490,18 @@ type
 
 var MyLatch* {.importc, header: "miscadmin.h".}: pointer
 var posixErrno {.importc: "errno", header: "errno.h".}: cint
-proc CHECK_FOR_INTERRUPTS*() {.importc: "CHECK_FOR_INTERRUPTS", header: "miscadmin.h".}
+proc CHECK_FOR_INTERRUPTS*() {.importc: "CHECK_FOR_INTERRUPTS",
+    header: "miscadmin.h".}
 
 
 
 
-proc BackgroundWorkerUnblockSignals*() {.importc, header: "postmaster/bgworker.h".}
-proc BackgroundWorkerInitializeConnection*(dbname, username: cstring, flags: cuint) {.importc, header: "postmaster/bgworker.h".}
-proc BackgroundWorkerInitializeConnectionByOid*(dboid, useroid: Oid, flags: cuint) {.importc, header: "postmaster/bgworker.h".}
+proc BackgroundWorkerUnblockSignals*() {.importc,
+    header: "postmaster/bgworker.h".}
+proc BackgroundWorkerInitializeConnection*(dbname, username: cstring,
+    flags: cuint) {.importc, header: "postmaster/bgworker.h".}
+proc BackgroundWorkerInitializeConnectionByOid*(dboid, useroid: Oid,
+    flags: cuint) {.importc, header: "postmaster/bgworker.h".}
 
 proc SetCurrentStatementStartTimestamp*() {.importc, header: "access/xact.h".}
 proc StartTransactionCommand*() {.importc, header: "access/xact.h".}
@@ -470,22 +511,28 @@ proc AbortCurrentTransaction*() {.importc, header: "access/xact.h".}
 type
   PgSnapshot* {.importc: "Snapshot", header: "utils/snapmgr.h".} = pointer
 
-proc GetTransactionSnapshot*(): PgSnapshot {.importc, header: "utils/snapmgr.h".}
-proc PushActiveSnapshot*(snapshot: PgSnapshot) {.importc, header: "utils/snapmgr.h".}
+proc GetTransactionSnapshot*(): PgSnapshot {.importc,
+    header: "utils/snapmgr.h".}
+proc PushActiveSnapshot*(snapshot: PgSnapshot) {.importc,
+    header: "utils/snapmgr.h".}
 proc PopActiveSnapshot*() {.importc, header: "utils/snapmgr.h".}
 proc ActiveSnapshotSet*(): bool {.importc, header: "utils/snapmgr.h".}
 
 
-proc WaitLatch*(latch: pointer, wakeEvents: cint, timeout_ms: clong, wait_event_info: uint32): cint {.importc, header: "storage/latch.h".}
+proc WaitLatch*(latch: pointer, wakeEvents: cint, timeout_ms: clong,
+    wait_event_info: uint32): cint {.importc, header: "storage/latch.h".}
 proc ResetLatch*(latch: pointer) {.importc, header: "storage/latch.h".}
 proc SetLatch*(latch: pointer) {.importc, header: "storage/latch.h".}
 
 proc proc_exit*(code: cint) {.importc: "proc_exit".}
 proc ProcessConfigFile*(context: cint) {.importc, header: "utils/guc.h".}
-proc pqsignal*(signo: cint, handler: proc(signo: cint) {.cdecl.}): pointer {.importc, header: "libpq/pqsignal.h".}
+proc pqsignal*(signo: cint, handler: proc(
+    signo: cint) {.cdecl.}): pointer {.importc, header: "libpq/pqsignal.h".}
 
-var workerGotSigterm* {.exportc: "pgx_worker_got_sigterm", volatile.}: SigAtomic = 0
-var workerGotSighup* {.exportc: "pgx_worker_got_sighup", volatile.}: SigAtomic = 0
+var workerGotSigterm* {.exportc: "pgx_worker_got_sigterm",
+    volatile.}: SigAtomic = 0
+var workerGotSighup* {.exportc: "pgx_worker_got_sighup",
+    volatile.}: SigAtomic = 0
 
 proc isWorkerSigtermSet*(): bool =
   volatileLoad(addr workerGotSigterm) != 0
@@ -519,23 +566,30 @@ proc setupSignals*() =
   discard pqsignal(SIGTERM, onSigterm)
   discard pqsignal(SIGHUP, onSighup)
 
-proc workerInit*(dbName: cstring = nil, userName: cstring = nil, bypassAllowConn: bool = false) =
+proc workerInit*(dbName: cstring = nil, userName: cstring = nil,
+    bypassAllowConn: bool = false) =
   setupSignals()
   BackgroundWorkerUnblockSignals()
-  let effectiveDb = if dbName != nil and dbName[0] != '\0': $dbName else: getWorkerDbName()
-  let effectiveUser = if userName != nil and userName[0] != '\0': $userName else: getWorkerUserName()
+  let effectiveDb = if dbName != nil and dbName[0] !=
+      '\0': $dbName else: getWorkerDbName()
+  let effectiveUser = if userName != nil and userName[0] !=
+      '\0': $userName else: getWorkerUserName()
   let effectiveBypass = bypassAllowConn or getWorkerBypassAllowConn()
   if effectiveDb.len > 0 or (effectiveUser.len > 0 and hasWorkerDbConnection()):
-    let flags: cuint = if effectiveBypass: cuint(BGWORKER_BYPASS_ALLOWCONN) else: 0'u32
+    let flags: cuint = if effectiveBypass: cuint(
+        BGWORKER_BYPASS_ALLOWCONN) else: 0'u32
     let dbArg: cstring = if effectiveDb.len > 0: cstring(effectiveDb) else: nil
-    let userArg: cstring = if effectiveUser.len > 0: cstring(effectiveUser) else: nil
+    let userArg: cstring = if effectiveUser.len > 0: cstring(
+        effectiveUser) else: nil
     BackgroundWorkerInitializeConnection(dbArg, userArg, flags)
 
-proc workerInitByOid*(dbOid: Oid, userOid: Oid = Oid(0), bypassAllowConn: bool = false) =
+proc workerInitByOid*(dbOid: Oid, userOid: Oid = Oid(0),
+    bypassAllowConn: bool = false) =
   setupSignals()
   BackgroundWorkerUnblockSignals()
   let effectiveBypass = bypassAllowConn or getWorkerBypassAllowConn()
-  let flags: cuint = if effectiveBypass: cuint(BGWORKER_BYPASS_ALLOWCONN) else: 0'u32
+  let flags: cuint = if effectiveBypass: cuint(
+      BGWORKER_BYPASS_ALLOWCONN) else: 0'u32
   BackgroundWorkerInitializeConnectionByOid(dbOid, userOid, flags)
 
 proc workerExit*(code: int = 0) {.inline.} =
@@ -561,7 +615,8 @@ template workerTransaction*(body: untyped) =
     raise e
 
 
-template runWorkerLoop*(intervalMs: int, body: untyped, shutdownHandler: untyped) =
+template runWorkerLoop*(intervalMs: int, body: untyped,
+    shutdownHandler: untyped) =
   if MyLatch != nil:
     ResetLatch(MyLatch)
   while not isWorkerSigtermSet():
@@ -580,7 +635,8 @@ template runWorkerLoop*(intervalMs: int, body: untyped, shutdownHandler: untyped
     setWorkerIdle("waiting for next cycle (" & $intervalMs & "ms)")
     if MyLatch != nil:
       ResetLatch(MyLatch)
-    let rc = WaitLatch(MyLatch, WL_LATCH_SET or WL_TIMEOUT or WL_POSTMASTER_DEATH or WL_EXIT_ON_PM_DEATH, clong(intervalMs), PG_WAIT_EXTENSION)
+    let rc = WaitLatch(MyLatch, WL_LATCH_SET or WL_TIMEOUT or
+        WL_POSTMASTER_DEATH or WL_EXIT_ON_PM_DEATH, clong(intervalMs), PG_WAIT_EXTENSION)
     if MyLatch != nil:
       ResetLatch(MyLatch)
     if (rc and WL_POSTMASTER_DEATH) != 0:
