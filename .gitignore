@@ -13,6 +13,7 @@ tmp_*
 .gemini/
 nimcache/
 benchmarks/
+tests/test_allocator
 tests/test_base_types
 tests/test_bgworker
 tests/test_errors

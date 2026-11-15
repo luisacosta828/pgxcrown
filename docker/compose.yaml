@@ -1,0 +1,82 @@
+services:
+  pgxcrown-14:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        PG_TAG: "14"
+        PGXCROWN_SOURCE: ${PGXCROWN_SOURCE:-local}
+        NIM_VERSION: ${NIM_VERSION:-2.4.0}
+    image: pgxcrown:14
+    container_name: pgxcrown-14
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+    ports:
+      - "${PG14_PORT:-5414}:5432"
+    volumes:
+      - pgxcrown_ws_14:/workspace
+
+  pgxcrown-15:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        PG_TAG: "15"
+        PGXCROWN_SOURCE: ${PGXCROWN_SOURCE:-local}
+        NIM_VERSION: ${NIM_VERSION:-2.4.0}
+    image: pgxcrown:15
+    container_name: pgxcrown-15
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+    ports:
+      - "${PG15_PORT:-5415}:5432"
+    volumes:
+      - pgxcrown_ws_15:/workspace
+
+  pgxcrown-16:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        PG_TAG: "16"
+        PGXCROWN_SOURCE: ${PGXCROWN_SOURCE:-local}
+        NIM_VERSION: ${NIM_VERSION:-2.4.0}
+    image: pgxcrown:16
+    container_name: pgxcrown-16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+    ports:
+      - "${PG16_PORT:-5416}:5432"
+    volumes:
+      - pgxcrown_ws_16:/workspace
+
+  pgxcrown-17:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        PG_TAG: "17"
+        PGXCROWN_SOURCE: ${PGXCROWN_SOURCE:-local}
+        NIM_VERSION: ${NIM_VERSION:-2.4.0}
+    image: pgxcrown:17
+    container_name: pgxcrown-17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+    ports:
+      - "${PG17_PORT:-5417}:5432"
+    volumes:
+      - pgxcrown_ws_17:/workspace
+
+volumes:
+  pgxcrown_ws_14:
+  pgxcrown_ws_15:
+  pgxcrown_ws_16:
+  pgxcrown_ws_17:

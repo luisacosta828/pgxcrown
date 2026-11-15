@@ -167,45 +167,48 @@ Commands:
   path-finders: List Postgres pg_config, libdir, includedir paths
      * pgxtool path-finders
 
-  test: Run regression tests in isolated Docker containers (PostgreSQL 14 to 17)
-     * pgxtool test <name>
+  test: Run SQL regression tests inside pgxcrown Docker containers (PostgreSQL 14 to 17)
+     * pgxtool test <name|path>
+     * pgxtool test --pg 16
      * pgxtool test <name> --verbose
      * pgxtool test <name> --debug
      * pgxtool test <name> --pg 16
      * pgxtool test <name> --all
      * pgxtool test <name> --bless
      * pgxtool test <name> --keep
+     * pgxtool test <name> --local
      * pgxtool test --help
 
 """
 
 proc test_cli_helper() =
   echo """
-Usage: pgxtool test <project> [options]
+Usage: pgxtool test [project|path] [options]
 
-Run SQL regression tests in isolated Docker containers (PostgreSQL 14 to 17).
+Copy a project/test directory into a pgxcrown Docker container (pgxcrown:<version>),
+compile and install natively against PostgreSQL <version> headers, and run SQL tests.
 
 Arguments:
-  <project>               Name of the extension project to test
+  [project|path]          Extension project name (in PGXTOOL_HOME) or directory path.
+                          Omit when running inside a project directory (with src/main.nim or tests/sql).
 
 Options:
-  --verbose, -v           Display the full SQL script and raw PostgreSQL query response table
-  --debug, -d             Enable pgxDebug compile-time AST and DDL debug output
-  --pg <version>          Specify target PostgreSQL version (14, 15, 16, 17, or 'latest')
+  --verbose, -v           Display build logs, full SQL script, and raw PostgreSQL responses
+  --debug, -d             Enable pgxDebug compile-time AST and DDL debug output inside container
+  --pg <version>          Target PostgreSQL version (14, 15, 16, 17, or 'latest', or comma list '14,17')
                           Defaults to host PostgreSQL version (if detected) or 17
-  --all, --all-versions   Execute test suite across the full matrix of supported PostgreSQL versions (14 to 17)
+  --all, --all-versions   Execute test suite across all supported PostgreSQL versions (14 to 17)
   --bless                 Auto-generate or update golden snapshot files (tests/expected/*.out) from actual output
   --keep                  Keep the test sandbox container alive after running tests for manual debugging
+  --local                 Run natively against local PostgreSQL (auto-used inside a container)
   --help, -h              Display this help message
 
 Examples:
-  * pgxtool test my_ext
-  * pgxtool test my_ext --verbose
-  * pgxtool test my_ext --debug
   * pgxtool test my_ext --pg 16
+  * pgxtool test ./my_ext --pg 17 --bless
+  * pgxtool test --pg 14          (from inside project directory)
   * pgxtool test my_ext --all
-  * pgxtool test my_ext --bless
-  * pgxtool test my_ext --keep
+  * pgxtool test my_ext --keep -v
 """
 
 proc wrap(s: string): string {. inline .} = "\"" & s & "\""
@@ -259,7 +262,7 @@ proc nim_c*(module: string, targetPgVersion: int = 0, nimcacheDir: string = "", 
   var cacheFlag = ""
   if nimcacheDir.len > 0:
     cacheFlag = " --nimcache:" & wrap(nimcacheDir)
-  "nim c --noMain --compileOnly -d:release --mm:orc --cc:" & getPlatformCompiler() & getPgxcrownPath() & getCIncludes() & cacheFlag & extraDefines & " -d:entrypoint=" & wrap(module) & " " & wrap(module)
+  "nim c --noMain --compileOnly -d:release --mm:arc --cc:" & getPlatformCompiler() & getPgxcrownPath() & getCIncludes() & cacheFlag & extraDefines & " -d:entrypoint=" & wrap(module) & " " & wrap(module)
 
 proc emit_pgx_c_extension*(module: string, targetPgVersion: int = 0, nimcacheDir: string = "", debug: bool = false): string {.inline.} =
   var prj = module.splitPath.head
@@ -269,11 +272,11 @@ proc emit_pgx_c_extension*(module: string, targetPgVersion: int = 0, nimcacheDir
   if debug:
     extraDefines.add " -d:pgxDebug"
   when defined(linux):
-    extraDefines.add " -d:useMalloc --passL:\"-Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=free\""
+    extraDefines.add " -d:useMalloc --passC:\"-DPGX_WRAP_MALLOC\" --passL:\"-Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=free\""
   var cacheFlag = ""
   if nimcacheDir.len > 0:
     cacheFlag = " --nimcache:" & wrap(nimcacheDir)
-  "nim c -d:release --mm:orc --cc:" & getPlatformCompiler() & getPgxcrownPath() & getCIncludes() & getCLibs() & cacheFlag & extraDefines & " -d:entrypoint=" & wrap(module) & " --app:lib -o:" & wrap(prj.splitPath.head.splitPath.tail) & " --outdir:" & wrap(prj) & " " & wrap(module)
+  "nim c -d:release --mm:arc --cc:" & getPlatformCompiler() & getPgxcrownPath() & getCIncludes() & getCLibs() & cacheFlag & extraDefines & " -d:entrypoint=" & wrap(module) & " --app:lib -o:" & wrap(prj.splitPath.head.splitPath.tail) & " --outdir:" & wrap(prj) & " " & wrap(module)
 
 template generate_tmp_file(input_file: string, kind: string = "") =
   var
@@ -478,7 +481,7 @@ proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = fa
   createDir(nimcacheDir)
 
   let currentSourceHash = computeSourceHash(projectDir)
-  const currentPgxcrownVersion = "0.25.1"
+  const currentPgxcrownVersion = "0.26.1-arc"
 
   # Smart incremental check: if target library exists and sources haven't changed, skip build (unless debug or force)
   if not force and not cleanBefore and not debug and targetLib.len > 0 and fileExists(targetLib) and fileExists(manifestFile):
@@ -542,8 +545,23 @@ proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = fa
   }
   writeFile(manifestFile, pretty(manifestObj))
 
-proc compile2hook*(input_file: string, targetPgVersion: int = 0) =
-  run emit_pgx_c_extension(input_file, targetPgVersion)
+proc compile2hook*(input_file: string, targetPgVersion: int = 0, verbose: bool = false, debug: bool = false) =
+  let (dir, _, _) = splitFile(input_file)
+  let projectDir = dir.parentDir()
+  let prjName = projectDir.splitFile().name
+  let nimcacheDir = projectDir / ".pgx_build" / (if targetPgVersion > 0: "nimcache_pg" & $targetPgVersion else: "nimcache")
+  createDir(nimcacheDir)
+  let cmd = emit_pgx_c_extension(input_file, targetPgVersion, nimcacheDir, debug = debug)
+  if verbose or debug:
+    echo "  [pgxtool:hook] ", cmd
+  run cmd
+  let targetLib =
+    if fileExists(dir / (prjName & ".so")): dir / (prjName & ".so")
+    elif fileExists(dir / prjName): dir / prjName
+    else: ""
+  if targetLib.len > 0 and not auditBinarySymbols(targetLib):
+    removeFile(targetLib)
+    quit("❌ [SECURITY VIOLATION] Compilation aborted for hook '" & prjName & "' due to restricted C system calls.")
 
 proc generate_install_script*(req: string): string =
   var prj_dir = pgxtool_init_dir / req / "src"
@@ -612,8 +630,30 @@ template validate_second_arg(pc: int) =
     cli_helper()
     return
 
+proc resolveTestProject(pgxtoolInitDir: string, req: string): tuple[name: string, dirOverride: string] =
+  ## Resolves <name>, <path>, or implicit current directory into project name and directory override.
+  if req.len == 0:
+    let cwd = getCurrentDir().strip(leading = false, trailing = true, chars = {'/', '\\'})
+    if fileExists(cwd / "src" / "main.nim") or dirExists(cwd / "tests" / "sql"):
+      return (cwd.lastPathPart, cwd)
+    return ("", "")
+
+  let initCandidate = pgxtoolInitDir / req
+  if dirExists(initCandidate):
+    return (req.strip(leading = false, trailing = true, chars = {'/', '\\'}).lastPathPart, "")
+
+  let absCandidate = absolutePath(req).strip(leading = false, trailing = true, chars = {'/', '\\'})
+  let looksLikePathOrProject =
+    '/' in req or '\\' in req or req == "." or
+    fileExists(absCandidate / "src" / "main.nim") or
+    dirExists(absCandidate / "tests" / "sql")
+  if dirExists(absCandidate) and looksLikePathOrProject:
+    return (absCandidate.lastPathPart, absCandidate)
+
+  return (req, "")
+
 template prepare_working_directory =
-  if dirExists(pgxtool_init_dir):
+  if fileExists(pgxtool_config):
     echo "working directory " & pgxtool_init_dir & " already exists." 
   else:
     echo "Initializing working directory: " & pgxtool_init_dir
@@ -715,7 +755,7 @@ proc check_command(pc: int) =
     var entry_point = pgxtool_init_dir / req / "src" / "main.nim"
     if fileExists(entry_point):
       if req in available_hooks:
-        compile2hook(entry_point)
+        compile2hook(entry_point, verbose = verboseBuild, debug = debugBuild)
       else:
         compile2pgx(entry_point, force = forceBuild, verbose = verboseBuild, cleanBefore = cleanBuild, debug = debugBuild)
         var script_path = generate_install_script(req)
@@ -761,13 +801,10 @@ Clean build artifacts (.so, .sql, .control, install.sh) and the build cache (.pg
     prepare_working_directory
   of "test":
     if pc == 1:
-      test_cli_helper()
-      return
-
-    req = paramStr(2)
-    if req in ["--help", "-h", "help"]:
-      test_cli_helper()
-      return
+      let (implicitName, _) = resolveTestProject(pgxtool_init_dir, "")
+      if implicitName.len == 0:
+        test_cli_helper()
+        return
 
     var pgVersionStr = ""
     var bless = false
@@ -775,11 +812,13 @@ Clean build artifacts (.so, .sql, .control, install.sh) and the build cache (.pg
     var keepContainer = false
     var verbose = false
     var debugBuild = false
+    var localMode = false
+    req = ""
 
-    var idx = 3
+    var idx = 2
     while idx <= pc:
       let flag = paramStr(idx)
-      if flag in ["--help", "-h"]:
+      if flag in ["--help", "-h", "help"]:
         test_cli_helper()
         return
       elif flag in ["--verbose", "-v"]:
@@ -788,9 +827,14 @@ Clean build artifacts (.so, .sql, .control, install.sh) and the build cache (.pg
       elif flag in ["--debug", "-d"]:
         debugBuild = true
         idx += 1
-      elif flag == "--pg" and idx + 1 <= pc:
+      elif flag == "--pg":
+        if idx + 1 > pc:
+          quit("❌ Missing PostgreSQL version after '--pg'. Example: pgxtool test my_ext --pg 17")
         pgVersionStr = paramStr(idx + 1)
         idx += 2
+      elif flag.startsWith("--pg="):
+        pgVersionStr = flag[5..^1]
+        idx += 1
       elif flag == "--all" or flag == "--all-versions":
         allVersions = true
         idx += 1
@@ -800,27 +844,45 @@ Clean build artifacts (.so, .sql, .control, install.sh) and the build cache (.pg
       elif flag == "--keep":
         keepContainer = true
         idx += 1
-      else:
+      elif flag == "--local":
+        localMode = true
+        idx += 1
+      elif flag.startsWith("-"):
         echo "⚠️  Unknown option: ", flag
         idx += 1
+      elif req.len == 0:
+        req = flag
+        idx += 1
+      else:
+        echo "⚠️  Unexpected argument: ", flag
+        idx += 1
 
-    let isHook = req in available_hooks
+    let (projectName, projectDirOverride) = resolveTestProject(pgxtool_init_dir, req)
+    if projectName.len == 0:
+      test_cli_helper()
+      return
+
+    let isHook = projectName in available_hooks
     let compileCallback: CompileCallback = proc(entryPoint: string, targetVersion: int) =
       if isHook:
-        compile2hook(entryPoint, targetVersion)
+        compile2hook(entryPoint, targetVersion, verbose = verbose, debug = debugBuild)
       else:
-        compile2pgx(entryPoint, targetVersion, debug = debugBuild)
+        compile2pgx(entryPoint, targetVersion, force = true, verbose = verbose, debug = debugBuild)
 
     let exitCode = serveTestEnv(
       pgxtool_init_dir = pgxtool_init_dir,
       pgxtool_config = pgxtool_config,
-      project = req,
+      project = projectName,
       pgVersionStr = pgVersionStr,
       bless = bless,
       allVersions = allVersions,
       keepContainer = keepContainer,
       verbose = verbose,
-      compileCb = compileCallback
+      compileCb = compileCallback,
+      projectDirOverride = projectDirOverride,
+      isHook = isHook,
+      debug = debugBuild,
+      localMode = localMode
     )
     if exitCode != 0:
       quit(exitCode)

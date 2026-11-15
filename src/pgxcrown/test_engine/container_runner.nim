@@ -53,6 +53,75 @@ proc setupPgSandbox*(docker: DockerDriver, containerName: string, pgVersion: int
     extensiondir: extensiondir
   )
 
+proc buildAndInstallProjectInContainer*(
+  ctx: PgContainerContext,
+  projectDir: string,
+  projectName: string,
+  isHook: bool = false,
+  debug: bool = false,
+  verbose: bool = false
+): bool =
+  ## Copies the project source into the pgxcrown container, compiles natively against the container's
+  ## PostgreSQL headers, and installs the resulting extension into pkglibdir/extensiondir.
+  let containerProjectDir = "/workspace/pgx/" & projectName
+  let containerSrcDir = containerProjectDir / "src"
+
+  let prepScript =
+    "if [ ! -f /workspace/pgx/config.json ]; then pgxtool init >/dev/null; fi && " &
+    "rm -rf " & quoteShell(containerProjectDir) & " && " &
+    "mkdir -p " & quoteShell(containerProjectDir)
+  let (prepOut, prepCode) = ctx.docker.execInContainer(
+    ctx.containerName,
+    "bash -lc " & quoteShell(prepScript)
+  )
+  if prepCode != 0:
+    echo "❌ Failed to prepare container workspace for '", projectName, "':\n", prepOut
+    return false
+
+  let normalizedHostDir = projectDir.strip(leading = false, trailing = true, chars = {'/', '\\'})
+  if not ctx.docker.copyIntoContainer(ctx.containerName, normalizedHostDir & "/.", containerProjectDir & "/"):
+    return false
+
+  let cleanArtifacts =
+    "rm -rf " & quoteShell(containerProjectDir / ".pgx_build") & " " &
+    quoteShell(containerSrcDir / projectName) & " " &
+    quoteShell(containerSrcDir / (projectName & ".so")) & " " &
+    quoteShell(containerSrcDir / ("lib" & projectName & ".so")) & " " &
+    quoteShell(containerSrcDir / (projectName & ".control")) & " " &
+    quoteShell(containerSrcDir / (projectName & ".sql")) & " " &
+    quoteShell(containerSrcDir / (projectName & "--0.0.1.sql")) & " " &
+    quoteShell(containerSrcDir / "install.sh") & " " &
+    quoteShell(containerSrcDir) & "/tmp_*"
+
+  var buildCmd = "pgxtool build-extension " & quoteShell(projectName) & " --force"
+  if debug: buildCmd.add " --debug"
+  if verbose: buildCmd.add " --verbose"
+
+  let installCmd =
+    if isHook:
+      "mkdir -p " & quoteShell(ctx.pkglibdir) & " && " &
+      "if [ -f " & quoteShell(containerSrcDir / (projectName & ".so")) & " ]; then " &
+      "cp -f " & quoteShell(containerSrcDir / (projectName & ".so")) & " " & quoteShell(ctx.pkglibdir / (projectName & ".so")) & "; " &
+      "elif [ -f " & quoteShell(containerSrcDir / projectName) & " ]; then " &
+      "cp -f " & quoteShell(containerSrcDir / projectName) & " " & quoteShell(ctx.pkglibdir / (projectName & ".so")) & "; fi"
+    else:
+      quoteShell(containerSrcDir / "install.sh")
+
+  let buildScript =
+    "set -e && " & cleanArtifacts & " && " & buildCmd & " && " & installCmd
+
+  let (buildOut, buildCode) = ctx.docker.execInContainer(
+    ctx.containerName,
+    "bash -lc " & quoteShell(buildScript)
+  )
+  if buildCode != 0:
+    echo "❌ Failed to compile/install '", projectName, "' inside PostgreSQL ", ctx.pgVersion, " container:\n", buildOut
+    return false
+
+  if verbose or debug:
+    echo buildOut
+  return true
+
 proc injectExtensionFiles*(ctx: PgContainerContext, projectDir: string, projectName: string): bool =
   let srcDir = projectDir / "src"
   var soFile = srcDir / (projectName & ".so")
@@ -84,7 +153,7 @@ proc injectExtensionFiles*(ctx: PgContainerContext, projectDir: string, projectN
 
   return true
 
-proc createCleanDatabase*(ctx: PgContainerContext, dbName: string, extensionName: string): bool =
+proc createCleanDatabase*(ctx: PgContainerContext, dbName: string, extensionName: string, isHook: bool = false): bool =
   # Drop old DB if exists
   discard ctx.docker.execInContainer(ctx.containerName, "psql -U postgres -d postgres -c \"DROP DATABASE IF EXISTS \\\"" & dbName & "\\\" WITH (FORCE);\"")
   
@@ -94,11 +163,28 @@ proc createCleanDatabase*(ctx: PgContainerContext, dbName: string, extensionName
     echo "❌ Failed to create database '", dbName, "': ", createOut
     return false
 
-  # Install extension in new DB
-  let (extOut, extCode) = ctx.docker.execInContainer(ctx.containerName, "psql -U postgres -d " & quoteShell(dbName) & " -c \"CREATE EXTENSION \\\"" & extensionName & "\\\" CASCADE;\"")
-  if extCode != 0:
-    echo "❌ Failed to run 'CREATE EXTENSION ", extensionName, "' in test database '", dbName, "': ", extOut
-    return false
+  if isHook:
+    let escapedHook = extensionName.replace("'", "''")
+    # Execute ALTER SYSTEM and pg_reload_conf in separate -c calls; psql wraps multi-statement -c in a transaction block.
+    let alterSql = "ALTER SYSTEM SET session_preload_libraries = '" & escapedHook & "';"
+    let (hookOut, hookCode) = ctx.docker.execInContainer(ctx.containerName, "psql -U postgres -d postgres -c " & quoteShell(alterSql))
+    if hookCode != 0:
+      echo "❌ Failed to configure session_preload_libraries for hook '", extensionName, "': ", hookOut
+      return false
+    let (reloadOut, reloadCode) = ctx.docker.execInContainer(ctx.containerName, "psql -U postgres -d postgres -c \"SELECT pg_reload_conf();\"")
+    if reloadCode != 0:
+      echo "❌ Failed to reload PostgreSQL configuration for hook '", extensionName, "': ", reloadOut
+      return false
+    let (verifyOut, verifyCode) = ctx.docker.execInContainer(ctx.containerName, "psql -U postgres -d " & quoteShell(dbName) & " -c \"LOAD '" & escapedHook & "';\"")
+    if verifyCode != 0:
+      echo "❌ Failed to load hook shared library '", extensionName, "' in database '", dbName, "': ", verifyOut
+      return false
+  else:
+    # Install extension in new DB
+    let (extOut, extCode) = ctx.docker.execInContainer(ctx.containerName, "psql -U postgres -d " & quoteShell(dbName) & " -c \"CREATE EXTENSION \\\"" & extensionName & "\\\" CASCADE;\"")
+    if extCode != 0:
+      echo "❌ Failed to run 'CREATE EXTENSION ", extensionName, "' in test database '", dbName, "': ", extOut
+      return false
 
   return true
 

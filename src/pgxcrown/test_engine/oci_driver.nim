@@ -3,6 +3,7 @@ import std/[os, osproc, strutils]
 const
   SupportedPgVersions* = [14, 15, 16, 17]
   LatestPgVersion* = SupportedPgVersions[^1] # 17 (latest)
+  CompileTimeRepoRoot = currentSourcePath.parentDir.parentDir.parentDir.parentDir
 
 type
   DockerDriver* = object
@@ -37,27 +38,108 @@ proc detectHostPgVersion*(): int =
             discard
   return LatestPgVersion
 
+proc isInsideContainer*(): bool =
+  ## Returns true when running inside a Linux container.
+  fileExists("/.dockerenv") or getEnv("container", "").len > 0
+
+proc tryDetectDockerEngine*(driver: var DockerDriver): bool =
+  ## Attempts to locate a usable Docker CLI and reachable daemon without aborting.
+  let dockerExe = findExe("docker")
+  if dockerExe.len == 0:
+    return false
+  let (_, code) = execCmdEx(quoteShell(dockerExe) & " ps")
+  if code != 0:
+    return false
+  driver = DockerDriver(binaryPath: dockerExe)
+  return true
+
 proc detectDockerEngine*(): DockerDriver =
+  var driver: DockerDriver
+  if tryDetectDockerEngine(driver):
+    return driver
   let dockerExe = findExe("docker")
   if dockerExe.len == 0:
     quit("❌ [DOCKER NOT FOUND] Docker is required to run isolated container tests.\nPlease install Docker or start the Docker service.")
-  
-  let (_, code) = execCmdEx(quoteShell(dockerExe) & " ps")
-  if code != 0:
-    quit("❌ [DOCKER ERROR] Docker daemon is not running or current user lacks permissions.\nPlease start Docker (e.g. 'sudo systemctl start docker' or check user groups).")
-
-  return DockerDriver(binaryPath: dockerExe)
+  quit("❌ [DOCKER ERROR] Docker daemon is not running or current user lacks permissions.\nPlease start Docker (e.g. 'sudo systemctl start docker' or check user groups).")
 
 proc execCmdRaw*(docker: DockerDriver, cmdArgs: string): (string, int) =
   let fullCmd = quoteShell(docker.binaryPath) & " " & cmdArgs
   return execCmdEx(fullCmd)
 
+proc execCmdLive*(docker: DockerDriver, cmdArgs: string): int =
+  let fullCmd = quoteShell(docker.binaryPath) & " " & cmdArgs
+  return execCmd(fullCmd)
+
+proc getPgxcrownImageRepo*(): string {.inline.} =
+  let custom = getEnv("PGXCROWN_IMAGE", "").strip()
+  if custom.len > 0: custom else: "pgxcrown"
+
 proc getCanonicalImageTag*(pgVersion: int): string {.inline.} =
-  "postgres:" & $pgVersion
+  getPgxcrownImageRepo() & ":" & $pgVersion
 
 proc isImagePresent*(docker: DockerDriver, imageTag: string): bool =
   let (output, exitCode) = docker.execCmdRaw("images -q " & quoteShell(imageTag))
   return exitCode == 0 and output.strip.len > 0
+
+proc isValidPgxcrownRepoDir(repoDir: string): bool {.inline.} =
+  repoDir.len > 0 and
+    fileExists(repoDir / "docker" / "Dockerfile") and
+    fileExists(repoDir / "pgxcrown.nimble")
+
+proc walkUpForDockerDir(startDir: string): string =
+  var cur = startDir
+  while cur.len > 0:
+    if isValidPgxcrownRepoDir(cur):
+      return cur / "docker"
+    let parent = cur.parentDir
+    if parent == cur:
+      break
+    cur = parent
+  return ""
+
+proc findPgxcrownDockerDir*(): string =
+  ## Locates pgxcrown's docker/ directory from env, cwd, executable location, or build root.
+  let envDockerDir = getEnv("PGXCROWN_DOCKER_DIR", "").strip()
+  if envDockerDir.len > 0 and fileExists(envDockerDir / "Dockerfile") and fileExists(envDockerDir.parentDir / "pgxcrown.nimble"):
+    return envDockerDir
+
+  result = walkUpForDockerDir(getCurrentDir())
+  if result.len > 0: return
+
+  let appExe = getAppFilename()
+  if appExe.len > 0:
+    result = walkUpForDockerDir(appExe.parentDir)
+    if result.len > 0: return
+    when not defined(windows):
+      if symlinkExists(appExe):
+        try:
+          let resolved = expandSymlink(appExe)
+          let absResolved = if resolved.isAbsolute: resolved else: appExe.parentDir / resolved
+          result = walkUpForDockerDir(absResolved.parentDir)
+          if result.len > 0: return
+        except OSError:
+          discard
+
+  if isValidPgxcrownRepoDir(CompileTimeRepoRoot):
+    return CompileTimeRepoRoot / "docker"
+  return ""
+
+proc buildPgxcrownImage*(docker: DockerDriver, pgVersion: int, dockerDir: string): bool =
+  ## Builds pgxcrown:<pgVersion> locally using docker/Dockerfile from the repository root.
+  let imageTag = getCanonicalImageTag(pgVersion)
+  let dockerfile = dockerDir / "Dockerfile"
+  let repoRoot = dockerDir.parentDir
+  echo "🏗️  [DOCKER BUILD] Image '", imageTag, "' not found locally; building from ", dockerDir, "..."
+  let buildArgs = "build --file " & quoteShell(dockerfile) &
+                  " --build-arg " & quoteShell("PG_TAG=" & $pgVersion) &
+                  " --tag " & quoteShell(imageTag) &
+                  " " & quoteShell(repoRoot)
+  if docker.execCmdLive(buildArgs) != 0:
+    echo "❌ Failed to build Docker image '", imageTag, "' from ", dockerfile
+    return false
+  if pgVersion == LatestPgVersion:
+    discard docker.execCmdRaw("tag " & quoteShell(imageTag) & " " & quoteShell(getPgxcrownImageRepo() & ":latest"))
+  return true
 
 proc pullImage*(docker: DockerDriver, imageTag: string): bool =
   echo "📥 [DOCKER PULL] Pulling container image '", imageTag, "'..."
@@ -69,9 +151,15 @@ proc pullImage*(docker: DockerDriver, imageTag: string): bool =
 
 proc ensureImage*(docker: DockerDriver, pgVersion: int): bool =
   let imageTag = getCanonicalImageTag(pgVersion)
-  if not docker.isImagePresent(imageTag):
-    return docker.pullImage(imageTag)
-  return true
+  if docker.isImagePresent(imageTag):
+    return true
+  let dockerDir = findPgxcrownDockerDir()
+  if dockerDir.len > 0:
+    return docker.buildPgxcrownImage(pgVersion, dockerDir)
+  if docker.pullImage(imageTag):
+    return true
+  echo "ℹ️  Hint: build '", imageTag, "' from the pgxcrown repository with: ./docker/build.sh ", pgVersion
+  return false
 
 proc removeContainer*(docker: DockerDriver, containerName: string): bool =
   let (_, exitCode) = docker.execCmdRaw("rm -f " & quoteShell(containerName))
