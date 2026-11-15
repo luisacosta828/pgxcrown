@@ -3,6 +3,8 @@ import std/[os, osproc, strutils]
 const
   SupportedPgVersions* = [14, 15, 16, 17]
   LatestPgVersion* = SupportedPgVersions[^1] # 17 (latest)
+  DefaultLocalImageRepo* = "pgxcrown"
+  DefaultRegistryImageRepo* = "ghcr.io/luisacosta828/pgxcrown"
   CompileTimeRepoRoot = currentSourcePath.parentDir.parentDir.parentDir.parentDir
 
 type
@@ -72,7 +74,7 @@ proc execCmdLive*(docker: DockerDriver, cmdArgs: string): int =
 
 proc getPgxcrownImageRepo*(): string {.inline.} =
   let custom = getEnv("PGXCROWN_IMAGE", "").strip()
-  if custom.len > 0: custom else: "pgxcrown"
+  if custom.len > 0: custom else: DefaultLocalImageRepo
 
 proc getCanonicalImageTag*(pgVersion: int): string {.inline.} =
   getPgxcrownImageRepo() & ":" & $pgVersion
@@ -149,16 +151,35 @@ proc pullImage*(docker: DockerDriver, imageTag: string): bool =
     return false
   return true
 
+proc resolveImageRepo*(docker: DockerDriver, pgVersion: int): string =
+  let custom = getEnv("PGXCROWN_IMAGE", "").strip()
+  if custom.len > 0:
+    return custom
+  if docker.isImagePresent(DefaultLocalImageRepo & ":" & $pgVersion):
+    return DefaultLocalImageRepo
+  if docker.isImagePresent(DefaultRegistryImageRepo & ":" & $pgVersion):
+    return DefaultRegistryImageRepo
+  if findPgxcrownDockerDir().len > 0:
+    return DefaultLocalImageRepo
+  return DefaultRegistryImageRepo
+
+proc resolveCanonicalImageTag*(docker: DockerDriver, pgVersion: int): string {.inline.} =
+  docker.resolveImageRepo(pgVersion) & ":" & $pgVersion
+
 proc ensureImage*(docker: DockerDriver, pgVersion: int): bool =
-  let imageTag = getCanonicalImageTag(pgVersion)
+  let repo = docker.resolveImageRepo(pgVersion)
+  let imageTag = repo & ":" & $pgVersion
   if docker.isImagePresent(imageTag):
     return true
-  let dockerDir = findPgxcrownDockerDir()
-  if dockerDir.len > 0:
-    return docker.buildPgxcrownImage(pgVersion, dockerDir)
+  let custom = getEnv("PGXCROWN_IMAGE", "").strip()
+  if custom.len == 0 and repo == DefaultLocalImageRepo:
+    let dockerDir = findPgxcrownDockerDir()
+    if dockerDir.len > 0:
+      return docker.buildPgxcrownImage(pgVersion, dockerDir)
   if docker.pullImage(imageTag):
     return true
-  echo "ℹ️  Hint: build '", imageTag, "' from the pgxcrown repository with: ./docker/build.sh ", pgVersion
+  echo "ℹ️  Hint: pull '", DefaultRegistryImageRepo, ":", pgVersion,
+       "' or build locally with: ./docker/build.sh ", pgVersion
   return false
 
 proc removeContainer*(docker: DockerDriver, containerName: string): bool =
@@ -168,7 +189,7 @@ proc removeContainer*(docker: DockerDriver, containerName: string): bool =
 proc startPgContainer*(docker: DockerDriver, containerName: string, pgVersion: int): bool =
   discard docker.removeContainer(containerName)
   
-  let imageTag = getCanonicalImageTag(pgVersion)
+  let imageTag = docker.resolveCanonicalImageTag(pgVersion)
   # Run container in background without mapping host ports to prevent any local database conflicts
   let runCmd = "run --name " & quoteShell(containerName) &
                " -e POSTGRES_PASSWORD=postgres" &

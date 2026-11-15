@@ -98,7 +98,7 @@ proc runTestSuiteForVersion*(
   debug: bool = false,
   compileCb: CompileCallback = nil
 ): bool =
-  let imageTag = getCanonicalImageTag(pgVersion)
+  let imageTag = docker.resolveCanonicalImageTag(pgVersion)
   echo "\n" & ColCyan & ColBold & "======================================================================" & ColReset
   echo ColCyan & ColBold & "🐘 Pgxcrown Test Runner [" & imageTag & " — native in-container build & test]" & ColReset
   echo ColCyan & ColBold & "======================================================================" & ColReset
@@ -293,7 +293,9 @@ proc serveTestEnv*(
   if not tryDetectDockerEngine(docker):
     discard detectDockerEngine() # prints consistent Docker error & exits
 
-  echo "🔍 Container Engine: " & ColBold & "Docker" & ColReset & " (" & docker.binaryPath & ", image repo: " & getPgxcrownImageRepo() & ")"
+  let customRepo = getEnv("PGXCROWN_IMAGE", "").strip()
+  let repoSummary = if customRepo.len > 0: customRepo else: DefaultLocalImageRepo & " / " & DefaultRegistryImageRepo
+  echo "🔍 Container Engine: " & ColBold & "Docker" & ColReset & " (" & docker.binaryPath & ", image repo: " & repoSummary & ")"
 
   var targetVersions: seq[int] = @[]
   if allVersions:
