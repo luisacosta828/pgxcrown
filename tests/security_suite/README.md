@@ -17,13 +17,18 @@ This test suite demonstrates Pgxcrown's **4 Security Pillars** and **Binary Symb
 
 ## 🧪 Real `pgxtool` Build Output
 
-### A. Unsafe Shell / C Call Attempt (`execCmd` / `system` import):
+### A. Unsafe Shell / C Call Blocks (`tests/negative/`)
+Negative compilation/symbol-audit fixtures live under [`tests/negative/`](../negative/) (`blocked_system_call` and `blocked_execeffect`) and are verified automatically via [`tests/negative/verify_security_blocks.sh`](../negative/verify_security_blocks.sh):
 ```
-/path/to/project/security_violation_demo/src/tmp_main.nim(10, 18) Error: execCmd(cmd) can have an unlisted effect: ExecIOEffect
-❌ [SECURITY VIOLATION] Compilation aborted for extension 'security_violation_demo' due to restricted C system calls.
+/path/to/project/blocked_execeffect/src/tmp_main.nim(10, 18) Error: execCmd(cmd) can have an unlisted effect: ExecIOEffect
+❌ [SECURITY VIOLATION] Compilation aborted for extension 'blocked_system_call' due to restricted C system calls.
 ```
 
-### B. Verified Safe Extension (`pg_ast_lens` / `security_demo`):
+### B. Runtime Security Regression Suite (`pgxtool test`)
+Run the runtime exploit defenses (`IndexDefect`, `OverflowDefect`, `NULL` safety) across PostgreSQL 14–17:
+```bash
+pgxtool test tests/security_suite --all
+```
 ```
 Hint: mm: orc; threads: on; opt: speed; options: -d:release
 50560 lines; 1.448s; 71.16MiB peakmem; proj: /path/to/project/pg_ast_lens/src/tmp_main.nim; out: /path/to/project/pg_ast_lens/src/pg_ast_lens [SuccessX]

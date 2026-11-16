@@ -2,13 +2,10 @@ import pgxcrown
 import std/options
 
 # -----------------------------------------------------------------------------
-# 🛡️ Pgxcrown Security & Defect Vulnerability Test Suite
-# Tests 4 major vulnerability classes and verifies Pgxcrown's defense mechanisms.
+# 🛡️ Pgxcrown Security & Defect Vulnerability Runtime Suite
+# Tests runtime panic shield & NULL defense mechanisms (blocked FFI compile
+# checks live under tests/negative/).
 # -----------------------------------------------------------------------------
-
-# Vulnerability Class 1: C FFI Import of Unsafe System Calls
-# Tests Pgxcrown's Binary Symbol Auditor (auditBinarySymbols)
-proc unsafe_system_call*(cmd: cstring): cint {.importc: "system".}
 
 # Vulnerability Class 2: Buffer Overflow / Array Index Out-of-Bounds
 # Tests Pgxcrown's Pillar 1 Automatic Panic Shield

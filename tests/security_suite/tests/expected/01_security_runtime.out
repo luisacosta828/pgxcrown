@@ -1,0 +1,39 @@
+-- Runtime security exploit defense regression suite (IndexDefect, OverflowDefect, NULL safety)
+CREATE TEMP TABLE sec_results (label text, msg text);
+CREATE TABLE
+DO $$ BEGIN PERFORM exploit_index_overflow(9999);
+EXCEPTION WHEN OTHERS THEN INSERT INTO sec_results VALUES ('1_index_overflow', SQLERRM); END $$;
+DO
+DO $$ BEGIN PERFORM exploit_integer_overflow(2147483647, 100);
+EXCEPTION WHEN OTHERS THEN INSERT INTO sec_results VALUES ('2_int_overflow', SQLERRM); END $$;
+DO
+SELECT label, msg FROM sec_results ORDER BY label;
+      label       |                           msg
+------------------+----------------------------------------------------------
+ 1_index_overflow | Extension Defect [IndexDefect]: index 9999 not in 0 .. 4
+ 2_int_overflow   | Extension Defect [OverflowDefect]: over- or underflow
+(2 rows)
+
+SELECT exploit_index_overflow(2) AS safe_elem;
+ safe_elem
+-----------
+        30
+(1 row)
+
+SELECT exploit_integer_overflow(100, 23) AS safe_sum;
+ safe_sum
+----------
+      123
+(1 row)
+
+SELECT exploit_null_dereference(NULL) AS null_safe;
+                        null_safe
+---------------------------------------------------------
+ Handled NULL safely without dereferencing null pointer!
+(1 row)
+
+SELECT exploit_null_dereference('pgxcrown') AS valid_val;
+     valid_val
+--------------------
+ Received: pgxcrown
+(1 row)

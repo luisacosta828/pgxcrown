@@ -8,13 +8,15 @@ Targeting **PostgreSQL 14**, this test suite verifies:
 
 ---
 
-## 📋 Nim Source Procedures (`tests/defaults_and_nulls/defaults_nulls_test.nim`)
+## 📋 Nim Source Procedures (`tests/defaults_and_nulls/src/main.nim`)
+
+Run across PostgreSQL 14–17 with `pgxtool test tests/defaults_and_nulls --all`.
 
 ```nim
 import pgxcrown
 import std/options
 
-proc greet*(name: string = "World", count: int = 1): string =
+proc test_default_params*(name: string = "World", count: int = 1): string =
   return "Hello " & name & " x" & $count
 
 proc test_default_bool*(flag: bool = true): string =
@@ -36,8 +38,8 @@ proc test_option_and_default*(x: int, opt: Option[string] = none(string)): strin
 ## 📜 Generated PostgreSQL SQL DDL
 
 ```sql
-CREATE OR REPLACE FUNCTION greet(Text DEFAULT 'World', int4 DEFAULT 1) returns Text as
-'v013_demo', 'pgx_greet'
+CREATE OR REPLACE FUNCTION test_default_params(Text DEFAULT 'World', int4 DEFAULT 1) returns Text as
+'defaults_and_nulls', 'pgx_test_default_params'
 language c;
 
 CREATE OR REPLACE FUNCTION test_default_bool(boolean DEFAULT true) returns Text as
@@ -63,10 +65,10 @@ language c;
 
 ```sql
 -- 1. Default Parameters
-SELECT greet();
+SELECT test_default_params();
 -- Output: "Hello World x1"
 
-SELECT greet('Nim Developer', 5);
+SELECT test_default_params('Nim Developer', 5);
 -- Output: "Hello Nim Developer x5"
 
 SELECT test_default_bool();

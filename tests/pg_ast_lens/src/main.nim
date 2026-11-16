@@ -12,12 +12,33 @@ proc raw_parser(str: cstring, mode: RawParseMode): pointer {.importc: "raw_parse
 proc nodeToString(obj: pointer): cstring {.importc: "nodeToString".}
 {.pop.}
 
+{.emit: """
+#include "nodes/parsenodes.h"
+#include "nodes/pg_list.h"
+static const char* pgx_ast_stmt_kind(void* listVoid) {
+  List* list = (List*)listVoid;
+  if (list == NULL || list_length(list) == 0) return "UNKNOWN";
+  RawStmt* rs = (RawStmt*)linitial(list);
+  if (rs == NULL || rs->stmt == NULL) return "UNKNOWN";
+  switch (nodeTag(rs->stmt)) {
+    case T_SelectStmt: return "SELECT";
+    case T_InsertStmt: return "INSERT";
+    case T_UpdateStmt: return "UPDATE";
+    case T_DeleteStmt: return "DELETE";
+    case T_DropStmt:   return "DROP";
+    case T_CreateStmt: return "CREATE";
+    default:           return "OTHER";
+  }
+}
+""".}
+proc pgx_ast_stmt_kind(listPtr: pointer): cstring {.importc: "pgx_ast_stmt_kind", nodecl.}
+
 # Exported PostgreSQL SQL Functions
 proc pg_ast_to_raw*(sql_text: Option[string]): Option[string] =
   if sql_text.isNone or sql_text.get.strip.len == 0:
     return none(string)
 
-  let listPtr = raw_parser(cstring(sql_text.get), RAW_PARSE_DEFAULT)
+  let listPtr = raw_parser(($sql_text.get).cstring, RAW_PARSE_DEFAULT)
   if listPtr == nil:
     return none(string)
 
@@ -31,7 +52,7 @@ proc pg_ast_to_json*(sql_text: Option[string]): Option[string] =
   if sql_text.isNone or sql_text.get.strip.len == 0:
     return none(string)
 
-  let listPtr = raw_parser(cstring(sql_text.get), RAW_PARSE_DEFAULT)
+  let listPtr = raw_parser(($sql_text.get).cstring, RAW_PARSE_DEFAULT)
   if listPtr == nil:
     return none(string)
 
@@ -40,26 +61,15 @@ proc pg_ast_to_json*(sql_text: Option[string]): Option[string] =
     return none(string)
 
   let rawAst = $astCStr
-  let jsonStr = "{\"status\":\"parsed\",\"raw_sql\":" & escapeJson(sql_text.get) & ",\"ast_tree\":" & escapeJson(rawAst) & "}"
+  let jsonStr = "{\"status\":\"parsed\",\"raw_sql\":" & escapeJson($sql_text.get) & ",\"ast_tree\":" & escapeJson(rawAst) & "}"
   return some(jsonStr)
 
 proc pg_ast_query_type*(sql_text: string = "SELECT 1"): string =
   if sql_text.strip.len == 0:
     return "UNKNOWN"
 
-  let listPtr = raw_parser(cstring(sql_text), RAW_PARSE_DEFAULT)
+  let listPtr = raw_parser(($sql_text).cstring, RAW_PARSE_DEFAULT)
   if listPtr == nil:
     return "SYNTAX_ERROR"
 
-  let astCStr = nodeToString(listPtr)
-  if astCStr == nil:
-    return "UNKNOWN"
-
-  let raw = ($astCStr).toUpperAscii()
-  if "SELECTSTMT" in raw: return "SELECT"
-  elif "INSERTSTMT" in raw: return "INSERT"
-  elif "UPDATESTMT" in raw: return "UPDATE"
-  elif "DELETESTMT" in raw: return "DELETE"
-  elif "DROPSTMT" in raw: return "DROP"
-  elif "CREATESTMT" in raw: return "CREATE"
-  else: return "OTHER"
+  return $pgx_ast_stmt_kind(listPtr)

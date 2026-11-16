@@ -74,29 +74,12 @@ SELECT proof_null_datum('');
 
 ## 🛠️ How to Run the Tests
 
-1. Compile the extension using `pgxtool`:
-   ```bash
-   pgxtool build-extension linux_test
-   ```
+Run directly via the multi-version Docker/GHCR test runner (PostgreSQL 14–17):
+```bash
+pgxtool test tests/panic_shield --all
+```
 
-2. Install into PostgreSQL:
-   ```bash
-   sudo ./linux_test/src/install.sh
-   ```
-
-3. Restart PostgreSQL:
-   ```bash
-   sudo systemctl restart postgresql
-   ```
-
-4. Run the SQL test suite in `psql`:
-   ```bash
-   psql -U postgres -c "SELECT proof_integer_overflow(2147483647, 1);"
-   psql -U postgres -c "SELECT proof_index_out_of_bounds(5);"
-   psql -U postgres -c "SELECT proof_value_conversion('invalid_number');"
-   psql -U postgres -c "SELECT proof_range_boundary(500);"
-   psql -U postgres -c "SELECT proof_null_datum('');"
-   ```
+Source lives in [`src/main.nim`](src/main.nim), deterministic SQL regression tests in [`tests/sql/01_panic_shield.sql`](tests/sql/01_panic_shield.sql), and expected outputs in [`tests/expected/01_panic_shield.out`](tests/expected/01_panic_shield.out).
 
 ---
 

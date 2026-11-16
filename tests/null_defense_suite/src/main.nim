@@ -2,17 +2,17 @@ import pgxcrown
 import std/options
 
 # 1. Non-STRICT Null-Safe String Parameter (string -> string)
-proc safe_greet*(name: string): string =
+proc safe_greet*(name: string): string {.calledOnNullInput.} =
   if name.len == 0:
     return "Hello Anonymous!"
   return "Hello " & name & "!"
 
 # 2. Non-STRICT Null-Safe Integer Sum (int32, int32 -> int32)
-proc safe_add*(a: int32, b: int32): int32 =
+proc safe_add*(a: int32, b: int32): int32 {.calledOnNullInput.} =
   return a + b
 
 # 3. Non-STRICT Null-Safe Array Processing (seq[int32] -> int32)
-proc safe_sum_array*(numbers: seq[int32]): int32 =
+proc safe_sum_array*(numbers: seq[int32]): int32 {.calledOnNullInput.} =
   var total: int32 = 0
   for n in numbers:
     total += n

@@ -1,0 +1,60 @@
+-- Default parameters & Option[T] NULL defense regression suite
+SELECT test_default_params() AS def_both;
+    def_both
+----------------
+ Hello World x1
+(1 row)
+
+SELECT test_default_params('Nim Developer', 5) AS def_override;
+      def_override
+------------------------
+ Hello Nim Developer x5
+(1 row)
+
+SELECT test_default_bool() AS def_bool_true;
+ def_bool_true
+---------------
+ Flag is ON
+(1 row)
+
+SELECT test_default_bool(false) AS def_bool_false;
+ def_bool_false
+----------------
+ Flag is OFF
+(1 row)
+
+SELECT test_option_param(42, NULL) AS opt_null;
+ opt_null
+----------
+       42
+(1 row)
+
+SELECT test_option_param(42, 8) AS opt_some;
+ opt_some
+----------
+       50
+(1 row)
+
+SELECT test_option_return(-5) AS opt_ret_null;
+ opt_ret_null
+--------------
+
+(1 row)
+
+SELECT test_option_return(10) AS opt_ret_val;
+ opt_ret_val
+-------------
+          20
+(1 row)
+
+SELECT test_option_and_default(100) AS combo_default;
+   combo_default
+--------------------
+ Val: 100 Opt: NULL
+(1 row)
+
+SELECT test_option_and_default(100, 'Pgxcrown') AS combo_override;
+     combo_override
+------------------------
+ Val: 100 Opt: Pgxcrown
+(1 row)

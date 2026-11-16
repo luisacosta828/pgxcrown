@@ -4,7 +4,9 @@ This test suite verifies bidirectional zero-copy array mapping between **Nim seq
 
 ---
 
-## 📋 Nim UDF Definitions (`tests/arrays_suite/arrays_test.nim`)
+## 📋 Nim UDF Definitions (`tests/arrays_suite/src/main.nim`)
+
+Run across PostgreSQL 14–17 with `pgxtool test tests/arrays_suite --all`.
 
 ```nim
 import pgxcrown
@@ -109,7 +111,7 @@ SELECT uppercase_string_array(ARRAY['alpha', 'beta', 'gamma']);
 SELECT count_true_bools(ARRAY[true, false, true, true, false]);
 -- Result: 3
 
--- 6. Test Composite Record Array
-SELECT count_adults(ARRAY[(25, 'Alice')::record, (15, 'Bob')::record, (30, 'Charlie')::record]);
+-- 6. Test Composite Record Array (`"Person"[]`)
+SELECT count_adults(ARRAY[(25, 'Alice')::"Person", (15, 'Bob')::"Person", (30, 'Charlie')::"Person"]);
 -- Result: 2
 ```

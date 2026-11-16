@@ -1,0 +1,59 @@
+-- Panic Shield regression suite: trap all Nim Defects/Errors deterministically via DO blocks
+CREATE TEMP TABLE panic_results (label text, msg text);
+CREATE TABLE
+DO $$ BEGIN PERFORM proof_integer_overflow(2147483647, 1);
+EXCEPTION WHEN OTHERS THEN INSERT INTO panic_results VALUES ('1_overflow', SQLERRM); END $$;
+DO
+DO $$ BEGIN PERFORM proof_index_out_of_bounds(5);
+EXCEPTION WHEN OTHERS THEN INSERT INTO panic_results VALUES ('2_index', SQLERRM); END $$;
+DO
+DO $$ BEGIN PERFORM proof_value_conversion('invalid_number');
+EXCEPTION WHEN OTHERS THEN INSERT INTO panic_results VALUES ('3_value', SQLERRM); END $$;
+DO
+DO $$ BEGIN PERFORM proof_range_boundary(500);
+EXCEPTION WHEN OTHERS THEN INSERT INTO panic_results VALUES ('4_range', SQLERRM); END $$;
+DO
+SELECT label, msg FROM panic_results ORDER BY label;
+   label    |                                  msg
+------------+------------------------------------------------------------------------
+ 1_overflow | Extension Defect [OverflowDefect]: over- or underflow
+ 2_index    | Extension Defect [IndexDefect]: index 5 not in 0 .. 2
+ 3_value    | Extension Error [ValueError]: invalid integer: invalid_number
+ 4_range    | Extension Defect [RangeDefect]: value out of range: 500 notin 1 .. 100
+(4 rows)
+
+SELECT proof_null_datum('') AS empty_str;
+                empty_str
+-----------------------------------------
+ Handled NULL/Empty string datum safely!
+(1 row)
+
+SELECT proof_null_datum('Pgxcrown') AS valid_str;
+            valid_str
+---------------------------------
+ Received valid string: Pgxcrown
+(1 row)
+
+SELECT proof_integer_overflow(10, 32) AS valid_sum;
+ valid_sum
+-----------
+        42
+(1 row)
+
+SELECT proof_index_out_of_bounds(1) AS valid_item;
+ valid_item
+------------
+ Nim
+(1 row)
+
+SELECT proof_range_boundary(42) AS valid_range;
+ valid_range
+-------------
+          42
+(1 row)
+
+SELECT 'server alive after 4 panics' AS status;
+           status
+-----------------------------
+ server alive after 4 panics
+(1 row)

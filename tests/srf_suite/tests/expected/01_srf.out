@@ -1,0 +1,19 @@
+-- Set Returning Functions (SETOF) regression suite
+SELECT * FROM generate_series_nim(1, 5) AS n;
+ n
+---
+ 1
+ 2
+ 3
+ 4
+ 5
+(5 rows)
+
+SELECT * FROM list_fruits() AS fruit;
+    fruit
+-------------
+ Apple
+ Banana
+ Cherry
+ Dragonfruit
+(4 rows)

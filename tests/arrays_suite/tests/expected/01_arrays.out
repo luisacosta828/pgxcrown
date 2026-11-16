@@ -1,0 +1,42 @@
+-- Bidirectional array & composite record[] regression suite
+SELECT sum_int_array(ARRAY[10, 20, 30, 40]) AS total;
+ total
+-------
+   100
+(1 row)
+
+SELECT double_int_array(ARRAY[1, 2, 3, 4, 5]) AS doubled;
+ doubled
+---------
+       2
+       4
+       6
+       8
+      10
+(5 rows)
+
+SELECT join_string_array(ARRAY['PostgreSQL', 'Nim', 'Pgxcrown'], ' | ') AS joined;
+           joined
+-----------------------------
+ PostgreSQL | Nim | Pgxcrown
+(1 row)
+
+SELECT uppercase_string_array(ARRAY['alpha', 'beta', 'gamma']) AS upper_words;
+ upper_words
+-------------
+ ALPHA
+ BETA
+ GAMMA
+(3 rows)
+
+SELECT count_true_bools(ARRAY[true, false, true, true, false]) AS true_count;
+ true_count
+------------
+          3
+(1 row)
+
+SELECT count_adults(ARRAY[(25, 'Alice')::"Person", (15, 'Bob')::"Person", (30, 'Charlie')::"Person"]) AS adults;
+ adults
+--------
+      2
+(1 row)

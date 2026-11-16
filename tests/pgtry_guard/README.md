@@ -10,11 +10,7 @@ call `siglongjmp`ed into garbage (`terminated by signal 11`).
 
 ## Run
 ```bash
-pgxtool create-project pgtry_guard
-cp tests/pgtry_guard/pgtry_guard_test.nim ~/<user>_pgxtool/pgtry_guard/src/main.nim
-cp tests/pgtry_guard/sql/*.sql      ~/<user>_pgxtool/pgtry_guard/tests/sql/
-cp tests/pgtry_guard/expected/*.out ~/<user>_pgxtool/pgtry_guard/tests/expected/
-pgxtool test pgtry_guard --all
+pgxtool test tests/pgtry_guard --all
 ```
-The expected output is identical on PostgreSQL 14–17. Errors are captured inside
-`DO` blocks so the output is deterministic (no stdout/stderr interleaving).
+Source lives in [`src/main.nim`](src/main.nim), with deterministic regression SQL in [`tests/sql/`](tests/sql) and golden outputs in [`tests/expected/`](tests/expected). Errors are captured inside
+`DO` blocks so the output is deterministic across PostgreSQL 14–17 (no stdout/stderr interleaving).

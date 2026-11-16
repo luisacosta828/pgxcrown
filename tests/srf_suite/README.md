@@ -4,7 +4,9 @@ This test suite verifies **v0.15.0 Set Returning Functions (SETOF)**. It guarant
 
 ---
 
-## 📋 Nim UDF Definitions (`tests/srf_suite/srf_test.nim`)
+## 📋 Nim UDF Definitions (`tests/srf_suite/src/main.nim`)
+
+Run across PostgreSQL 14–17 with `pgxtool test tests/srf_suite --all`.
 
 ```nim
 import pgxcrown

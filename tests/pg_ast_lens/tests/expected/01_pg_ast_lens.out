@@ -1,0 +1,70 @@
+-- PostgreSQL C parser AST introspection regression suite (PG 14-17 compatible)
+SELECT pg_ast_query_type() AS def_query_type;
+ def_query_type
+----------------
+ SELECT
+(1 row)
+
+SELECT pg_ast_query_type('SELECT id FROM users') AS sel_type;
+ sel_type
+----------
+ SELECT
+(1 row)
+
+SELECT pg_ast_query_type('INSERT INTO users (name) VALUES (''Alice'')') AS ins_type;
+ ins_type
+----------
+ INSERT
+(1 row)
+
+SELECT pg_ast_query_type('UPDATE users SET active = true') AS upd_type;
+ upd_type
+----------
+ UPDATE
+(1 row)
+
+SELECT pg_ast_query_type('DELETE FROM users WHERE id = 1') AS del_type;
+ del_type
+----------
+ DELETE
+(1 row)
+
+SELECT pg_ast_query_type('DROP TABLE audit_logs') AS drop_type;
+ drop_type
+-----------
+ DROP
+(1 row)
+
+SELECT pg_ast_query_type('CREATE TABLE audit_logs (id int)') AS create_type;
+ create_type
+-------------
+ CREATE
+(1 row)
+
+SELECT pg_ast_to_raw(NULL) IS NULL AS raw_null_safe;
+ raw_null_safe
+---------------
+ t
+(1 row)
+
+SELECT pg_ast_to_raw('CREATE TABLE audit_logs (id int)') ILIKE '%CREATESTMT%' AS raw_has_createstmt;
+ raw_has_createstmt
+--------------------
+ t
+(1 row)
+
+SELECT pg_ast_to_json(NULL) IS NULL AS json_null_safe;
+ json_null_safe
+----------------
+ t
+(1 row)
+
+SELECT
+  (j::jsonb)->>'status' AS status,
+  (j::jsonb)->>'raw_sql' AS raw_sql,
+  ((j::jsonb)->>'ast_tree') ILIKE '%CREATESTMT%' AS json_has_createstmt
+FROM (SELECT pg_ast_to_json('CREATE TABLE audit_logs (id int)') AS j) t;
+ status |             raw_sql              | json_has_createstmt
+--------+----------------------------------+---------------------
+ parsed | CREATE TABLE audit_logs (id int) | t
+(1 row)

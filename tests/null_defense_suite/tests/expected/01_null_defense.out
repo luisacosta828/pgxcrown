@@ -1,0 +1,48 @@
+-- Non-STRICT NULL-datum defense regression suite
+SELECT safe_greet(NULL) AS greet_null;
+    greet_null
+------------------
+ Hello Anonymous!
+(1 row)
+
+SELECT safe_greet('Postgres') AS greet_val;
+    greet_val
+-----------------
+ Hello Postgres!
+(1 row)
+
+SELECT safe_add(10, NULL) AS add_null;
+ add_null
+----------
+       10
+(1 row)
+
+SELECT safe_add(10, 32) AS add_vals;
+ add_vals
+----------
+       42
+(1 row)
+
+SELECT safe_sum_array(NULL) AS sum_null_arr;
+ sum_null_arr
+--------------
+            0
+(1 row)
+
+SELECT safe_sum_array(ARRAY[1, 2, 3, 4]) AS sum_arr;
+ sum_arr
+---------
+      10
+(1 row)
+
+SELECT option_add(25, NULL) AS opt_add_null;
+ opt_add_null
+--------------
+           25
+(1 row)
+
+SELECT option_add(25, 17) AS opt_add_some;
+ opt_add_some
+--------------
+           42
+(1 row)

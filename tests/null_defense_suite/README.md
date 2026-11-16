@@ -4,7 +4,9 @@ This test suite verifies **v0.14.0 Non-STRICT Null-Datum Defense**. It guarantee
 
 ---
 
-## 📋 Nim UDF Definitions (`tests/null_defense_suite/null_defense_test.nim`)
+## 📋 Nim UDF Definitions (`tests/null_defense_suite/src/main.nim`)
+
+Run across PostgreSQL 14–17 with `pgxtool test tests/null_defense_suite --all`.
 
 ```nim
 import pgxcrown

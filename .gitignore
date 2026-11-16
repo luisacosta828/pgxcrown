@@ -20,3 +20,13 @@ tests/test_errors
 tests/test_pgtext
 tests/test_pgvector
 tests/test_query_builder
+tests/*/.pgx_build/
+tests/*/src/*.control
+tests/*/src/*.sql
+tests/*/src/install.sh
+tests/*/src/tmp_*
+tests/*/*/.pgx_build/
+tests/*/*/src/*.control
+tests/*/*/src/*.sql
+tests/*/*/src/install.sh
+tests/*/*/src/tmp_*
