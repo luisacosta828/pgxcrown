@@ -123,6 +123,55 @@ proc generateWorkerSource*(name: string): (string, string) =
                 "SELECT stop_" & name & "_worker();\n"
   return (src, testSql)
 
+proc generateProjectSource*(name: string): (string, string) =
+  let src = "import pgxcrown\n\n" &
+    "# Starter PostgreSQL scalar UDF powered by zero-copy PgText\n" &
+    "proc hello_" & name & "*(target: string = \"World\"): string {.immutable, parallelSafe.} =\n" &
+    "  return \"Hello, \" & target & \" from pgxcrown!\"\n"
+  let testSql = "SELECT hello_" & name & "() AS default_greeting;\n" &
+                "SELECT hello_" & name & "('PostgreSQL') AS custom_greeting;\n"
+  return (src, testSql)
+
+proc generateHookSource*(hookName: string): (string, string) =
+  let src =
+    case hookName
+    of "emit_log":
+      "import pgxcrown\n" &
+      "import pgxcrown/hooks/emit_hook\n\n" &
+      "PG_MODULE_MAGIC\n" &
+      "ActivateHooks\n\n" &
+      "var\n" &
+      "  emit_log_hook {.original_hook.}: emit_log_hook_type\n" &
+      "  prev_emit_log {.user_hook.}: emit_log_hook_type\n\n" &
+      "proc custom_proc(edata: ptr ErrorData) {.cdecl.} =\n" &
+      "  if prev_emit_log != nil:\n" &
+      "    prev_emit_log(edata)\n\n" &
+      "proc pg_init() {.exportc: \"_PG_init\", pginitexport.} =\n" &
+      "  prev_emit_log = emit_log_hook\n" &
+      "  emit_log_hook = custom_proc\n\n" &
+      "proc pg_fini() {.exportc: \"_PG_fini\".} =\n" &
+      "  emit_log_hook = prev_emit_log\n"
+    of "post_parse_analyze":
+      "import pgxcrown\n" &
+      "import pgxcrown/hooks/post_parse_hook\n\n" &
+      "PG_MODULE_MAGIC\n" &
+      "ActivateHooks\n\n" &
+      "var\n" &
+      "  post_parse_analyze_hook {.original_hook.}: post_parse_analyze_hook_type\n" &
+      "  prev_post_parse_analyze {.user_hook.}: post_parse_analyze_hook_type\n\n" &
+      "proc custom_proc(pstate: ptr ParseState, query: ptr Query, jstate: ptr JumbleState) {.cdecl.} =\n" &
+      "  if prev_post_parse_analyze != nil:\n" &
+      "    prev_post_parse_analyze(pstate, query, jstate)\n\n" &
+      "proc pg_init() {.exportc: \"_PG_init\", pginitexport.} =\n" &
+      "  prev_post_parse_analyze = post_parse_analyze_hook\n" &
+      "  post_parse_analyze_hook = custom_proc\n\n" &
+      "proc pg_fini() {.exportc: \"_PG_fini\".} =\n" &
+      "  post_parse_analyze_hook = prev_post_parse_analyze\n"
+    else:
+      quit("Unsupported hook template: " & hookName)
+  let testSql = "SELECT 1 AS hook_loaded;\n"
+  return (src, testSql)
+
 proc build_extension_cli_helper() =
   echo """
 Usage: pgxtool build-extension <name> [options]
@@ -335,7 +384,9 @@ template build_project(req: string, kind: string) =
   createDir(testsExp)
   
   if "create-project" in kind:
-    writeFile(entry_point, "")
+    let (srcCode, testSql) = generateProjectSource(req)
+    writeFile(entry_point, srcCode)
+    writeFile(testsSql / "01_basic.sql", testSql)
   elif "create-type" in kind:
     let baseType = kind.split(":")[^1]
     let (srcCode, testSql) = generateTypeSource(req, baseType)
@@ -345,11 +396,10 @@ template build_project(req: string, kind: string) =
     let (srcCode, testSql) = generateWorkerSource(req)
     writeFile(entry_point, srcCode)
     writeFile(testsSql / "01_basic.sql", testSql)
-
-  if "hook" in kind:
-    generate_tmp_file(entry_point, kind)
-    writeFile(tmp_file, tmp_content)
-    run nim_c(tmp_file)
+  elif "hook" in kind:
+    let (srcCode, testSql) = generateHookSource(req)
+    writeFile(entry_point, srcCode)
+    writeFile(testsSql / "01_basic.sql", testSql)
 
 proc auditBinarySymbols*(soPath: string): bool =
   result = true
@@ -477,7 +527,14 @@ proc clean_extension*(req: string) =
     removeDir(buildDir)
   echo "🧹 Cleaned build artifacts and cache for extension '", req, "'."
 
+proc ensureHostCompileToolchain() =
+  if findExe("nim").len == 0:
+    quit("❌ 'nim' compiler not found on host PATH.\nℹ️  Tip: run 'pgxtool test <project>' to compile and test inside prebuilt GHCR/Docker containers, or install Nim >= 2.0.0.")
+  if findExe(pgconfigFinder()).len == 0 and pgconfigFinder() == "pg_config":
+    quit("❌ 'pg_config' not found on host PATH (install PostgreSQL dev headers or run 'pgxtool test <project>' via Docker/GHCR).")
+
 proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = false, verbose: bool = false, cleanBefore: bool = false, debug: bool = false) =
+  ensureHostCompileToolchain()
   var (dir, file, _) = splitFile(input_file)
   let projectDir = dir.parentDir()
   let prjName = projectDir.splitFile().name
@@ -567,6 +624,7 @@ proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = fa
   writeFile(manifestFile, pretty(manifestObj))
 
 proc compile2hook*(input_file: string, targetPgVersion: int = 0, verbose: bool = false, debug: bool = false) =
+  ensureHostCompileToolchain()
   let (dir, _, _) = splitFile(input_file)
   let projectDir = dir.parentDir()
   let prjName = projectDir.splitFile().name
