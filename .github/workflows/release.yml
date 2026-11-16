@@ -1,0 +1,167 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing Git tag to build and publish (defaults to triggering ref)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-binaries:
+    name: Build pgxtool (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            os: ubuntu-latest
+            asset: pgxtool-linux-amd64
+            static_musl: true
+          - target: darwin-arm64
+            os: macos-latest
+            asset: pgxtool-darwin-arm64
+            static_musl: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Set up Nim
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: "stable"
+
+      - name: Install musl-tools (static Linux binary)
+        if: matrix.static_musl
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends musl-tools
+
+      - name: Build pgxtool (${{ matrix.target }})
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          if [ "${{ matrix.static_musl }}" = "true" ]; then
+            nim c -d:release --mm:arc --hints:off \
+              --gcc.exe:musl-gcc --gcc.linkerexe:musl-gcc --passL:-static \
+              --path:src -o:"dist/${{ matrix.asset }}" src/pgxcrown/pgxtool.nim
+            strip -s "dist/${{ matrix.asset }}"
+          else
+            nim c -d:release --mm:arc --hints:off \
+              --path:src -o:"dist/${{ matrix.asset }}" src/pgxcrown/pgxtool.nim
+            strip "dist/${{ matrix.asset }}" || true
+          fi
+          file "dist/${{ matrix.asset }}"
+
+      - name: Smoke-test standalone binary (zero host Nim/PG required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="$PWD/dist/${{ matrix.asset }}"
+          TMP_HOME="$(mktemp -d)"
+          trap 'rm -rf "$TMP_HOME"' EXIT
+
+          EXPECTED_VER="$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' pgxcrown.nimble | head -n1)"
+          [ "$("$BIN" --version)" = "pgxtool v${EXPECTED_VER}" ]
+
+          export PGXTOOL_HOME="$TMP_HOME"
+          "$BIN" init
+          "$BIN" create-project demo_ext
+          "$BIN" create-type nickname --base-type string
+          "$BIN" create-worker demo_worker
+          "$BIN" create-hook emit_log
+          "$BIN" create-hook post_parse_analyze
+
+          [ -f "$TMP_HOME/demo_ext/src/main.nim" ]
+          [ -f "$TMP_HOME/demo_ext/tests/sql/01_basic.sql" ]
+          [ -f "$TMP_HOME/emit_log/src/main.nim" ]
+          [ -f "$TMP_HOME/post_parse_analyze/src/main.nim" ]
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgxtool-${{ matrix.target }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Download binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Validate tag matches pgxcrown.nimble and compute SHA256SUMS
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_NAME="${{ inputs.tag || github.ref_name }}"
+          TAG_VER="${TAG_NAME#v}"
+          PKG_VER="$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' pgxcrown.nimble | head -n1)"
+          if [[ "${TAG_NAME}" == v* ]] && [ "${TAG_VER}" != "${PKG_VER}" ]; then
+            echo "❌ Tag version (${TAG_VER}) does not match pgxcrown.nimble (${PKG_VER})"
+            exit 1
+          fi
+          chmod +x release-assets/pgxtool-*
+          (cd release-assets && sha256sum pgxtool-* > SHA256SUMS.txt)
+          cat release-assets/SHA256SUMS.txt
+          echo "tag_name=${TAG_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "pkg_ver=${PKG_VER}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag_name }}
+          name: "Pgxcrown ${{ steps.meta.outputs.tag_name }}"
+          generate_release_notes: true
+          body: |
+            ## Pgxcrown `${{ steps.meta.outputs.tag_name }}`
+
+            ### Quick Install (Docker-Only Host — No Nim or PostgreSQL Headers Required)
+            ```bash
+            # Linux x86_64 (static musl binary — runs on any Linux distro)
+            curl -fL "https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag_name }}/pgxtool-linux-amd64" -o ~/.local/bin/pgxtool && chmod +x ~/.local/bin/pgxtool
+
+            # macOS Apple Silicon (arm64)
+            curl -fL "https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag_name }}/pgxtool-darwin-arm64" -o /usr/local/bin/pgxtool && chmod +x /usr/local/bin/pgxtool
+
+            # Initialize, scaffold, and test across PostgreSQL 14-17 using GHCR automatically:
+            pgxtool init && pgxtool create-project analytics && pgxtool test analytics --all
+            ```
+
+            ### Install via Nimble (Full Host Toolchain)
+            ```bash
+            nimble install -y pgxcrown
+            ```
+
+            ### Prebuilt GHCR Container Images (`linux/amd64`, PostgreSQL 14–17)
+            - `ghcr.io/luisacosta828/pgxcrown:17` / `:latest` (`:17-${{ steps.meta.outputs.pkg_ver }}`)
+            - `ghcr.io/luisacosta828/pgxcrown:16` (`:16-${{ steps.meta.outputs.pkg_ver }}`)
+            - `ghcr.io/luisacosta828/pgxcrown:15` (`:15-${{ steps.meta.outputs.pkg_ver }}`)
+            - `ghcr.io/luisacosta828/pgxcrown:14` (`:14-${{ steps.meta.outputs.pkg_ver }}`)
+          files: |
+            release-assets/pgxtool-linux-amd64
+            release-assets/pgxtool-darwin-arm64
+            release-assets/SHA256SUMS.txt

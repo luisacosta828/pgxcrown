@@ -123,6 +123,8 @@ jobs:
             pgxtool init >/dev/null
             pgxtool create-hook emit_log
             pgxtool build-extension emit_log
+            pgxtool create-hook post_parse_analyze
+            pgxtool build-extension post_parse_analyze
             rm -rf "$TMP_HOOK_HOME"
           '
 
@@ -157,7 +159,9 @@ jobs:
           pgxtool create-type nickname --base-type string
           pgxtool create-type is_active --base-type bool
           pgxtool create-worker order_archiver
+          pgxtool create-hook emit_log
+          pgxtool create-hook post_parse_analyze
 
-          for prj in factorial geo_coord nickname is_active order_archiver; do
+          for prj in sample_ext factorial geo_coord nickname is_active order_archiver emit_log post_parse_analyze; do
             pgxtool test "$prj" --pg "${{ matrix.pg_version }}" --bless
           done
