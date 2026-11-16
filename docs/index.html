@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pgxcrown 👑 v0.27.1 — Native PostgreSQL Extension Framework for Nim</title>
-  <meta name="description" content="Build ultra-fast, memory-safe, crash-proof PostgreSQL C extensions in Nim. Features v0.27.1 PgText & PgVector zero-copy views, Sub-15ms Incremental Builds, PG_TRY SQLSTATE Panic Shield, and Fluent In-Database SPI.">
+  <title>Pgxcrown 👑 v0.27.2 — Native PostgreSQL Extension Framework for Nim</title>
+  <meta name="description" content="Build ultra-fast, memory-safe, crash-proof PostgreSQL C extensions in Nim. Features v0.27.2 PgText & PgVector zero-copy views, Sub-15ms Incremental Builds, PG_TRY SQLSTATE Panic Shield, and Fluent In-Database SPI.">
   
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👑</text></svg>">
   <link rel="stylesheet" href="styles.css">
@@ -18,7 +18,7 @@
       <a href="#" class="nav-brand">
         <span class="crown-icon">👑</span>
         <span class="gradient-text">Pgxcrown</span>
-        <span class="version-badge">v0.27.1</span>
+        <span class="version-badge">v0.27.2</span>
       </a>
 
       <ul class="nav-links" id="navLinks">
@@ -138,7 +138,7 @@
       <!-- Interactive Split Showcase Card -->
       <div id="pillarCard" class="pillar-card glass-card">
         <div class="pillar-info">
-          <span id="pillarBadge" class="pillar-badge">⚡ Zero-Copy Native Core (v0.27.1)</span>
+          <span id="pillarBadge" class="pillar-badge">⚡ Zero-Copy Native Core (v0.27.2)</span>
           <h3 id="pillarTitle" class="pillar-title">Zero-Copy Memory-Mapped Views</h3>
           <p id="pillarDesc" class="pillar-desc">
             Direct pointer-slice views over PostgreSQL varlena and array buffers eliminate intermediate memory allocations, strlen overhead, and garbage collection pauses.
@@ -287,7 +287,7 @@
         <!-- Shielded Card -->
         <div class="shield-card glass-card shielded">
           <div class="shield-header">
-            <span class="shield-badge badge-success">Pgxcrown v0.27.1 Panic Shield</span>
+            <span class="shield-badge badge-success">Pgxcrown v0.27.2 Panic Shield</span>
             <h3>Crash-Proof Execution</h3>
           </div>
           <div class="shield-body">
@@ -355,9 +355,12 @@
           <div class="qs-step">
             <div class="step-num">1</div>
             <div class="step-content">
-              <h4>Install Framework via Nimble (or Pull Official GHCR Image)</h4>
-              <pre><code>nimble install -y pgxcrown
-docker pull ghcr.io/luisacosta828/pgxcrown:17   # or :14, :15, :16, :latest</code></pre>
+              <h4>Install <code>pgxtool</code> (Standalone Binary or via Nimble)</h4>
+              <pre><code># Docker-only (zero Nim/Postgres needed on host):
+curl -fL https://github.com/luisacosta828/pgxcrown/releases/latest/download/pgxtool-linux-amd64 \
+  -o ~/.local/bin/pgxtool &amp;&amp; chmod +x ~/.local/bin/pgxtool
+# Or with Nim installed:
+nimble install -y pgxcrown</code></pre>
             </div>
           </div>
 
@@ -403,9 +406,9 @@ psql -U postgres -c "CREATE EXTENSION analytics;"</code></pre>
       </div>
       <div class="footer-links">
         <a href="https://github.com/luisacosta828/pgxcrown" target="_blank" rel="noopener">GitHub Repository</a>
+        <a href="https://github.com/luisacosta828/pgxcrown/releases" target="_blank" rel="noopener">Releases &amp; Binaries</a>
+        <a href="https://github.com/luisacosta828/pgxcrown/pkgs/container/pgxcrown" target="_blank" rel="noopener">GHCR Images</a>
         <a href="https://github.com/luisacosta828/pgxcrown/blob/master/README.md" target="_blank" rel="noopener">Documentation</a>
-        <a href="https://nim-lang.org" target="_blank" rel="noopener">Nim Language</a>
-        <a href="https://www.postgresql.org" target="_blank" rel="noopener">PostgreSQL</a>
       </div>
     </div>
   </footer>

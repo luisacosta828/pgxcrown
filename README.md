@@ -4,9 +4,10 @@
 
 ### High-Performance, Memory-Safe Native PostgreSQL Extension Framework for Nim
 
+[![Build](https://github.com/luisacosta828/pgxcrown/actions/workflows/build.yml/badge.svg)](https://github.com/luisacosta828/pgxcrown/actions/workflows/build.yml)
 [![Nim Version](https://img.shields.io/badge/Nim-2.0%2B-FFE953?logo=nim&logoColor=white)](https://nim-lang.org/)
 [![PostgreSQL Support](https://img.shields.io/badge/PostgreSQL-14%20--%2017-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![Release](https://img.shields.io/badge/Release-v0.27.1-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
+[![Release](https://img.shields.io/badge/Release-v0.27.2-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
 [![GHCR Containers](https://img.shields.io/badge/GHCR-PG%2014%20--%2017-2496ED?logo=docker&logoColor=white)](https://github.com/luisacosta828/pgxcrown/pkgs/container/pgxcrown)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Memory Safety](https://img.shields.io/badge/Safety-Memory%20Safe-success)](#-fail-safe-panic-shield--sqlstate-mapping)
@@ -40,15 +41,29 @@
 
 ## 🚀 60-Second Quickstart
 
-### 1. Install via Nimble
+### 1. Install `pgxtool`
+
+**Option A — Docker-only standalone binary (no Nim or host PostgreSQL headers needed):**
+```bash
+# Linux x86_64 (static binary)
+mkdir -p ~/.local/bin
+curl -fL https://github.com/luisacosta828/pgxcrown/releases/latest/download/pgxtool-linux-amd64 -o ~/.local/bin/pgxtool
+chmod +x ~/.local/bin/pgxtool
+
+# macOS Apple Silicon (arm64)
+# curl -fL https://github.com/luisacosta828/pgxcrown/releases/latest/download/pgxtool-darwin-arm64 -o /usr/local/bin/pgxtool && chmod +x /usr/local/bin/pgxtool
+```
+
+**Option B — Full host toolchain via Nimble (for local `build-extension` + Docker):**
 ```bash
 nimble install -y pgxcrown
 ```
 
-### 2. Scaffold a New Project
+### 2. Scaffold & Test Immediately (Working Starter Included)
 ```bash
 pgxtool init
 pgxtool create-project analytics
+pgxtool test analytics --pg 17   # compiles inside GHCR & runs SQL regression tests!
 ```
 
 ### 3. Write Your Nim Logic (`analytics/src/main.nim`)
@@ -455,6 +470,7 @@ SELECT stop_order_archiver_worker();
 | **`create-type`** | `pgxtool create-type <name> --base-type <type>` | Generates a custom distinct base type with dynamic parsing for 15 scalar types. |
 | **`create-hook`** | `pgxtool create-hook <name>` | Scaffolds a Postgres kernel hook template (`emit_log`, `post_parse_analyze`). |
 | **`test`** | `pgxtool test [project\|path] [--pg <v>] [--all] [--local] [--bless] [--debug]` | Runs SQL regression tests in Docker/GHCR sandboxes (PG 14–17) or natively inside a container (`--local`). |
+| **`version`** | `pgxtool --version` | Prints the installed `pgxtool` / `pgxcrown` version. |
 
 ---
 
@@ -486,14 +502,14 @@ SELECT stop_order_archiver_worker();
 
 Prebuilt all-in-one container images are published to GitHub Container Registry (`ghcr.io/luisacosta828/pgxcrown`, `linux/amd64`). Each image bundles official `postgres:<ver>`, `postgresql-server-dev-<ver>`, `gcc`, **Nim 2.4.0 + Nimble**, and **`pgxcrown` (`pgxtool`)** so engineers and CI runners can compile, install, and test C/Nim PostgreSQL extensions with zero host PostgreSQL setup.
 
-### Published GHCR Image Matrix (`v0.27.1`)
+### Published GHCR Image Matrix (`v0.27.2`)
 
 | PostgreSQL Version | Rolling Major Tag | Pinned Release Tag |
 | :--- | :--- | :--- |
-| **PostgreSQL 17** | `ghcr.io/luisacosta828/pgxcrown:17` / `:latest` | `ghcr.io/luisacosta828/pgxcrown:17-0.27.1` |
-| **PostgreSQL 16** | `ghcr.io/luisacosta828/pgxcrown:16` | `ghcr.io/luisacosta828/pgxcrown:16-0.27.1` |
-| **PostgreSQL 15** | `ghcr.io/luisacosta828/pgxcrown:15` | `ghcr.io/luisacosta828/pgxcrown:15-0.27.1` |
-| **PostgreSQL 14** | `ghcr.io/luisacosta828/pgxcrown:14` | `ghcr.io/luisacosta828/pgxcrown:14-0.27.1` |
+| **PostgreSQL 17** | `ghcr.io/luisacosta828/pgxcrown:17` / `:latest` | `ghcr.io/luisacosta828/pgxcrown:17-0.27.2` |
+| **PostgreSQL 16** | `ghcr.io/luisacosta828/pgxcrown:16` | `ghcr.io/luisacosta828/pgxcrown:16-0.27.2` |
+| **PostgreSQL 15** | `ghcr.io/luisacosta828/pgxcrown:15` | `ghcr.io/luisacosta828/pgxcrown:15-0.27.2` |
+| **PostgreSQL 14** | `ghcr.io/luisacosta828/pgxcrown:14` | `ghcr.io/luisacosta828/pgxcrown:14-0.27.2` |
 
 ### Real-World Workflows
 
@@ -527,10 +543,8 @@ You can also build images locally with `./docker/build.sh` or orchestrate all fo
 ## 🖥️ Platform & System Requirements
 
 - **Operating System**: Linux (`x86_64`, `aarch64`), macOS. *(Windows: use WSL2 or Docker).*
-- **PostgreSQL**: Version 14, 15, 16, or 17 (with `postgresql-server-dev-*` or `pg_config`).
-- **Nim Compiler**: Version $\ge 2.0.0$.
-- **C Compiler**: GCC or Clang.
-- **Docker** *(optional)*: Required on the host for `pgxtool test` sandboxes (automatically uses local builds or `ghcr.io/luisacosta828/pgxcrown:{14,15,16,17}`) or for zero-setup containerized development.
+- **Docker-Only Mode *(Zero Host Setup)***: Only **Docker** + standalone `pgxtool` binary from [Releases](https://github.com/luisacosta828/pgxcrown/releases) (`pgxtool init/create-project/test` automatically pull `ghcr.io/luisacosta828/pgxcrown:{14,15,16,17}`).
+- **Host Native Compilation *(Optional)***: PostgreSQL `14`–`17` (`postgresql-server-dev-*` / `pg_config`), Nim Compiler $\ge 2.0.0$, and GCC/Clang.
 
 ---
 
