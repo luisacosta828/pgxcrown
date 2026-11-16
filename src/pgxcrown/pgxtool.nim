@@ -2,7 +2,26 @@ import std/[os, strutils, json, osproc, hashes, times, algorithm]
 import pathfinders
 import test_suite
 
-const available_hooks = ["emit_log", "post_parse_analyze"]
+const
+  available_hooks = ["emit_log", "post_parse_analyze"]
+  NimblePackageSpec =
+    when compiles(staticRead("../../pgxcrown.nimble")):
+      staticRead("../../pgxcrown.nimble")
+    elif compiles(staticRead("../pgxcrown.nimble")):
+      staticRead("../pgxcrown.nimble")
+    else:
+      ""
+
+proc extractPackageVersion(spec: string): string {.compileTime.} =
+  for line in spec.splitLines():
+    let trimmed = line.strip()
+    if trimmed.startsWith("version") and '=' in trimmed:
+      let parts = trimmed.split('=', maxsplit = 1)
+      if parts.len == 2:
+        return parts[1].strip().strip(chars = {'"', '\''})
+  return "unknown"
+
+const PgxcrownVersion* = extractPackageVersion(NimblePackageSpec)
 proc getPlatformCompiler(): string {.inline.} =
   when defined(windows):
     if findExe("cl.exe").len > 0 or findExe("cl").len > 0:
@@ -179,6 +198,8 @@ Commands:
      * pgxtool test <name> --local
      * pgxtool test --help
 
+  version: Show installed pgxcrown / pgxtool version
+     * pgxtool --version
 """
 
 proc test_cli_helper() =
@@ -481,7 +502,7 @@ proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = fa
   createDir(nimcacheDir)
 
   let currentSourceHash = computeSourceHash(projectDir)
-  const currentPgxcrownVersion = "0.27.0-arc"
+  const currentPgxcrownVersion = PgxcrownVersion & "-arc"
 
   # Smart incremental check: if target library exists and sources haven't changed, skip build (unless debug or force)
   if not force and not cleanBefore and not debug and targetLib.len > 0 and fileExists(targetLib) and fileExists(manifestFile):
@@ -683,10 +704,13 @@ proc check_command(pc: int) =
     arg = paramStr(1)
     req: string
 
-  if arg in ["available-hooks", "path-finders", "init", "--help", "-h", "help"]: 
+  if arg in ["available-hooks", "path-finders", "init", "--help", "-h", "help", "--version", "version"]: 
     req = ""    
 
   case arg
+  of "--version", "version":
+    echo "pgxtool v", PgxcrownVersion
+    return
   of "create-hook":
     validate_second_arg(pc)
     req = paramStr(2)
