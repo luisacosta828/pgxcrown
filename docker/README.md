@@ -2,23 +2,23 @@
 
 Official all-in-one container images pairing each PostgreSQL major version (`14`, `15`, `16`, `17`) with its matching `postgresql-server-dev-<ver>` headers, `gcc`, **Nim 2.4.0 + Nimble**, and **pgxcrown** (`pgxtool`) ready to compile, install, and test native extensions inside the container.
 
-## Option A: Prebuilt Images from GHCR (`v0.27.0`)
+## Option A: Prebuilt Images from GHCR (`v0.27.1`)
 
 Published images live on GitHub Container Registry (`linux/amd64`, matching upstream `nimlang/nim:2.4.0`):
 
 | PostgreSQL | Rolling Major Tag | Pinned Release Tag |
 | :--- | :--- | :--- |
-| **PostgreSQL 17** | `ghcr.io/luisacosta828/pgxcrown:17` / `:latest` | `ghcr.io/luisacosta828/pgxcrown:17-0.27.0` |
-| **PostgreSQL 16** | `ghcr.io/luisacosta828/pgxcrown:16` | `ghcr.io/luisacosta828/pgxcrown:16-0.27.0` |
-| **PostgreSQL 15** | `ghcr.io/luisacosta828/pgxcrown:15` | `ghcr.io/luisacosta828/pgxcrown:15-0.27.0` |
-| **PostgreSQL 14** | `ghcr.io/luisacosta828/pgxcrown:14` | `ghcr.io/luisacosta828/pgxcrown:14-0.27.0` |
+| **PostgreSQL 17** | `ghcr.io/luisacosta828/pgxcrown:17` / `:latest` | `ghcr.io/luisacosta828/pgxcrown:17-0.27.1` |
+| **PostgreSQL 16** | `ghcr.io/luisacosta828/pgxcrown:16` | `ghcr.io/luisacosta828/pgxcrown:16-0.27.1` |
+| **PostgreSQL 15** | `ghcr.io/luisacosta828/pgxcrown:15` | `ghcr.io/luisacosta828/pgxcrown:15-0.27.1` |
+| **PostgreSQL 14** | `ghcr.io/luisacosta828/pgxcrown:14` | `ghcr.io/luisacosta828/pgxcrown:14-0.27.1` |
 
 ```bash
 # Pull the PostgreSQL 17 image directly
 docker pull ghcr.io/luisacosta828/pgxcrown:17
 
-# Or pin explicitly to pgxcrown 0.27.0 on PostgreSQL 16
-docker pull ghcr.io/luisacosta828/pgxcrown:16-0.27.0
+# Or pin explicitly to pgxcrown 0.27.1 on PostgreSQL 16
+docker pull ghcr.io/luisacosta828/pgxcrown:16-0.27.1
 ```
 
 ## Option B: Build Images Locally
