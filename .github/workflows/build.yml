@@ -1,61 +1,163 @@
 name: Build
-on: [push, pull_request]
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
 
 jobs:
-  build:
+  host-lint-and-cli:
+    name: Host CLI & Lint Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Nim
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: "stable"
+
+      - name: Install pgxtool from workspace
+        run: nimble -y install
+
+      - name: Verify pgxtool version matches pgxcrown.nimble
+        run: |
+          EXPECTED_VER="$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' pgxcrown.nimble | head -n1)"
+          ACTUAL_VER="$(pgxtool --version)"
+          echo "Expected: pgxtool v${EXPECTED_VER} | Actual: ${ACTUAL_VER}"
+          [ "${ACTUAL_VER}" = "pgxtool v${EXPECTED_VER}" ]
+
+      - name: Validate docs JS and GitHub workflow YAML
+        run: |
+          node --check docs/script.js
+          if python3 -c "import yaml" 2>/dev/null; then
+            python3 - <<'PY'
+          import glob, yaml
+          for path in sorted(glob.glob(".github/workflows/*.yml")):
+              with open(path, "r", encoding="utf-8") as fh:
+                  yaml.safe_load(fh)
+              print("YAML_OK:", path)
+          PY
+          else
+            ruby -ryaml -e 'Dir[".github/workflows/*.yml"].sort.each { |f| YAML.load_file(f); puts "YAML_OK: #{f}" }'
+          fi
+
+  pg-matrix:
+    name: Test Matrix (PostgreSQL ${{ matrix.pg_version }})
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        platform: [ubuntu-latest]
-        nim-channel: [stable]
-    name: ${{ matrix.platform }}-nim-${{ matrix.nim-channel }}
-    runs-on: ${{ matrix.platform }}
+        pg_version: ["14", "15", "16", "17"]
+
     steps:
-    - uses: actions/checkout@v4
-    - uses: jiro4989/setup-nim-action@v2
-      with:
-        nim-version: ${{ matrix.nim-channel }}
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Linux Dev dependencies setup      
-      run: |
-        sudo apt -y update
-        sudo apt -y install build-essential postgresql postgresql-contrib libpq-dev postgresql-server-dev-16 || sudo apt -y install build-essential postgresql postgresql-contrib libpq-dev postgresql-server-dev-all
+      - name: Set up Nim
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: "stable"
 
-    - name: Nimble setup
-      run: |
-        nimble -y refresh
-        nimble -y install
+      - name: Install host pgxtool from workspace
+        run: nimble -y install
 
-    - name: Run Unit Tests
-      run: |
-        nim c -r --hints:off tests/test_base_types.nim
-        nim c -r --hints:off tests/test_errors.nim
-        nim c -r --hints:off tests/test_query_builder.nim
-        nim c -r --hints:off tests/test_pgtext.nim
-        nim c -r --hints:off tests/test_pgvector.nim
-        nim c -r --hints:off tests/test_bgworker.nim
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-    - name: Build & Validate Extensions, Custom Types, and Hooks
-      run: |
-        pgxtool
-        pgxtool init
-        pgxtool available-hooks
-        pgxtool create-project test
-        pgxtool create-hook emit_log
-        pgxtool create-type factorial --base-type int
-        pgxtool create-type geo_coord --base-type float64
-        pgxtool create-type nickname --base-type string
-        pgxtool create-type is_active --base-type bool
-        pgxtool build-extension emit_log
-        pgxtool build-extension factorial
-        pgxtool build-extension geo_coord
-        pgxtool build-extension nickname
-        pgxtool build-extension is_active
+      - name: Build pgxcrown:${{ matrix.pg_version }} image from workspace
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: pgxcrown:${{ matrix.pg_version }}
+          build-args: |
+            PG_TAG=${{ matrix.pg_version }}
+            NIM_VERSION=2.4.0
+            PGXCROWN_SOURCE=local
+          cache-from: type=gha,scope=pgxcrown-pg-${{ matrix.pg_version }}
 
-    - name: Run PostgreSQL Container Regression Tests
-      run: |
-        pgxtool test factorial --pg 16
-        pgxtool test geo_coord --pg 16
-        pgxtool test nickname --pg 16
-        pgxtool test is_active --pg 16
+      - name: Run Unit Tests, Negative Security Blocks & Hook Build (in PG ${{ matrix.pg_version }} container)
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/repo:ro" "pgxcrown:${{ matrix.pg_version }}" bash -lc '
+            set -euo pipefail
+            EXPECTED_VER="$(sed -n -E "s/^version[[:space:]]*=[[:space:]]*\"([^\"]+)\".*/\1/p" /repo/pgxcrown.nimble | head -n1)"
+            [ "$(pgxtool --version)" = "pgxtool v${EXPECTED_VER}" ]
 
+            mkdir -p /tmp/repo_check
+            cp /repo/pgxcrown.nimble /tmp/repo_check/pgxcrown.nimble
+            cp -r /repo/src /tmp/repo_check/src
+            cp -r /repo/tests /tmp/repo_check/tests
+            cd /tmp/repo_check
+
+            for t in \
+              tests/test_allocator.nim \
+              tests/test_base_types.nim \
+              tests/test_bgworker.nim \
+              tests/test_errors.nim \
+              tests/test_pgtext.nim \
+              tests/test_pgvector.nim \
+              tests/test_query_builder.nim
+            do
+              echo "==> Running unit suite: $t"
+              nim c -r --hints:off --path:src "$t"
+            done
+
+            chmod +x tests/negative/verify_security_blocks.sh
+            ./tests/negative/verify_security_blocks.sh
+
+            TMP_HOOK_HOME="$(mktemp -d)"
+            export PGXTOOL_HOME="$TMP_HOOK_HOME"
+            pgxtool init >/dev/null
+            pgxtool create-hook emit_log
+            pgxtool build-extension emit_log
+            rm -rf "$TMP_HOOK_HOME"
+          '
+
+      - name: Run All 9 E2E Regression Suites (PG ${{ matrix.pg_version }})
+        run: |
+          for suite in \
+            arrays_suite \
+            defaults_and_nulls \
+            json_suite \
+            null_defense_suite \
+            panic_shield \
+            pg_ast_lens \
+            pgtry_guard \
+            security_suite \
+            srf_suite
+          do
+            echo "==> Running E2E suite: tests/$suite (PG ${{ matrix.pg_version }})"
+            pgxtool test "tests/$suite" --pg "${{ matrix.pg_version }}"
+          done
+
+      - name: Run CLI Scaffolding Smoke Tests (PG ${{ matrix.pg_version }})
+        run: |
+          TMP_HOME="$(mktemp -d)"
+          trap 'rm -rf "$TMP_HOME"' EXIT
+          export PGXTOOL_HOME="$TMP_HOME"
+          cd "$TMP_HOME"
+          pgxtool init
+          pgxtool available-hooks
+          pgxtool create-project sample_ext
+          pgxtool create-type factorial --base-type int
+          pgxtool create-type geo_coord --base-type float64
+          pgxtool create-type nickname --base-type string
+          pgxtool create-type is_active --base-type bool
+          pgxtool create-worker order_archiver
+
+          for prj in factorial geo_coord nickname is_active order_archiver; do
+            pgxtool test "$prj" --pg "${{ matrix.pg_version }}" --bless
+          done
