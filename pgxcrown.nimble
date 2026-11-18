@@ -11,7 +11,7 @@ bin           = @["pgxcrown/pgxtool"]
 
 binDir        = "src/bin"
 
-installExt = @["nim"]
+installExt = @["nim", "h"]
 
 # Dependencies
 requires "nim >= 2.0.0"
