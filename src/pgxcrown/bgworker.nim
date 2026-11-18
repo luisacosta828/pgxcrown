@@ -240,28 +240,39 @@ macro bgWorker*(workerName: untyped, body: untyped = nil): untyped =
   result = newTree(nnkStmtListExpr, initStmts)
 
 
-proc copyToFixed[N: static int](dest: var array[N, char],
-    src: string) {.inline.} =
+proc copyToFixedChecked[N: static int](dest: var array[N, char],
+    src: string, fieldName: string) =
+  if src.len >= N:
+    raise newException(ValueError,
+      "BackgroundWorker " & fieldName & " exceeds PostgreSQL buffer limit: " &
+      $src.len & " bytes provided, max " & $(N - 1) & " bytes")
+  if '\0' in src:
+    raise newException(ValueError,
+      "BackgroundWorker " & fieldName & " cannot contain embedded NUL bytes")
   if src.len > 0:
-    copyMem(addr dest[0], unsafeAddr src[0], min(src.len, N - 1))
+    copyMem(addr dest[0], unsafeAddr src[0], src.len)
 
 proc toRawWorker*(cfg: WorkerConfig): BackgroundWorker =
-  copyToFixed(result.bgw_name, cfg.name)
-  copyToFixed(result.bgw_type, cfg.workerType)
+  copyToFixedChecked(result.bgw_name, cfg.name, "bgw_name")
+  copyToFixedChecked(result.bgw_type, cfg.workerType, "bgw_type")
   result.bgw_flags = cint(cfg.flags)
   result.bgw_start_time = cfg.startTime
   result.bgw_restart_time = cint(cfg.restartIntervalSec)
-  copyToFixed(result.bgw_library_name, cfg.libraryName)
-  copyToFixed(result.bgw_function_name, cfg.functionName)
+  copyToFixedChecked(result.bgw_library_name, cfg.libraryName, "bgw_library_name")
+  copyToFixedChecked(result.bgw_function_name, cfg.functionName, "bgw_function_name")
   result.bgw_main_arg = cfg.mainArg
-  copyToFixed(result.bgw_extra, cfg.extra)
+  copyToFixedChecked(result.bgw_extra, cfg.extra, "bgw_extra")
   if cfg.dbName.len > 0 or cfg.userName.len > 0 or cfg.bypassAllowConn:
-    let extraLen = min(cfg.extra.len, BGW_EXTRALEN - 1)
-    let metaStart = extraLen + 1
+    let metaStart = cfg.extra.len + 1
     let meta = pgxConnMetaPrefix & cfg.dbName & "\x1F" & cfg.userName & "\x1F" & (
         if cfg.bypassAllowConn: "1" else: "0")
-    if metaStart + meta.len < BGW_EXTRALEN:
-      copyMem(addr result.bgw_extra[metaStart], cstring(meta), meta.len)
+    if metaStart + meta.len >= BGW_EXTRALEN:
+      raise newException(ValueError,
+        "BackgroundWorker bgw_extra + connection metadata exceeds BGW_EXTRALEN (" &
+        $BGW_EXTRALEN & " bytes): extra=" & $cfg.extra.len &
+        " bytes, metadata=" & $meta.len & " bytes, max combined payload=" &
+        $(BGW_EXTRALEN - 2) & " bytes")
+    copyMem(addr result.bgw_extra[metaStart], unsafeAddr meta[0], meta.len)
   result.bgw_notify_pid = cint(cfg.notifyPid)
 
 proc registerWorker*(cfg: WorkerConfig) =
@@ -617,10 +628,25 @@ template workerTransaction*(body: untyped) =
 
 template runWorkerLoop*(intervalMs: int, body: untyped,
     shutdownHandler: untyped) =
-  if MyLatch != nil:
-    ResetLatch(MyLatch)
-  while not isWorkerSigtermSet():
+  let hasTimeout = intervalMs >= 0
+  let waitFlags =
+    if hasTimeout:
+      WL_LATCH_SET or WL_TIMEOUT or WL_POSTMASTER_DEATH or WL_EXIT_ON_PM_DEATH
+    else:
+      WL_LATCH_SET or WL_POSTMASTER_DEATH or WL_EXIT_ON_PM_DEATH
+  let waitTimeoutMs = if hasTimeout: clong(intervalMs) else: clong(0)
+  let idleLabel =
+    if hasTimeout: "waiting for next cycle (" & $intervalMs & "ms)"
+    else: "waiting for wakeup latch"
+
+  while true:
+    # Clear latch BEFORE inspecting flags/queues or executing body so any
+    # signal or SetLatch arriving while work runs is never lost before WaitLatch.
+    if MyLatch != nil:
+      ResetLatch(MyLatch)
     CHECK_FOR_INTERRUPTS()
+    if isWorkerSigtermSet():
+      break
     if consumeWorkerSighup():
       ProcessConfigFile(PGC_SIGHUP)
     try:
@@ -632,13 +658,9 @@ template runWorkerLoop*(intervalMs: int, body: untyped,
     CHECK_FOR_INTERRUPTS()
     if isWorkerSigtermSet():
       break
-    setWorkerIdle("waiting for next cycle (" & $intervalMs & "ms)")
-    if MyLatch != nil:
-      ResetLatch(MyLatch)
-    let rc = WaitLatch(MyLatch, WL_LATCH_SET or WL_TIMEOUT or
-        WL_POSTMASTER_DEATH or WL_EXIT_ON_PM_DEATH, clong(intervalMs), PG_WAIT_EXTENSION)
-    if MyLatch != nil:
-      ResetLatch(MyLatch)
+    if hasWorkerDbConnection():
+      setWorkerIdle(idleLabel)
+    let rc = WaitLatch(MyLatch, waitFlags, waitTimeoutMs, PG_WAIT_EXTENSION)
     if (rc and WL_POSTMASTER_DEATH) != 0:
       workerExit(1)
 
@@ -659,7 +681,8 @@ template runWorkerLoop*(intervalMs: int, body: untyped,
     pgWarning("BgWorker shutdown error: " & err.msg)
   except Defect as defect:
     pgWarning("BgWorker shutdown defect: " & defect.msg)
-  setWorkerIdle("stopped")
+  if hasWorkerDbConnection():
+    setWorkerIdle("stopped")
   workerExit(0)
 
 template runWorkerLoop*(intervalMs: int, body: untyped) =

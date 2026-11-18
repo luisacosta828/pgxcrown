@@ -836,10 +836,11 @@ proc check_command(pc: int) =
 
     var entry_point = pgxtool_init_dir / req / "src" / "main.nim"
     if fileExists(entry_point):
+      let detectedTargetVer = detectHostPgVersion()
       if req in available_hooks:
-        compile2hook(entry_point, verbose = verboseBuild, debug = debugBuild)
+        compile2hook(entry_point, targetPgVersion = detectedTargetVer, verbose = verboseBuild, debug = debugBuild)
       else:
-        compile2pgx(entry_point, force = forceBuild, verbose = verboseBuild, cleanBefore = cleanBuild, debug = debugBuild)
+        compile2pgx(entry_point, targetPgVersion = detectedTargetVer, force = forceBuild, verbose = verboseBuild, cleanBefore = cleanBuild, debug = debugBuild)
         var script_path = generate_install_script(req)
         echo "Build completed for extension: ", req
         echo "Install script generated at: ", script_path

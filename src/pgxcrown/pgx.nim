@@ -305,6 +305,41 @@ proc isImportc(fn: NimNode): bool =
         return true
   return false
 
+proc extractTypeName(nameNode: NimNode): string =
+  if nameNode.kind == nnkPragmaExpr and nameNode.len >= 1:
+    return extractTypeName(nameNode[0])
+  return nameNode.repr.strip(chars = {'*'}).strip()
+
+proc hasTypePragma(typeDef: NimNode, names: openArray[string]): bool =
+  if typeDef.kind != nnkTypeDef or typeDef.len < 1:
+    return false
+  let nameNode = typeDef[0]
+  if nameNode.kind == nnkPragmaExpr and nameNode.len >= 2 and nameNode[1].kind == nnkPragma:
+    for p in nameNode[1]:
+      let pName = (if p.kind == nnkExprColonExpr: p[0].repr else: p.repr).toLowerAscii
+      if pName in names:
+        return true
+  return false
+
+proc attachTypePragma(typeDef: NimNode, pragmaNode: NimNode) =
+  if typeDef[0].kind == nnkPragmaExpr and typeDef[0].len >= 2 and typeDef[0][1].kind == nnkPragma:
+    for p in pragmaNode:
+      typeDef[0][1].add p.copyNimTree()
+  else:
+    var pragmaexpr = newNimNode(nnkPragmaExpr)
+    pragmaexpr.add(typeDef[0])
+    pragmaexpr.add(pragmaNode)
+    typeDef[0] = pragmaexpr
+
+proc hasProcPragma(pragmas: NimNode, targetName: string): bool =
+  if pragmas.kind == nnkPragma:
+    let wanted = targetName.toLowerAscii
+    for p in pragmas:
+      let pName = (if p.kind == nnkExprColonExpr: p[0].repr else: p.repr).toLowerAscii
+      if pName == wanted:
+        return true
+  return false
+
 macro decorateMainFunctions*() =
   var file_content = readFile(entrypoint)
   var source = parseStmt(file_content)
@@ -334,6 +369,8 @@ macro decorateMainFunctions*() =
   for el in source:
     if el.kind == nnkTypeSection:
       for e in el:
+        if e.kind != nnkTypeDef:
+          continue
         let baseOpt = extractBaseType(e)
         if baseOpt.isSome:
           let info = baseOpt.get
@@ -342,28 +379,23 @@ macro decorateMainFunctions*() =
           recordType.add info.name
           sql_shell_types.add "\nCREATE TYPE \"" & info.name & "\";\n"
         else:
-          var pragmaexpr = newNimNode(nnkPragmaExpr)
+          if hasTypePragma(e, ["pgxshmem", "nosql", "bycopy", "packed", "importc"]):
+            continue
           var type_checked = check_type_section(e)
           case type_checked:
           of "enum":
-            let cleanName = e[0].repr.strip(chars = {'*'})
+            let cleanName = extractTypeName(e[0])
             recordType.add cleanName
             addEnumDefaultCase(e)
             buildEnumType(e, sql_enums)
-            pragmaexpr.add(e[0])
-            pragmaexpr.add(pgx_pragma)
-            e[0] = pragmaexpr
+            attachTypePragma(e, pgx_pragma)
           of "tupleConstr": 
-            pragmaexpr.add(e[0])
-            pragmaexpr.add(pgx_pragma)
-            e[0] = pragmaexpr
+            attachTypePragma(e, pgx_pragma)
           of "object":
-            let cleanName = e[0].repr.strip(chars = {'*'})
+            let cleanName = extractTypeName(e[0])
             recordType.add cleanName
             buildObjectType(e, sql_objects)
-            pragmaexpr.add(e[0])
-            pragmaexpr.add(pgx_pragma)
-            e[0] = pragmaexpr
+            attachTypePragma(e, pgx_pragma)
           else:
             discard
 
@@ -400,10 +432,14 @@ macro decorateMainFunctions*() =
       if isInitProc(el):
         if el.pragma.kind == nnkEmpty:
           el.pragma = newNimNode(nnkPragma)
-        el.pragma.add(newIdentNode("cdecl"))
-        el.pragma.add(newColonExpr(newIdentNode("exportc"), newLit("_PG_init")))
-        el.pragma.add(newIdentNode("dynlib"))
-        el.pragma.add(newColonExpr(newIdentNode("stackTrace"), newIdentNode("off")))
+        if not hasProcPragma(el.pragma, "cdecl"):
+          el.pragma.add(newIdentNode("cdecl"))
+        if not hasProcPragma(el.pragma, "exportc"):
+          el.pragma.add(newColonExpr(newIdentNode("exportc"), newLit("_PG_init")))
+        if not hasProcPragma(el.pragma, "dynlib"):
+          el.pragma.add(newIdentNode("dynlib"))
+        if not hasProcPragma(el.pragma, "stacktrace"):
+          el.pragma.add(newColonExpr(newIdentNode("stackTrace"), newIdentNode("off")))
         let initScoped = newTree(nnkBlockStmt, newEmptyNode(), el.body)
         let pendingErrIdent = newIdentNode("pgxPendingErr")
         let errCodeIdent = newIdentNode("pgxErrCode")
@@ -436,33 +472,50 @@ macro decorateMainFunctions*() =
       if isWorkerProc(el):
         if el.pragma.kind == nnkEmpty:
           el.pragma = newNimNode(nnkPragma)
-        el.pragma.add(newIdentNode("cdecl"))
-        el.pragma.add(newIdentNode("exportc"))
-        el.pragma.add(newIdentNode("dynlib"))
+        if not hasProcPragma(el.pragma, "cdecl"):
+          el.pragma.add(newIdentNode("cdecl"))
+        if not hasProcPragma(el.pragma, "exportc"):
+          el.pragma.add(newIdentNode("exportc"))
+        if not hasProcPragma(el.pragma, "dynlib"):
+          el.pragma.add(newIdentNode("dynlib"))
 
         var prepends = newTree(nnkStmtList)
         let origParams = el.params
+        var flatParams: seq[(NimNode, NimNode)] = @[]
+        for idx in 1 ..< origParams.len:
+          let identDef = origParams[idx]
+          if identDef.kind == nnkIdentDefs and identDef.len >= 3:
+            let pTypeNode = identDef[^2]
+            for nameIdx in 0 ..< identDef.len - 2:
+              flatParams.add (identDef[nameIdx], pTypeNode)
 
-        if origParams.len <= 1:
-          el.params = newTree(nnkFormalParams, newEmptyNode(),
-            newIdentDefs(newIdentNode("pgx_main_arg"), newIdentNode("Datum")))
-        elif origParams.len == 2:
-          let pName = origParams[1][0]
-          let pType = origParams[1][1].repr.strip
-          el.params = newTree(nnkFormalParams, newEmptyNode(),
-            newIdentDefs(newIdentNode("pgx_main_arg"), newIdentNode("Datum")))
-          if pType in ["string", "cstring"]:
+        el.params = newTree(nnkFormalParams, newEmptyNode(),
+          newIdentDefs(newIdentNode("pgx_main_arg"), newIdentNode("Datum")))
+
+        if flatParams.len == 1:
+          let (pName, pTypeNode) = flatParams[0]
+          let pType = pTypeNode.repr.strip
+          if pType == "string":
             prepends.add newLetStmt(pName, newCall(newIdentNode("getWorkerExtra")))
+          elif pType == "cstring":
+            prepends.add newLetStmt(pName, newCall(newIdentNode("cstring"), newCall(newIdentNode("getWorkerExtra"))))
+          elif pType == "Datum":
+            prepends.add newLetStmt(pName, newIdentNode("pgx_main_arg"))
           else:
-            prepends.add newLetStmt(pName, newTree(nnkCast, newIdentNode(pType), newIdentNode("pgx_main_arg")))
-        elif origParams.len >= 3:
-          let p1Name = origParams[1][0]
-          let p1Type = origParams[1][1].repr.strip
-          let p2Name = origParams[2][0]
-          el.params = newTree(nnkFormalParams, newEmptyNode(),
-            newIdentDefs(newIdentNode("pgx_main_arg"), newIdentNode("Datum")))
-          prepends.add newLetStmt(p1Name, newTree(nnkCast, newIdentNode(p1Type), newIdentNode("pgx_main_arg")))
-          prepends.add newLetStmt(p2Name, newCall(newIdentNode("getWorkerExtra")))
+            prepends.add newLetStmt(pName, newTree(nnkCast, pTypeNode, newIdentNode("pgx_main_arg")))
+        elif flatParams.len >= 2:
+          let (p1Name, p1TypeNode) = flatParams[0]
+          let p1Type = p1TypeNode.repr.strip
+          let (p2Name, p2TypeNode) = flatParams[1]
+          let p2Type = p2TypeNode.repr.strip
+          if p1Type == "Datum":
+            prepends.add newLetStmt(p1Name, newIdentNode("pgx_main_arg"))
+          else:
+            prepends.add newLetStmt(p1Name, newTree(nnkCast, p1TypeNode, newIdentNode("pgx_main_arg")))
+          if p2Type == "cstring":
+            prepends.add newLetStmt(p2Name, newCall(newIdentNode("cstring"), newCall(newIdentNode("getWorkerExtra"))))
+          else:
+            prepends.add newLetStmt(p2Name, newCall(newIdentNode("getWorkerExtra")))
 
         var workerBody = el.body
         if prepends.len > 0:

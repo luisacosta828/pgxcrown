@@ -1,5 +1,6 @@
 import std/[os, osproc, strutils, times]
 import test_engine/[oci_driver, container_runner, diff_engine, test_discovery]
+export oci_driver.detectHostPgVersion
 
 const
   ColReset = "\e[0m"

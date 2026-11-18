@@ -54,11 +54,21 @@ int pg_vsnprintf(char *str, size_t count, const char *fmt, va_list args) {
 }
 
 
-void SetLatch(struct Latch *latch) {}
-void ResetLatch(struct Latch *latch) {}
+int mockLatchSet = 0;
+int mockResetCount = 0;
+int mockWaitCalls = 0;
+int mockLastWaitFlags = 0;
+int mockSawLatchSetInWait = 0;
+void SetLatch(struct Latch *latch) { mockLatchSet = 1; }
+void ResetLatch(struct Latch *latch) { mockLatchSet = 0; mockResetCount++; }
 void pfree(void *ptr) { if (ptr) free(ptr); }
 pqsigfunc pqsignal(int signo, pqsigfunc func) { return NULL; }
-int WaitLatch(struct Latch *latch, int wakeEvents, long timeout, uint32 wait_event_info) { return 0; }
+int WaitLatch(struct Latch *latch, int wakeEvents, long timeout, uint32 wait_event_info) {
+    mockWaitCalls++;
+    mockLastWaitFlags = wakeEvents;
+    if (mockLatchSet) mockSawLatchSetInWait = 1;
+    return mockLatchSet ? WL_LATCH_SET : WL_TIMEOUT;
+}
 void RegisterBackgroundWorker(BackgroundWorker *worker) {}
 bool RegisterDynamicBackgroundWorker(BackgroundWorker *worker, BackgroundWorkerHandle **handle) {
     static int dummy = 1;
@@ -417,4 +427,76 @@ suite "Pgxcrown - PostgreSQL Background Worker (BGWorker) Suite":
     ensureWorkersCatalog()
     let ddlSql = $cast[cstring](addr mockLastSpiSql[0])
     check "CREATE TABLE IF NOT EXISTS pgxcrown_workers" in ddlSql
+
+  test "Feature 3.4: strict overflow and NUL validation in toRawWorker":
+    let tooLongName = repeat('a', BGW_MAXLEN)
+    var badNameCfg = bgWorker("ok")
+    badNameCfg.name = tooLongName
+    expect(ValueError):
+      discard badNameCfg.toRawWorker()
+
+    var badFnCfg = bgWorker("ok")
+    badFnCfg.functionName = repeat('f', BGW_MAXLEN)
+    expect(ValueError):
+      discard badFnCfg.toRawWorker()
+
+    var badExtraCfg = bgWorker("ok")
+    badExtraCfg.extra = repeat('x', BGW_EXTRALEN)
+    expect(ValueError):
+      discard badExtraCfg.toRawWorker()
+
+    var nulExtraCfg = bgWorker("ok")
+    nulExtraCfg.extra = "abc\0def"
+    expect(ValueError):
+      discard nulExtraCfg.toRawWorker()
+
+    # Extra fits alone (115 < 128), but combined with DB metadata (\x01PGX:analytics_db\x1F\x1F0) exceeds 127
+    let combinedOverflow = bgWorker("ok"):
+      database "analytics_db"
+      extra repeat('e', 115)
+    expect(ValueError):
+      discard combinedOverflow.toRawWorker()
+
+    # Exact fit when combined fits under BGW_EXTRALEN
+    let exactFit = bgWorker("ok"):
+      database "db"
+      extra repeat('e', 100)
+    let rawOk = exactFit.toRawWorker()
+    MyBgworkerEntry = addr rawOk
+    check getWorkerExtra().len == 100
+    check getWorkerDbName() == "db"
+    MyBgworkerEntry = nil
+
+  test "runWorkerLoop eliminates ResetLatch lost-wakeup race and handles negative timeout":
+    var mockLatchSet {.importc.}: cint
+    var mockResetCount {.importc.}: cint
+    var mockWaitCalls {.importc.}: cint
+    var mockLastWaitFlags {.importc.}: cint
+    var mockSawLatchSetInWait {.importc.}: cint
+
+    mockLatchSet = 0
+    mockResetCount = 0
+    mockWaitCalls = 0
+    mockLastWaitFlags = 0
+    mockSawLatchSetInWait = 0
+    workerGotSigterm = 0
+    MyBgworkerEntry = nil
+
+    var cycles = 0
+    runWorkerLoop(-1):
+      inc cycles
+      if cycles == 1:
+        # Simulate external SetLatch arriving while body executes:
+        # WaitLatch MUST observe latch still SET (no ResetLatch between body and WaitLatch).
+        mockLatchSet = 1
+      else:
+        workerGotSigterm = 1
+
+    check cycles == 2
+    check mockResetCount == 2
+    check mockWaitCalls == 1
+    check mockSawLatchSetInWait == 1
+    check (mockLastWaitFlags and WL_LATCH_SET) != 0
+    check (mockLastWaitFlags and WL_TIMEOUT) == 0
+    workerGotSigterm = 0
 

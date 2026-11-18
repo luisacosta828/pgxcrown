@@ -36,6 +36,9 @@ template pgxSend*(customType: typed) {.pragma.}
 template pgxWorker*() {.pragma.}
 template pgxWorker*(name: string) {.pragma.}
 template pgxInit*() {.pragma.}
+template pgxShmem*() {.pragma.}
+template noSql*() {.pragma.}
+template pgxPreload*() {.pragma.}
 
 const pgTargetVersion* {.intdefine.}: int = 0
 
