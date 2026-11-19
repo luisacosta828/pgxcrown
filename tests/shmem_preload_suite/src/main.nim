@@ -83,5 +83,5 @@ proc shmem_worker_ticks*(): int64 {.volatile.} =
   result = int64((addr st.workerTicks).load())
 
 proc shmem_pragma_bump*(delta: int64): string {.volatile.} =
-  let val = (addr pragmaMetrics.requests).addFetch(delta)
+  let val = pragmaMetrics.requests.addFetch(delta)
   result = $pragmaMetrics.tag & ":" & $val

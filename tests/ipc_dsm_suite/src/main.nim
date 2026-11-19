@@ -283,3 +283,21 @@ proc ipc_typed_channel_roundtrip*(a: int64, b: int64, label: string): string {.v
       workerOpt.get().terminate()
       discard workerOpt.get().waitForShutdown()
     dsmDetach(seg)
+
+proc ipc_sugar_worker*(req: IpcTypedReq): IpcTypedResp {.pgxWorker.} =
+  result.sum = req.a + req.b
+  result.product = req.a * req.b
+  result.label.setStr("sugar:" & $req.label)
+
+proc ipc_sugar_call*(a: int64, b: int64, label: string): string {.volatile.} =
+  var req: IpcTypedReq
+  req.a = a
+  req.b = b
+  req.label.setStr($label)
+  let r1 = callWorker[IpcTypedResp]("ipc_dsm_suite", "ipc_sugar_worker", req)
+  var sumBatch: int64 = 0
+  withWorkerChannel(ch, IpcTypedReq, IpcTypedResp, "ipc_dsm_suite", "ipc_sugar_worker"):
+    var req2 = req
+    req2.a = a + 1
+    sumBatch = ch.call(req).sum + ch.call(req2).sum
+  result = $r1.label & "|sum=" & $r1.sum & "|prod=" & $r1.product & "|batch=" & $sumBatch

@@ -495,6 +495,7 @@ macro decorateMainFunctions*() =
 
         var prepends = newTree(nnkStmtList)
         let origParams = el.params
+        let origRetType = if origParams.len > 0: origParams[0] else: newEmptyNode()
         var flatParams: seq[(NimNode, NimNode)] = @[]
         for idx in 1 ..< origParams.len:
           let identDef = origParams[idx]
@@ -506,35 +507,56 @@ macro decorateMainFunctions*() =
         el.params = newTree(nnkFormalParams, newEmptyNode(),
           newIdentDefs(newIdentNode("pgx_main_arg"), newIdentNode("Datum")))
 
-        if flatParams.len == 1:
-          let (pName, pTypeNode) = flatParams[0]
-          let pType = pTypeNode.repr.strip
-          if pType == "string":
-            prepends.add newLetStmt(pName, newCall(newIdentNode("getWorkerExtra")))
-          elif pType == "cstring":
-            prepends.add newLetStmt(pName, newCall(newIdentNode("cstring"), newCall(newIdentNode("getWorkerExtra"))))
-          elif pType == "Datum":
-            prepends.add newLetStmt(pName, newIdentNode("pgx_main_arg"))
-          else:
-            prepends.add newLetStmt(pName, newTree(nnkCast, pTypeNode, newIdentNode("pgx_main_arg")))
-        elif flatParams.len >= 2:
-          let (p1Name, p1TypeNode) = flatParams[0]
-          let p1Type = p1TypeNode.repr.strip
-          let (p2Name, p2TypeNode) = flatParams[1]
-          let p2Type = p2TypeNode.repr.strip
-          if p1Type == "Datum":
-            prepends.add newLetStmt(p1Name, newIdentNode("pgx_main_arg"))
-          else:
-            prepends.add newLetStmt(p1Name, newTree(nnkCast, p1TypeNode, newIdentNode("pgx_main_arg")))
-          if p2Type == "cstring":
-            prepends.add newLetStmt(p2Name, newCall(newIdentNode("cstring"), newCall(newIdentNode("getWorkerExtra"))))
-          else:
-            prepends.add newLetStmt(p2Name, newCall(newIdentNode("getWorkerExtra")))
+        var workerBody: NimNode
+        if origRetType.kind != nnkEmpty and flatParams.len == 1:
+          # Typed RPC worker signature: proc name(req: ReqType): RespType {.pgxWorker.}
+          let (reqName, reqTypeNode) = flatParams[0]
+          let rpcHandlerIdent = newIdentNode("pgxRpcHandler")
+          let userRpcBody = el.body
+          let handlerProc = newProc(
+            name = rpcHandlerIdent,
+            params = [origRetType, newIdentDefs(reqName, reqTypeNode)],
+            body = userRpcBody
+          )
+          handlerProc.pragma = newTree(nnkPragma, newIdentNode("nimcall"))
+          workerBody = newStmtList(
+            handlerProc,
+            newCall(
+              newTree(nnkBracketExpr, newIdentNode("serveWorkerChannel"),
+                  reqTypeNode, origRetType),
+              rpcHandlerIdent
+            )
+          )
+        else:
+          if flatParams.len == 1:
+            let (pName, pTypeNode) = flatParams[0]
+            let pType = pTypeNode.repr.strip
+            if pType == "string":
+              prepends.add newLetStmt(pName, newCall(newIdentNode("getWorkerExtra")))
+            elif pType == "cstring":
+              prepends.add newLetStmt(pName, newCall(newIdentNode("cstring"), newCall(newIdentNode("getWorkerExtra"))))
+            elif pType == "Datum":
+              prepends.add newLetStmt(pName, newIdentNode("pgx_main_arg"))
+            else:
+              prepends.add newLetStmt(pName, newTree(nnkCast, pTypeNode, newIdentNode("pgx_main_arg")))
+          elif flatParams.len >= 2:
+            let (p1Name, p1TypeNode) = flatParams[0]
+            let p1Type = p1TypeNode.repr.strip
+            let (p2Name, p2TypeNode) = flatParams[1]
+            let p2Type = p2TypeNode.repr.strip
+            if p1Type == "Datum":
+              prepends.add newLetStmt(p1Name, newIdentNode("pgx_main_arg"))
+            else:
+              prepends.add newLetStmt(p1Name, newTree(nnkCast, p1TypeNode, newIdentNode("pgx_main_arg")))
+            if p2Type == "cstring":
+              prepends.add newLetStmt(p2Name, newCall(newIdentNode("cstring"), newCall(newIdentNode("getWorkerExtra"))))
+            else:
+              prepends.add newLetStmt(p2Name, newCall(newIdentNode("getWorkerExtra")))
 
-        var workerBody = el.body
-        if prepends.len > 0:
-          prepends.add workerBody
-          workerBody = prepends
+          workerBody = el.body
+          if prepends.len > 0:
+            prepends.add workerBody
+            workerBody = prepends
 
         let workerScoped = newTree(nnkBlockStmt, newEmptyNode(), workerBody)
         let pendingExitIdent = newIdentNode("pgxWorkerPendingExit")

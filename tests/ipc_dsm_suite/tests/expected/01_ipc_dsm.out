@@ -16,6 +16,12 @@ SELECT ipc_typed_channel_roundtrip(6, 7, 'typed_mq') AS typed_rpc;
  ok:typed_mq|sum=13|prod=42
 (1 row)
 
+SELECT ipc_sugar_call(8, 9, 'hi') AS sugar_rpc;
+            sugar_rpc
+----------------------------------
+ sugar:hi|sum=17|prod=72|batch=35
+(1 row)
+
 SELECT COUNT(*) AS zero_fake_sql_types FROM pg_type WHERE typname IN ('IpcSharedState', 'IpcTypedReq', 'IpcTypedResp');
  zero_fake_sql_types
 ---------------------

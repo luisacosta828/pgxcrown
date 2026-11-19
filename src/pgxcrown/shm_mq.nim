@@ -11,7 +11,7 @@
 ##   - Bidirectional RPC channel layout helper over `shm_toc`
 ## =============================================================================
 
-import std/os
+import std/[os, options]
 import ./compiler
 import ./lwlock
 import ./shmem
@@ -301,3 +301,167 @@ proc receive*[T](ch: ShmChannel[T],
   if r.data != nil and expectedSz > 0:
     copyMem(addr val, r.data, int(expectedSz))
   (status: mqSuccess, value: val)
+
+# -----------------------------------------------------------------------------
+# High-Level Worker RPC Ergonomics (Hides DSM, shm_toc, Latch & Lifecycle)
+# -----------------------------------------------------------------------------
+
+const
+  PGX_RPC_TOC_MAGIC* = 0x50475852'u64
+  PGX_RPC_REQ_KEY* = 1'u64
+  PGX_RPC_RESP_KEY* = 2'u64
+
+type
+  WorkerChannel*[TReq, TResp] = object
+    ## High-level bidirectional RPC channel bound to a dynamic background worker.
+    seg*: DsmSegment
+    worker*: WorkerHandle
+    reqCh*: ShmChannel[TReq]
+    respCh*: ShmChannel[TResp]
+    active*: bool
+
+proc serveWorkerChannel*[TReq, TResp](handler: proc(req: TReq): TResp {.nimcall.}) =
+  ## Runs the complete background worker lifecycle for typed `TReq -> TResp` RPC:
+  ## initializes worker signals/DB connection, attaches DSM, services requests
+  ## cleanly with ResetLatch + CHECK_FOR_INTERRUPTS, and cleans up on shutdown.
+  assertShmemSafe(TReq)
+  assertShmemSafe(TResp)
+  workerInit()
+  ensureResourceOwner("pgx_rpc_worker")
+
+  let seg = dsmAttachOrFind(DsmHandle(MyBgworkerEntry.bgw_main_arg))
+  if seg == nil:
+    workerExit(1)
+    return
+
+  var reqCh: ShmChannel[TReq]
+  var respCh: ShmChannel[TResp]
+  try:
+    let toc = attachToc(seg, PGX_RPC_TOC_MAGIC)
+    let rpc = lookupRpcQueues(toc, PGX_RPC_REQ_KEY, PGX_RPC_RESP_KEY)
+    reqCh = openRecvChannel[TReq](rpc.reqMq, seg)
+    respCh = openSendChannel[TResp](rpc.respMq, seg)
+
+    while not isWorkerSigtermSet():
+      if MyLatch != nil:
+        ResetLatch(MyLatch)
+      CHECK_FOR_INTERRUPTS()
+      if isWorkerSigtermSet():
+        break
+      let got = reqCh.receive()
+      if got.status == mqDetached:
+        break
+      if got.status == mqSuccess:
+        let reply = handler(got.value)
+        if respCh.send(reply) == mqDetached:
+          break
+  finally:
+    respCh.close()
+    reqCh.close()
+    dsmDetach(seg)
+  workerExit(0)
+
+proc openWorkerChannel*[TReq, TResp](libraryName: string, workerEntry: string,
+    workerName: string = "", dbName: string = "",
+    queueBytes: csize_t = 8192.csize_t): WorkerChannel[TReq, TResp] =
+  ## Allocates DSM queues, spawns a dynamic worker at `libraryName:workerEntry`,
+  ## waits for startup, and returns a ready `WorkerChannel[TReq, TResp]`.
+  assertShmemSafe(TReq)
+  assertShmemSafe(TResp)
+
+  var est = initEstimator()
+  est.estimateRpcQueues(queueBytes, queueBytes)
+  let seg = dsmCreate(est.estimate())
+  if seg == nil:
+    raise newException(ValueError, "dsmCreate returned nil")
+
+  try:
+    let toc = createToc(seg, PGX_RPC_TOC_MAGIC)
+    let rpc = createRpcQueues(toc, PGX_RPC_REQ_KEY, PGX_RPC_RESP_KEY,
+        queueBytes, queueBytes)
+
+    let displayName = if workerName.len > 0: workerName else: workerEntry
+    var cfg = bgWorker(libraryName):
+      entrypoint workerEntry
+      mainArg dsmHandle(seg)
+    cfg.name = displayName
+    cfg.workerType = displayName
+    if dbName.len > 0:
+      cfg.dbName = dbName
+      cfg.flags = cfg.flags or BGWORKER_BACKEND_DATABASE_CONNECTION
+
+    let workerOpt = registerDynamicWorker(cfg)
+    if workerOpt.isNone:
+      raise newException(ValueError,
+        "registerDynamicWorker failed for '" & libraryName & ":" & workerEntry & "'")
+    let wh = workerOpt.get()
+    let (status, _) = wh.waitForStartup()
+    if status != bgwStarted:
+      wh.terminate()
+      discard wh.waitForShutdown()
+      raise newException(ValueError,
+        "Worker '" & workerEntry & "' failed to start (status=" & $status & ")")
+
+    result.seg = seg
+    result.worker = wh
+    result.reqCh = openSendChannel[TReq](rpc.reqMq, seg, wh)
+    result.respCh = openRecvChannel[TResp](rpc.respMq, seg, wh)
+    result.active = true
+  except CatchableError as err:
+    dsmDetach(seg)
+    raise err
+
+proc call*[TReq, TResp](ch: WorkerChannel[TReq, TResp], req: TReq): TResp =
+  ## Sends `req` to the worker and returns the typed `TResp` synchronously.
+  if not ch.active:
+    raise newException(ValueError, "WorkerChannel is closed")
+  let sRes = ch.reqCh.send(req)
+  if sRes != mqSuccess:
+    raise newException(ValueError, "WorkerChannel send failed (" & $sRes & ")")
+  let rRes = ch.respCh.receive()
+  if rRes.status != mqSuccess:
+    raise newException(ValueError, "WorkerChannel receive failed (" & $rRes.status & ")")
+  rRes.value
+
+proc close*[TReq, TResp](ch: var WorkerChannel[TReq, TResp]) =
+  ## Cleanly detaches queues, shuts down the worker, and detaches DSM.
+  ch.reqCh.close()
+  ch.respCh.close()
+  if ch.active:
+    ch.worker.terminate()
+    discard ch.worker.waitForShutdown()
+    ch.active = false
+  if ch.seg != nil:
+    dsmDetach(ch.seg)
+    ch.seg = nil
+
+template withWorkerChannel*(chSym: untyped, TReq, TResp: typedesc,
+    libraryName: string, workerEntry: string, body: untyped) =
+  ## RAII guard for multi-call WorkerChannel sessions.
+  var chSym = openWorkerChannel[TReq, TResp](libraryName, workerEntry)
+  try:
+    body
+  finally:
+    chSym.close()
+
+proc callWorkerTyped*[TReq, TResp](libraryName: string, workerEntry: string,
+    req: TReq, dbName: string = "", queueBytes: csize_t = 8192.csize_t): TResp =
+  ## One-shot typed RPC call: spawns the worker, sends `req`, returns `TResp`,
+  ## and tears down everything automatically.
+  var ch = openWorkerChannel[TReq, TResp](libraryName, workerEntry,
+      dbName = dbName, queueBytes = queueBytes)
+  try:
+    result = ch.call(req)
+  finally:
+    ch.close()
+
+template callWorker*[TResp](libraryName: string, workerEntry: string,
+    req: typed, dbName: string = "", queueBytes: csize_t = 8192.csize_t): TResp =
+  ## Ergonomic 1-type-parameter RPC helper (`TReq` is inferred from `req`):
+  ##   let res = callWorker[SumResp]("my_ext", "sum_worker", SumReq(a: 1, b: 2))
+  callWorkerTyped[typeof(req), TResp](libraryName, workerEntry, req, dbName, queueBytes)
+
+proc callWorker*[TReq, TResp](libraryName: string, workerEntry: string,
+    req: TReq, dbName: string = "", queueBytes: csize_t = 8192.csize_t): TResp {.inline.} =
+  ## Explicit `[TReq, TResp]` overload of `callWorker`.
+  callWorkerTyped[TReq, TResp](libraryName, workerEntry, req, dbName, queueBytes)

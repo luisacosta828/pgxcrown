@@ -358,26 +358,26 @@ suite "Pgxcrown - LWLock, Atomics, SpinLock & ConditionVariable Suite":
     var spin: slock_t
     spinLockInit(addr spin)
     check spinLockFree(addr spin)
-    withSpinLock(addr spin):
+    withSpinLock(spin):
       check not spinLockFree(addr spin)
     check spinLockFree(addr spin)
 
   test "Atomic flag, uint32, and uint64 operations":
     var flg: pg_atomic_flag
-    (addr flg).init()
-    check (addr flg).isUnlocked()
-    check (addr flg).testAndSet() == true
-    check not (addr flg).isUnlocked()
-    check (addr flg).testAndSet() == false
-    (addr flg).clear()
-    check (addr flg).isUnlocked()
+    flg.init()
+    check flg.isUnlocked()
+    check flg.testAndSet() == true
+    check not flg.isUnlocked()
+    check flg.testAndSet() == false
+    flg.clear()
+    check flg.isUnlocked()
 
     var u32: pg_atomic_uint32
+    u32.init(10'u32)
+    check u32.load() == 10'u32
+    check u32.fetchAdd(5) == 10'u32
+    check u32.addFetch(2) == 17'u32
     let p32 = addr u32
-    p32.init(10'u32)
-    check p32.load() == 10'u32
-    check p32.fetchAdd(5) == 10'u32
-    check p32.addFetch(2) == 17'u32
     check p32.fetchSub(3) == 17'u32
     check p32.subFetch(4) == 10'u32
     check p32.fetchOr(0x10'u32) == 10'u32

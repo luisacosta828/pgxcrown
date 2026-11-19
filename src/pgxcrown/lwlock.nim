@@ -240,6 +240,17 @@ template withLock*(lock: ptr LWLock, body: untyped) =
   withLock(lock, lwExclusive):
     body
 
+template withLock*(lock: var LWLock, mode: LWLockMode, body: untyped) =
+  withLock(addr lock, mode):
+    body
+
+template withLock*(lock: var LWLock, body: untyped) =
+  withLock(addr lock, lwExclusive):
+    body
+
+proc init*(lock: var LWLock, trancheId: cint) {.inline.} =
+  LWLockInitialize(addr lock, trancheId)
+
 template withSpinLock*(spin: ptr slock_t, body: untyped) =
   ## Acquires `spin` and releases in `finally`.
   ## WARNING: Never call palloc, ereport(ERROR), SPI, or raising/longjmp code inside `body`.
@@ -250,11 +261,19 @@ template withSpinLock*(spin: ptr slock_t, body: untyped) =
   finally:
     spinLockRelease(spinPtr)
 
-# Overloaded ergonomic helpers for pg_atomic_* and ConditionVariable
+template withSpinLock*(spin: var slock_t, body: untyped) =
+  withSpinLock(addr spin):
+    body
+
+# Overloaded ergonomic helpers for pg_atomic_* and ConditionVariable (both ptr and var)
 proc init*(p: ptr pg_atomic_flag) {.inline.} = atomicInitFlag(p)
 proc testAndSet*(p: ptr pg_atomic_flag): bool {.inline.} = atomicTestSetFlag(p)
 proc isUnlocked*(p: ptr pg_atomic_flag): bool {.inline.} = atomicUnlockedTestFlag(p)
 proc clear*(p: ptr pg_atomic_flag) {.inline.} = atomicClearFlag(p)
+proc init*(p: var pg_atomic_flag) {.inline.} = atomicInitFlag(addr p)
+proc testAndSet*(p: var pg_atomic_flag): bool {.inline.} = atomicTestSetFlag(addr p)
+proc isUnlocked*(p: var pg_atomic_flag): bool {.inline.} = atomicUnlockedTestFlag(addr p)
+proc clear*(p: var pg_atomic_flag) {.inline.} = atomicClearFlag(addr p)
 
 proc init*(p: ptr pg_atomic_uint32, val: uint32 = 0) {.inline.} = atomicInitU32(p, val)
 proc load*(p: ptr pg_atomic_uint32): uint32 {.inline.} = atomicLoadU32(p)
@@ -269,6 +288,19 @@ proc subFetch*(p: ptr pg_atomic_uint32, delta: int32): uint32 {.inline.} = atomi
 proc fetchAnd*(p: ptr pg_atomic_uint32, mask: uint32): uint32 {.inline.} = atomicFetchAndU32(p, mask)
 proc fetchOr*(p: ptr pg_atomic_uint32, mask: uint32): uint32 {.inline.} = atomicFetchOrU32(p, mask)
 
+proc init*(p: var pg_atomic_uint32, val: uint32 = 0) {.inline.} = atomicInitU32(addr p, val)
+proc load*(p: var pg_atomic_uint32): uint32 {.inline.} = atomicLoadU32(addr p)
+proc store*(p: var pg_atomic_uint32, val: uint32) {.inline.} = atomicStoreU32(addr p, val)
+proc exchange*(p: var pg_atomic_uint32, val: uint32): uint32 {.inline.} = atomicExchangeU32(addr p, val)
+proc compareExchange*(p: var pg_atomic_uint32, expected: var uint32, newVal: uint32): bool {.inline.} =
+  atomicCompareExchangeU32(addr p, addr expected, newVal)
+proc fetchAdd*(p: var pg_atomic_uint32, delta: int32): uint32 {.inline.} = atomicFetchAddU32(addr p, delta)
+proc fetchSub*(p: var pg_atomic_uint32, delta: int32): uint32 {.inline.} = atomicFetchSubU32(addr p, delta)
+proc addFetch*(p: var pg_atomic_uint32, delta: int32): uint32 {.inline.} = atomicAddFetchU32(addr p, delta)
+proc subFetch*(p: var pg_atomic_uint32, delta: int32): uint32 {.inline.} = atomicSubFetchU32(addr p, delta)
+proc fetchAnd*(p: var pg_atomic_uint32, mask: uint32): uint32 {.inline.} = atomicFetchAndU32(addr p, mask)
+proc fetchOr*(p: var pg_atomic_uint32, mask: uint32): uint32 {.inline.} = atomicFetchOrU32(addr p, mask)
+
 proc init*(p: ptr pg_atomic_uint64, val: uint64 = 0) {.inline.} = atomicInitU64(p, val)
 proc load*(p: ptr pg_atomic_uint64): uint64 {.inline.} = atomicLoadU64(p)
 proc store*(p: ptr pg_atomic_uint64, val: uint64) {.inline.} = atomicStoreU64(p, val)
@@ -282,7 +314,21 @@ proc subFetch*(p: ptr pg_atomic_uint64, delta: int64): uint64 {.inline.} = atomi
 proc fetchAnd*(p: ptr pg_atomic_uint64, mask: uint64): uint64 {.inline.} = atomicFetchAndU64(p, mask)
 proc fetchOr*(p: ptr pg_atomic_uint64, mask: uint64): uint64 {.inline.} = atomicFetchOrU64(p, mask)
 
+proc init*(p: var pg_atomic_uint64, val: uint64 = 0) {.inline.} = atomicInitU64(addr p, val)
+proc load*(p: var pg_atomic_uint64): uint64 {.inline.} = atomicLoadU64(addr p)
+proc store*(p: var pg_atomic_uint64, val: uint64) {.inline.} = atomicStoreU64(addr p, val)
+proc exchange*(p: var pg_atomic_uint64, val: uint64): uint64 {.inline.} = atomicExchangeU64(addr p, val)
+proc compareExchange*(p: var pg_atomic_uint64, expected: var uint64, newVal: uint64): bool {.inline.} =
+  atomicCompareExchangeU64(addr p, addr expected, newVal)
+proc fetchAdd*(p: var pg_atomic_uint64, delta: int64): uint64 {.inline.} = atomicFetchAddU64(addr p, delta)
+proc fetchSub*(p: var pg_atomic_uint64, delta: int64): uint64 {.inline.} = atomicFetchSubU64(addr p, delta)
+proc addFetch*(p: var pg_atomic_uint64, delta: int64): uint64 {.inline.} = atomicAddFetchU64(addr p, delta)
+proc subFetch*(p: var pg_atomic_uint64, delta: int64): uint64 {.inline.} = atomicSubFetchU64(addr p, delta)
+proc fetchAnd*(p: var pg_atomic_uint64, mask: uint64): uint64 {.inline.} = atomicFetchAndU64(addr p, mask)
+proc fetchOr*(p: var pg_atomic_uint64, mask: uint64): uint64 {.inline.} = atomicFetchOrU64(addr p, mask)
+
 proc init*(cv: ptr ConditionVariable) {.inline.} = ConditionVariableInit(cv)
+proc init*(cv: var ConditionVariable) {.inline.} = ConditionVariableInit(addr cv)
 proc prepareToSleep*(cv: ptr ConditionVariable) {.inline.} = ConditionVariablePrepareToSleep(cv)
 proc sleep*(cv: ptr ConditionVariable, waitEventInfo: uint32 = PGX_WAIT_EXTENSION) {.inline.} =
   ConditionVariableSleep(cv, waitEventInfo)
@@ -290,7 +336,9 @@ proc timedSleep*(cv: ptr ConditionVariable, timeoutMs: clong, waitEventInfo: uin
   ConditionVariableTimedSleep(cv, timeoutMs, waitEventInfo)
 proc cancelSleep*() {.inline.} = cvCancelSleep()
 proc signal*(cv: ptr ConditionVariable) {.inline.} = ConditionVariableSignal(cv)
+proc signal*(cv: var ConditionVariable) {.inline.} = ConditionVariableSignal(addr cv)
 proc broadcast*(cv: ptr ConditionVariable) {.inline.} = ConditionVariableBroadcast(cv)
+proc broadcast*(cv: var ConditionVariable) {.inline.} = ConditionVariableBroadcast(addr cv)
 
 template waitUntil*(cv: ptr ConditionVariable, lock: ptr LWLock,
                     mode: LWLockMode, timeoutMs: int64,
