@@ -7,7 +7,7 @@
 [![Build](https://github.com/luisacosta828/pgxcrown/actions/workflows/build.yml/badge.svg)](https://github.com/luisacosta828/pgxcrown/actions/workflows/build.yml)
 [![Nim Version](https://img.shields.io/badge/Nim-2.0%2B-FFE953?logo=nim&logoColor=white)](https://nim-lang.org/)
 [![PostgreSQL Support](https://img.shields.io/badge/PostgreSQL-14%20--%2017-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![Release](https://img.shields.io/badge/Release-v0.27.2-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
+[![Release](https://img.shields.io/badge/Release-v0.28.0-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
 [![GHCR Containers](https://img.shields.io/badge/GHCR-PG%2014%20--%2017-2496ED?logo=docker&logoColor=white)](https://github.com/luisacosta828/pgxcrown/pkgs/container/pgxcrown)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Memory Safety](https://img.shields.io/badge/Safety-Memory%20Safe-success)](#-fail-safe-panic-shield--sqlstate-mapping)
@@ -35,6 +35,7 @@
 - **Declarative Custom Base Types**: Declarative pragmas (`{.pgxType.}`, `{.pgxInput.}`, `{.pgxOutput.}`) supporting 15 flat scalar types with type-specific parsing and automatic DDL generation.
 - **Smart Incremental Toolchain (`pgxtool`)**: Sub-15ms incremental builds via SHA-256 source manifests, isolated `.pgx_build/nimcache`, and ephemeral Docker container testing across PostgreSQL 14–17 with golden snapshot diffing (`--bless`).
 - **Autonomous Background Workers (`pgxWorker`)**: In-database daemons with sub-1ms dynamic launch (`bgw_notify_pid`), zero-lock live observability (`workerActivity` in `pg_stat_activity`), nested subtransactions (`workerSavepoint`), automatic catalog tracking (`pgxcrown_workers`), and graceful signal shutdown (`onShutdown`).
+- **Multi-Process Shared Memory & IPC (`PG 14–17`)**: Declarative static shared state ([`{.pgxShared.}`](#8-multi-process-concurrency--shared-memory-pg-1417)), dynamic shared memory (`dsm`, `shm_toc`), typed SPSC queues & one-line worker RPC (`ShmChannel[T]`, `callWorker`, `withWorkerChannel`), `LWLock` / `SpinLock` / atomics / `ConditionVariable` (`waitUntil`), and `WaitEventSet` latch+socket multiplexing — all compile-time POD-verified and ABI-safe across PostgreSQL 14–17.
 - **Compile-Time Effect Verification**: Static enforcement of SQL volatility (`{.immutable.}`, `{.stable.}`, `{.volatile.}`) preventing illegal database writes at compile time.
 
 ---
@@ -451,6 +452,114 @@ SELECT stop_order_archiver_worker();
 
 ---
 
+### 8. Multi-Process Concurrency & Shared Memory (`PG 14–17`)
+
+Every PostgreSQL session and Background Worker runs in a separate OS process (`fork()`), with private per-process `MemoryContext` heaps (`--mm:arc`/`orc`). Pgxcrown provides compile-time POD-guarded primitives and high-level ergonomics unified across **PostgreSQL 14, 15, 16, and 17** (`pgxcrown/lwlock`, `pgxcrown/shmem`, `pgxcrown/shm_mq`, and `WaitEventSet` in `pgxcrown/bgworker` — all automatically re-exported by `import pgxcrown`).
+
+#### When to Use Which Tool
+
+| Need / Workload | Recommended API | `shared_preload_libraries` Required? | Notes |
+| :--- | :--- | :---: | :--- |
+| **Global counters, metrics, caches or flags** shared across all sessions & static workers | `{.pgxShared.}` (or `installShmemHooks` + `initShmemStruct`) | **Yes** | Allocated once at Postmaster startup (`shmem_request_hook` on PG 15–17, `_PG_init` on PG 14); survives across queries. |
+| **One-shot or batched typed RPC** between a SQL session and a dynamic worker | `proc w(req): resp {.pgxWorker.}` + `callWorker[TResp]` / `withWorkerChannel` | **No** | Works with `CREATE EXTENSION` alone; hides DSM, `shm_toc`, `ResetLatch`, and worker cleanup. |
+| **Streaming / custom multi-queue DSM layout** (e.g., mixed `LWLock` + ring queues + variable payloads) | `dsmCreate` + `shm_toc` + `ShmChannel[T]` / `send`/`receive` | **No** | Full control over segment pinning, `ShmRpcChannel`, zero-copy reads, and byte/string payloads. |
+| **Cluster-wide synchronization & async I/O** | `pg_atomic_*`, `withLock`, `withSpinLock`, `waitUntil`, `withWaitEventSet` | Depends on storage | Handles atomics, LWLocks, CVs, and non-blocking socket + `MyLatch` multiplexing safely. |
+
+> [!IMPORTANT]
+> **Compile-Time POD Rule (`{.pgxShared.}` / `{.pgxShmem, bycopy.}`):**
+> Types stored in static shared memory, DSM, or `ShmChannel[T]` must be plain C-ABI data (`supportsCopyMem(T) == true`). Putting Nim heap types (`string`, `seq`, `Table`, `ref`) inside shared memory causes compile errors intentionally—use `FixedString[N]` for text buffers and `pgSizeOf[T]()` (real C `sizeof`) for sizing. Mark shared-memory structs with `{.pgxShared.}` (or `{.pgxShmem, bycopy.}`) so Pgxcrown does **not** emit a SQL `CREATE TYPE` for them.
+
+#### Case A: Cluster-Wide Shared State with `{.pgxShared.}` (Preloaded Extension)
+
+Use `{.pgxShared.}` when multiple client connections and/or static background workers read and mutate the same live state in RAM from Postmaster startup:
+
+```nim
+import pgxcrown
+
+type
+  ServiceMetrics* {.pgxShared.} = object
+    requests*: pg_atomic_uint64
+    tag*: FixedString[24]
+
+proc initMetrics(p: ptr ServiceMetrics) =
+  p.requests.init(0'u64)
+  p.tag.setStr("ready")
+
+# Auto-reserves shmem, hooks _PG_init / shmem_request / shmem_startup, and runs initMetrics once:
+var metrics* {.pgxShared("my_ext_metrics", initMetrics).}: ServiceMetrics
+
+proc record_hit*(): string {.volatile.} =
+  let total = metrics.requests.addFetch(1)
+  result = $metrics.tag & ":" & $total
+```
+
+Enable preload testing automatically by adding an empty `tests/preload` marker file in your extension project (so `pgxtool test my_ext --all` restarts PostgreSQL with `shared_preload_libraries = 'my_ext'`), or pass `--preload` explicitly:
+
+```bash
+touch my_ext/tests/preload
+pgxtool test my_ext --all --bless -v
+# Or manually for any extension/hook:
+pgxtool test my_ext --pg 17 --preload -v
+```
+
+*(Need a custom named `LWLockTranche` or static worker alongside `{.pgxShared.}`? Define `proc my_init() {.pgxInit.}` and call `installShmemHooks(onReq, onStart)` + `registerWorker(cfg)` — Pgxcrown chains your hooks cleanly alongside all `{.pgxShared.}` slots across PG 14–17.)*
+
+#### Case B: Dynamic Typed Worker RPC (`callWorker` & `withWorkerChannel` — No Preload)
+
+When a SQL session needs to offload work or talk to an on-demand worker without modifying `postgresql.conf`, declare a typed `{.pgxWorker.}` handler `(req: TReq): TResp` and invoke `callWorker[TResp]` (or reuse a live worker across multiple requests with `withWorkerChannel`):
+
+```nim
+import pgxcrown
+
+type
+  ComputeReq* {.pgxShared.} = object
+    a*: int64
+    b*: int64
+
+  ComputeResp* {.pgxShared.} = object
+    sum*: int64
+    product*: int64
+
+# 1. Define a typed RPC worker (DSM, ResetLatch, CHECK_FOR_INTERRUPTS & cleanup are automatic):
+proc math_worker*(req: ComputeReq): ComputeResp {.pgxWorker.} =
+  ComputeResp(sum: req.a + req.b, product: req.a * req.b)
+
+# 2. One-shot call from SQL (infers ComputeReq automatically):
+proc remote_add*(x: int64, y: int64): int64 {.volatile.} =
+  let res = callWorker[ComputeResp]("my_ext", "math_worker", ComputeReq(a: x, b: y))
+  return res.sum
+
+# 3. Batched multi-call session reusing one live background worker:
+proc remote_batch_sum*(n: int64): int64 {.volatile.} =
+  withWorkerChannel(ch, ComputeReq, ComputeResp, "my_ext", "math_worker"):
+    for i in 1 .. n:
+      result += ch.call(ComputeReq(a: i, b: i * 2)).sum
+```
+
+#### Case C: Synchronization, Condition Variables & `WaitEventSet` Multiplexing
+
+Choose the synchronization primitive that matches your critical section rules:
+
+- **Lock-free counters/flags:** `pg_atomic_uint32`, `pg_atomic_uint64`, `pg_atomic_flag` (`init`, `load`, `store`, `addFetch`, `compareExchange`).
+- **General critical sections (`withLock`):** Wraps PostgreSQL `LWLock` (`rwlock`: `lwExclusive` / `lwShared`) inside `try ... finally` so exceptions or `ereport(ERROR)` never leave locks dangling. Safe with `palloc`, SPI, and dynamic DSM tranches (`newTrancheId` + `registerTrancheCopy` per attaching process).
+- **Ultra-short critical sections (`withSpinLock`):** Minimal overhead on `slock_t`. **Never allocate memory (`palloc`), call `ereport`, or run SPI inside `withSpinLock`** (a `siglongjmp` would leave a spinlock wedged).
+- **Condition Variables (`waitUntil`):** Encapsulates `PrepareToSleep -> withLock(check) -> Sleep -> finally: CancelSleep()` without lost wakeups or holding an `LWLock` across sleep:
+  ```nim
+  let ok = waitUntil(state.cv, lock, lwShared, timeoutMs = 5000):
+    state.ticks.load() >= targetTicks
+  ```
+- **Event Multiplexing (`withWaitEventSet`):** Wait concurrently on `MyLatch`, postmaster death, and **non-blocking** sockets (`setSocketNonBlocking`) portably across PG 14–16 (`TopMemoryContext`) and PG 17 (`ResourceOwner`), handling `wlSocketClosed()` safely on every version:
+  ```nim
+  withWaitEventSet(wes, 3):
+    discard wes.addLatchEvent(MyLatch)
+    discard wes.addPostmasterDeathEvent(exitOnDeath = true)
+    discard wes.addSocketEvent(sockFd, WL_SOCKET_READABLE or wlSocketClosed())
+    var occurred: array[4, WaitEvent]
+    let n = wes.waitEventSet(250, occurred)
+  ```
+
+---
+
 ## 💻 `pgxtool` CLI Reference
 
 `pgxtool` automates the entire PostgreSQL extension lifecycle:
@@ -469,7 +578,7 @@ SELECT stop_order_archiver_worker();
 | **`install`** | `pgxtool install <name>` | Automatically copies `.so`, `.control`, and `.sql` to PostgreSQL directories. |
 | **`create-type`** | `pgxtool create-type <name> --base-type <type>` | Generates a custom distinct base type with dynamic parsing for 15 scalar types. |
 | **`create-hook`** | `pgxtool create-hook <name>` | Scaffolds a Postgres kernel hook template (`emit_log`, `post_parse_analyze`). |
-| **`test`** | `pgxtool test [project\|path] [--pg <v>] [--all] [--local] [--bless] [--debug]` | Runs SQL regression tests in Docker/GHCR sandboxes (PG 14–17) or natively inside a container (`--local`). |
+| **`test`** | `pgxtool test [project\|path] [--pg <v>] [--all] [--local] [--preload] [--bless] [--keep] [--debug]` | Runs SQL regression tests (with optional `shared_preload_libraries` + restart via `--preload` or `tests/preload`) in Docker/GHCR sandboxes (PG 14–17) or locally (`--local`). |
 | **`version`** | `pgxtool --version` | Prints the installed `pgxtool` / `pgxcrown` version. |
 
 ---
@@ -502,14 +611,14 @@ SELECT stop_order_archiver_worker();
 
 Prebuilt all-in-one container images are published to GitHub Container Registry (`ghcr.io/luisacosta828/pgxcrown`, `linux/amd64`). Each image bundles official `postgres:<ver>`, `postgresql-server-dev-<ver>`, `gcc`, **Nim 2.4.0 + Nimble**, and **`pgxcrown` (`pgxtool`)** so engineers and CI runners can compile, install, and test C/Nim PostgreSQL extensions with zero host PostgreSQL setup.
 
-### Published GHCR Image Matrix (`v0.27.2`)
+### Published GHCR Image Matrix (`v0.28.0`)
 
 | PostgreSQL Version | Rolling Major Tag | Pinned Release Tag |
 | :--- | :--- | :--- |
-| **PostgreSQL 17** | `ghcr.io/luisacosta828/pgxcrown:17` / `:latest` | `ghcr.io/luisacosta828/pgxcrown:17-0.27.2` |
-| **PostgreSQL 16** | `ghcr.io/luisacosta828/pgxcrown:16` | `ghcr.io/luisacosta828/pgxcrown:16-0.27.2` |
-| **PostgreSQL 15** | `ghcr.io/luisacosta828/pgxcrown:15` | `ghcr.io/luisacosta828/pgxcrown:15-0.27.2` |
-| **PostgreSQL 14** | `ghcr.io/luisacosta828/pgxcrown:14` | `ghcr.io/luisacosta828/pgxcrown:14-0.27.2` |
+| **PostgreSQL 17** | `ghcr.io/luisacosta828/pgxcrown:17` / `:latest` | `ghcr.io/luisacosta828/pgxcrown:17-0.28.0` |
+| **PostgreSQL 16** | `ghcr.io/luisacosta828/pgxcrown:16` | `ghcr.io/luisacosta828/pgxcrown:16-0.28.0` |
+| **PostgreSQL 15** | `ghcr.io/luisacosta828/pgxcrown:15` | `ghcr.io/luisacosta828/pgxcrown:15-0.28.0` |
+| **PostgreSQL 14** | `ghcr.io/luisacosta828/pgxcrown:14` | `ghcr.io/luisacosta828/pgxcrown:14-0.28.0` |
 
 ### Real-World Workflows
 

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Pgxcrown v0.27.2 - Documentation Scripts
+   Pgxcrown v0.28.0 - Documentation Scripts
    ========================================================================== */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -144,7 +144,7 @@ function initHeroCodeTabs() {
    -------------------------------------------------------------------------- */
 const pillarData = {
   zerocopy: {
-    badge: '⚡ Zero-Copy Native Core (v0.27.2)',
+    badge: '⚡ Zero-Copy Native Core (v0.28.0)',
     title: 'Zero-Copy Memory-Mapped Architecture',
     desc: 'Direct pointer-slice views over PostgreSQL varlena and array buffers eliminate intermediate memory allocations, strlen overhead, and garbage collection pauses.',
     checklist: [
@@ -168,37 +168,39 @@ const pillarData = {
   },
 
   bgworker: {
-    badge: '🤖 In-Database Autonomy (v0.27.2)',
-    title: 'Autonomous Background Workers & Daemons',
-    desc: 'Run persistent, multi-tenant background daemons directly inside the PostgreSQL engine with sub-1ms dynamic launch, real-time pg_stat_activity monitoring, nested subtransaction savepoints, and automatic catalog tracking.',
+    badge: '🤖 In-Database Autonomy & IPC (v0.28.0)',
+    title: 'Background Workers, Shared Memory & ShmChannel[T]',
+    desc: 'Run persistent or dynamic background daemons inside PostgreSQL with {.pgxShared.} static shared state, zero-preload ShmChannel[T] / callWorker RPC over DSM, LWLock/atomics synchronization, and WaitEventSet multiplexing across PG 14–17.',
     checklist: [
-      '<strong>Zero-Lock Observability</strong>: Real-time query/state telemetry reported directly in <code>pg_stat_activity</code> via <code>workerActivity</code>.',
-      '<strong>Internal Subtransaction Savepoints</strong>: Isolate per-record failures with <code>workerSavepoint</code> without aborting batch transaction pipelines.',
-      '<strong>Dynamic Startup & Fast IPC</strong>: Sub-1ms startup notifications via <code>MyProcPid</code> and <code>SIGUSR1</code> with automatic catalog registration in <code>pgxcrown_workers</code>.',
-      '<strong>Graceful Shutdown & Signal Handling</strong>: Cleanly intercepts <code>SIGTERM</code>/<code>SIGHUP</code> and auto-reconciles worker status before process exit.'
+      '<strong>Declarative Shared Memory (<code>{.pgxShared.}</code>)</strong>: Share cluster-wide atomic counters and structs safely across SQL sessions and workers (compile-time POD enforced).',
+      '<strong>One-Line Typed RPC (<code>callWorker</code> / <code>ShmChannel[T]</code>)</strong>: Communicate with dynamic workers over DSM + <code>shm_mq</code> without touching <code>postgresql.conf</code>.',
+      '<strong>Zero-Lock Observability & Savepoints</strong>: Report live progress in <code>pg_stat_activity</code> via <code>workerActivity</code> and isolate failures with <code>workerSavepoint</code>.',
+      '<strong>Sync & Multiplexing (PG 14–17)</strong>: Exception-safe <code>withLock</code> (<code>LWLock</code>), <code>waitUntil</code> condition variables, and <code>withWaitEventSet</code> latch+socket I/O.'
     ],
-    tags: ['bgworker', 'pgxWorker', 'pg_stat_activity', 'Savepoints', 'pgxcrown_workers', 'Dynamic Workers'],
-    codeHeader: 'src/main.nim (Autonomous Background Worker)',
+    tags: ['pgxWorker', 'pgxShared', 'ShmChannel[T]', 'callWorker', 'LWLock', 'WaitEventSet'],
+    codeHeader: 'src/main.nim (Shared State & Typed Worker RPC)',
     code: `<span class="syn-kw">import</span> pgxcrown
 
-<span class="syn-kw">proc</span> <span class="syn-fn">order_archiver_worker</span>*() <span class="syn-pragma">{.pgxWorker.}</span> =
-  <span class="syn-fn">workerInit</span>(<span class="syn-str">"postgres"</span>)
-  <span class="syn-kw">let</span> orders = <span class="syn-fn">table</span>(<span class="syn-str">"orders"</span>)
+<span class="syn-kw">type</span>
+  GlobalStats* <span class="syn-pragma">{.pgxShared.}</span> = <span class="syn-kw">object</span>
+    hits*: <span class="syn-type">pg_atomic_uint64</span>
+  SumReq* <span class="syn-pragma">{.pgxShared.}</span> = <span class="syn-kw">object</span>
+    a*, b*: <span class="syn-type">int64</span>
+  SumResp* <span class="syn-pragma">{.pgxShared.}</span> = <span class="syn-kw">object</span>
+    total*: <span class="syn-type">int64</span>
 
-  <span class="syn-fn">runWorkerLoop</span>(intervalMs = 5000):
-    <span class="syn-fn">workerActivity</span>(<span class="syn-str">"Checking expired orders"</span>):
-      <span class="syn-fn">workerTransaction</span>:
-        <span class="syn-kw">let</span> expired = <span class="syn-fn">Select</span>(orders.id, orders.status).<span class="syn-fn">From</span>(orders).<span class="syn-fn">Where</span>(orders.status == <span class="syn-str">"expired"</span>).<span class="syn-fn">all</span>(OrderRecord)
-        <span class="syn-kw">for</span> order <span class="syn-kw">in</span> expired:
-          <span class="syn-fn">workerSavepoint</span>:
-            <span class="syn-fn">InsertInto</span>(<span class="syn-str">"orders_history"</span>, <span class="syn-str">"id"</span>, <span class="syn-str">"status"</span>).<span class="syn-fn">Values</span>($order.id, <span class="syn-str">"archived"</span>).<span class="syn-fn">run</span>()
-            <span class="syn-fn">DeleteFrom</span>(<span class="syn-str">"orders"</span>).<span class="syn-fn">Where</span>(orders.id == order.id).<span class="syn-fn">run</span>()
-          <span class="syn-kw">do</span>:
-            <span class="syn-fn">pgWarning</span>(<span class="syn-str">"Failed to archive order "</span> & $order.id & <span class="syn-str">": "</span> & err.msg)`
+<span class="syn-kw">var</span> stats* <span class="syn-pragma">{.pgxShared.}</span>: <span class="syn-type">GlobalStats</span>
+
+<span class="syn-kw">proc</span> <span class="syn-fn">sum_worker</span>*(req: <span class="syn-type">SumReq</span>): <span class="syn-type">SumResp</span> <span class="syn-pragma">{.pgxWorker.}</span> =
+  <span class="syn-fn">SumResp</span>(total: req.a + req.b)
+
+<span class="syn-kw">proc</span> <span class="syn-fn">bump_and_calc</span>*(a, b: <span class="syn-type">int64</span>): <span class="syn-type">int64</span> <span class="syn-pragma">{.volatile.}</span> =
+  discard stats.hits.<span class="syn-fn">addFetch</span>(1)
+  <span class="syn-fn">callWorker</span>[<span class="syn-type">SumResp</span>](<span class="syn-str">"my_ext"</span>, <span class="syn-str">"sum_worker"</span>, <span class="syn-fn">SumReq</span>(a: a, b: b)).total`
   },
 
   shield: {
-    badge: '🛡️ Reliability & Security (v0.27.2)',
+    badge: '🛡️ Reliability & Security (v0.28.0)',
     title: 'Fail-Safe Panic Shield & SQLSTATE Error Mapping',
     desc: 'Every exported UDF is automatically enclosed in a PG_TRY / PG_CATCH barrier. Defects, panics, and overflows safely abort the transaction with zero SIGABRT server crashes.',
     checklist: [
@@ -275,7 +277,7 @@ const pillarData = {
   },
 
   tooling: {
-    badge: '🚀 Developer Experience (v0.27.2)',
+    badge: '🚀 Developer Experience (v0.28.0)',
     title: 'Smart Toolchain with Sub-15ms Incremental Builds',
     desc: 'pgxtool manages extension scaffolding, incremental compilation caching, automated gitignore management, and multi-version Docker sandbox testing.',
     checklist: [
@@ -363,7 +365,7 @@ function initPillarsShowcase() {
 }
 
 /* --------------------------------------------------------------------------
-   3. CLI Terminal Simulator (Updated for v0.27.2)
+   3. CLI Terminal Simulator (Updated for v0.28.0)
    -------------------------------------------------------------------------- */
 const cliLogs = {
   'pgxtool init': [
