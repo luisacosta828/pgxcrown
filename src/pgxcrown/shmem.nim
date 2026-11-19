@@ -217,6 +217,13 @@ proc initShmemStruct*[T](name: string, initCb: proc(p: ptr T) = nil): tuple[data
 # Dynamic Shared Memory (DSM) & shm_toc API (No preload required)
 # =============================================================================
 
+proc cPgxEnsureResourceOwner(name: cstring) {.importc: "pgx_ensure_resource_owner", header: "pgx_ipc.h".}
+
+proc ensureResourceOwner*(name: cstring = "pgx_worker") {.inline.} =
+  ## Ensures `CurrentResourceOwner` is initialized (required before `dsmAttach`
+  ## or `dsmCreate` in shmem-only background workers that have no active transaction).
+  cPgxEnsureResourceOwner(name)
+
 proc dsmCreate*(size: csize_t, flags: cint = 0): DsmSegment {.inline.} =
   cDsmCreate(size, flags)
 

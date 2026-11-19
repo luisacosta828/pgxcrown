@@ -22,6 +22,7 @@ tests/test_pgvector
 tests/test_query_builder
 tests/test_lwlock
 tests/test_shmem
+tests/test_shm_mq
 tests/*/.pgx_build/
 tests/*/src/*.control
 tests/*/src/*.sql

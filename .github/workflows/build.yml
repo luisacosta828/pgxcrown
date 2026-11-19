@@ -107,9 +107,12 @@ jobs:
               tests/test_base_types.nim \
               tests/test_bgworker.nim \
               tests/test_errors.nim \
+              tests/test_lwlock.nim \
               tests/test_pgtext.nim \
               tests/test_pgvector.nim \
-              tests/test_query_builder.nim
+              tests/test_query_builder.nim \
+              tests/test_shm_mq.nim \
+              tests/test_shmem.nim
             do
               echo "==> Running unit suite: $t"
               nim c -r --hints:off --path:src "$t"
@@ -128,17 +131,19 @@ jobs:
             rm -rf "$TMP_HOOK_HOME"
           '
 
-      - name: Run All 9 E2E Regression Suites (PG ${{ matrix.pg_version }})
+      - name: Run All 11 E2E Regression Suites (PG ${{ matrix.pg_version }})
         run: |
           for suite in \
             arrays_suite \
             defaults_and_nulls \
+            ipc_dsm_suite \
             json_suite \
             null_defense_suite \
             panic_shield \
             pg_ast_lens \
             pgtry_guard \
             security_suite \
+            shmem_preload_suite \
             srf_suite
           do
             echo "==> Running E2E suite: tests/$suite (PG ${{ matrix.pg_version }})"

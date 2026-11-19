@@ -10,13 +10,19 @@
 #include "storage/ipc.h"
 #include "storage/dsm.h"
 #include "storage/shm_toc.h"
+#include "storage/shm_mq.h"
+#include "storage/proc.h"
+#include "storage/latch.h"
+#include "utils/wait_event.h"
 #if PG_VERSION_NUM >= 170000
 #include "storage/dsm_registry.h"
 #endif
 #include "port/atomics.h"
 #include "utils/memutils.h"
 #include "utils/palloc.h"
+#include "utils/resowner.h"
 #include "utils/timestamp.h"
+#include <fcntl.h>
 
 static inline int64 pgx_current_time_ms(void) {
     return (int64)(GetCurrentTimestamp() / 1000);
@@ -236,6 +242,67 @@ static inline void pgx_set_shmem_request_hook(PgxShmemHookFn fn) {
 #else
     (void)fn;
 #endif
+}
+
+/* shm_mq cross-version helpers (4 args in PG 14, 5 args with force_flush in PG 15+) */
+static inline PGPROC *pgx_my_proc(void) {
+    return MyProc;
+}
+
+static inline Size pgx_shm_mq_min_size(void) {
+    return shm_mq_minimum_size;
+}
+
+static inline shm_mq_result pgx_shm_mq_send(shm_mq_handle *mqh, Size nbytes,
+                                            const void *data, bool nowait,
+                                            bool force_flush) {
+#if PG_VERSION_NUM >= 150000
+    return shm_mq_send(mqh, nbytes, data, nowait, force_flush);
+#else
+    (void)force_flush;
+    return shm_mq_send(mqh, nbytes, data, nowait);
+#endif
+}
+
+static inline shm_mq_result pgx_shm_mq_sendv(shm_mq_handle *mqh, shm_mq_iovec *iov,
+                                             int iovcnt, bool nowait,
+                                             bool force_flush) {
+#if PG_VERSION_NUM >= 150000
+    return shm_mq_sendv(mqh, iov, iovcnt, nowait, force_flush);
+#else
+    (void)force_flush;
+    return shm_mq_sendv(mqh, iov, iovcnt, nowait);
+#endif
+}
+
+/* WaitEventSet cross-version helpers (MemoryContext in PG 14-16, ResourceOwner in PG 17+) */
+static inline WaitEventSet *pgx_create_wait_event_set(int nevents) {
+#if PG_VERSION_NUM >= 170000
+    return CreateWaitEventSet(NULL, nevents);
+#else
+    return CreateWaitEventSet(TopMemoryContext, nevents);
+#endif
+}
+
+static inline uint32 pgx_wl_socket_closed(void) {
+#ifdef WL_SOCKET_CLOSED
+    return (uint32)WL_SOCKET_CLOSED;
+#else
+    return 0;
+#endif
+}
+
+static inline bool pgx_set_socket_nonblock(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0)
+        return false;
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+}
+
+static inline void pgx_ensure_resource_owner(const char *name) {
+    if (CurrentResourceOwner == NULL) {
+        CurrentResourceOwner = ResourceOwnerCreate(NULL, name != NULL ? name : "pgx_worker");
+    }
 }
 
 #endif /* PGXCROWN_PGX_IPC_H */

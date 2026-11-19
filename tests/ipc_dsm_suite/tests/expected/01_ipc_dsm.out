@@ -1,0 +1,17 @@
+SELECT ipc_rpc_roundtrip('hello_ipc') AS rpc_one;
+                          rpc_one
+-----------------------------------------------------------
+ reply=echo:HELLO_IPC|stored=echo:HELLO_IPC|count=1|sock=1
+(1 row)
+
+SELECT ipc_rpc_roundtrip('pgxcrown_dsm_mq') AS rpc_two;
+                                rpc_two
+-----------------------------------------------------------------------
+ reply=echo:PGXCROWN_DSM_MQ|stored=echo:PGXCROWN_DSM_MQ|count=1|sock=1
+(1 row)
+
+SELECT COUNT(*) AS zero_fake_sql_types FROM pg_type WHERE typname = 'IpcSharedState';
+ zero_fake_sql_types
+---------------------
+                   0
+(1 row)

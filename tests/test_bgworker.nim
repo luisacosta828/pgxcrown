@@ -126,7 +126,77 @@ void proc_exit(int code) {}
 
 void pgstat_report_activity(int state, const char *cmd_str) {}
 MemoryContext CurrentMemoryContext = NULL;
+MemoryContext TopMemoryContext = NULL;
 ResourceOwner CurrentResourceOwner = NULL;
+
+typedef struct MockWaitSlot {
+    uint32 events;
+    pgsocket fd;
+    Latch *latch;
+    void *user_data;
+} MockWaitSlot;
+
+typedef struct MockWaitEventSet {
+    int cap;
+    int count;
+    MockWaitSlot slots[16];
+} MockWaitEventSet;
+
+int mockWesCreateCount = 0;
+int mockWesFreeCount = 0;
+
+#if PG_VERSION_NUM >= 170000
+WaitEventSet *CreateWaitEventSet(ResourceOwner resowner, int nevents) {
+    (void)resowner;
+#else
+WaitEventSet *CreateWaitEventSet(MemoryContext context, int nevents) {
+    (void)context;
+#endif
+    mockWesCreateCount++;
+    MockWaitEventSet *s = (MockWaitEventSet *)calloc(1, sizeof(MockWaitEventSet));
+    s->cap = nevents;
+    return (WaitEventSet *)s;
+}
+
+void FreeWaitEventSet(WaitEventSet *set) {
+    if (set != NULL) {
+        mockWesFreeCount++;
+        free(set);
+    }
+}
+
+int AddWaitEventToSet(WaitEventSet *set, uint32 events, pgsocket fd, Latch *latch, void *user_data) {
+    MockWaitEventSet *s = (MockWaitEventSet *)set;
+    int idx = s->count++;
+    s->slots[idx].events = events;
+    s->slots[idx].fd = fd;
+    s->slots[idx].latch = latch;
+    s->slots[idx].user_data = user_data;
+    return idx;
+}
+
+void ModifyWaitEvent(WaitEventSet *set, int pos, uint32 events, Latch *latch) {
+    MockWaitEventSet *s = (MockWaitEventSet *)set;
+    if (pos >= 0 && pos < s->count) {
+        s->slots[pos].events = events;
+        if (latch != NULL) s->slots[pos].latch = latch;
+    }
+}
+
+int WaitEventSetWait(WaitEventSet *set, long timeout, WaitEvent *occurred_events, int nevents, uint32 wait_event_info) {
+    (void)timeout;
+    (void)wait_event_info;
+    MockWaitEventSet *s = (MockWaitEventSet *)set;
+    int out = 0;
+    for (int i = 0; i < s->count && out < nevents; i++) {
+        occurred_events[out].pos = i;
+        occurred_events[out].events = s->slots[i].events;
+        occurred_events[out].fd = s->slots[i].fd;
+        occurred_events[out].user_data = s->slots[i].user_data;
+        out++;
+    }
+    return out;
+}
 void BeginInternalSubTransaction(const char *name) {}
 void ReleaseCurrentSubTransaction(void) {}
 void RollbackAndReleaseCurrentSubTransaction(void) {}
@@ -165,6 +235,10 @@ import ../src/pgxcrown/pgxtool
 import ../src/pgxcrown/datatypes/strings
 
 suite "Pgxcrown - PostgreSQL Background Worker (BGWorker) Suite":
+  setup:
+    pgxWorkerExitOverride = proc(code: cint) {.nimcall.} = discard
+  teardown:
+    pgxWorkerExitOverride = nil
 
   test "bgWorker DSL initialization and automatic flag inference":
     # Scenario A: DB worker (database provided)
@@ -499,4 +573,49 @@ suite "Pgxcrown - PostgreSQL Background Worker (BGWorker) Suite":
     check (mockLastWaitFlags and WL_LATCH_SET) != 0
     check (mockLastWaitFlags and WL_TIMEOUT) == 0
     workerGotSigterm = 0
+
+  test "WaitEventSet multiplexing, RAII cleanup, and non-blocking socket helper":
+    var mockWesCreateCount {.importc.}: cint
+    var mockWesFreeCount {.importc.}: cint
+    mockWesCreateCount = 0
+    mockWesFreeCount = 0
+
+    expect(ValueError):
+      discard createWaitEventSet(0)
+
+    var tagLatch = 11
+    var tagSock = 22
+    withWaitEventSet(wes, 3):
+      let pLatch = wes.addLatchEvent(MyLatch, addr tagLatch)
+      let pPm = wes.addPostmasterDeathEvent(exitOnDeath = true)
+      let pSock = wes.addSocketEvent(7.cint, WL_SOCKET_READABLE or wlSocketClosed(), addr tagSock)
+      check pLatch == 0
+      check pPm == 1
+      check pSock == 2
+      wes.modifyWaitEvent(pSock, WL_SOCKET_READABLE or WL_SOCKET_WRITEABLE)
+
+      var occurred: array[4, WaitEvent]
+      let n = wes.waitEventSet(100, occurred)
+      check n == 3
+      check occurred[0].events == uint32(WL_LATCH_SET)
+      check occurred[0].user_data == addr tagLatch
+      check occurred[1].events == uint32(WL_EXIT_ON_PM_DEATH)
+      check occurred[2].fd == 7.cint
+      check (occurred[2].events and WL_SOCKET_WRITEABLE) != 0
+      check occurred[2].user_data == addr tagSock
+
+    check mockWesCreateCount == 1
+    check mockWesFreeCount == 1
+
+    # Exception inside withWaitEventSet still guarantees FreeWaitEventSet
+    expect(ValueError):
+      withWaitEventSet(wes2, 2):
+        discard wes2.addLatchEvent()
+        raise newException(ValueError, "boom")
+    check mockWesCreateCount == 2
+    check mockWesFreeCount == 2
+
+    # setSocketNonBlocking on invalid fd returns false
+    check not setSocketNonBlocking((-1).cint)
+
 

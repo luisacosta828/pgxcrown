@@ -1,8 +1,12 @@
-import std/[options, macros, strutils]
+import std/[options, macros, strutils, os]
 import ./datatypes/basic
 export Oid, Datum
 
+const
+  PgxBgwCHeadersDir = currentSourcePath.parentDir / "c_headers"
+
 {.passC: "-include postgres.h".}
+{.passC: "-I" & quoteShell(PgxBgwCHeadersDir).}
 
 const
 
@@ -603,7 +607,12 @@ proc workerInitByOid*(dbOid: Oid, userOid: Oid = Oid(0),
       BGWORKER_BYPASS_ALLOWCONN) else: 0'u32
   BackgroundWorkerInitializeConnectionByOid(dbOid, userOid, flags)
 
-proc workerExit*(code: int = 0) {.inline.} =
+var pgxWorkerExitOverride*: proc(code: cint) {.nimcall.} = nil
+
+proc workerExit*(code: int = 0) =
+  if pgxWorkerExitOverride != nil:
+    pgxWorkerExitOverride(cint(code))
+    return
   proc_exit(cint(code))
 
 template workerTransaction*(body: untyped) =
@@ -688,3 +697,99 @@ template runWorkerLoop*(intervalMs: int, body: untyped,
 template runWorkerLoop*(intervalMs: int, body: untyped) =
   runWorkerLoop(intervalMs, body):
     discard
+
+# =============================================================================
+# WaitEventSet Multiplexing (Latches + Non-Blocking Sockets across PG 14 - 17)
+# =============================================================================
+
+const
+  WL_SOCKET_READABLE* = 1'u32 shl 1   # 0x02
+  WL_SOCKET_WRITEABLE* = 1'u32 shl 2  # 0x04
+  WL_SOCKET_CONNECTED* = 1'u32 shl 6  # 0x40
+  PGX_INVALID_SOCKET* = -1.cint
+
+type
+  WaitEventSet* {.importc: "WaitEventSet", header: "storage/latch.h", incompleteStruct.} = object
+  WaitEventSetPtr* = ptr WaitEventSet
+
+  WaitEvent* {.importc: "WaitEvent", header: "storage/latch.h", bycopy.} = object
+    pos*: cint
+    events*: uint32
+    fd*: cint
+    user_data*: pointer
+
+proc cCreateWaitEventSet(nevents: cint): WaitEventSetPtr {.importc: "pgx_create_wait_event_set", header: "pgx_ipc.h".}
+proc cFreeWaitEventSet(set: WaitEventSetPtr) {.importc: "FreeWaitEventSet", header: "storage/latch.h".}
+proc cAddWaitEventToSet(set: WaitEventSetPtr, events: uint32, fd: cint,
+    latch: pointer, userData: pointer): cint {.importc: "AddWaitEventToSet", header: "storage/latch.h".}
+proc cModifyWaitEvent(set: WaitEventSetPtr, pos: cint, events: uint32,
+    latch: pointer) {.importc: "ModifyWaitEvent", header: "storage/latch.h".}
+proc cWaitEventSetWait(set: WaitEventSetPtr, timeout: clong,
+    occurredEvents: ptr WaitEvent, nevents: cint,
+    waitEventInfo: uint32): cint {.importc: "WaitEventSetWait", header: "storage/latch.h".}
+proc cWlSocketClosed(): uint32 {.importc: "pgx_wl_socket_closed", header: "pgx_ipc.h".}
+proc cSetSocketNonBlock(fd: cint): bool {.importc: "pgx_set_socket_nonblock", header: "pgx_ipc.h".}
+
+proc wlSocketClosed*(): uint32 {.inline.} =
+  ## Returns `WL_SOCKET_CLOSED` on PG 15-17, or `0` on PG 14 where the flag does not exist.
+  cWlSocketClosed()
+
+proc setSocketNonBlocking*(fd: cint): bool {.inline.} =
+  ## Configures a file descriptor / socket as non-blocking (`O_NONBLOCK`).
+  cSetSocketNonBlock(fd)
+
+proc createWaitEventSet*(nevents: int): WaitEventSetPtr =
+  ## Allocates a `WaitEventSet` with capacity for `nevents` events.
+  ## Transparently passes `TopMemoryContext` on PG 14-16 and `NULL` ResourceOwner on PG 17+.
+  if nevents <= 0:
+    raise newException(ValueError, "createWaitEventSet: nevents must be > 0")
+  cCreateWaitEventSet(cint(nevents))
+
+proc freeWaitEventSet*(set: WaitEventSetPtr) {.inline.} =
+  ## Releases a `WaitEventSet` created via `createWaitEventSet`.
+  if set != nil:
+    cFreeWaitEventSet(set)
+
+template withWaitEventSet*(setVar: untyped, nevents: int, body: untyped) =
+  ## RAII guard for `WaitEventSet`: allocates `setVar`, executes `body`,
+  ## and guarantees `freeWaitEventSet(setVar)` in `finally`.
+  let setVar = createWaitEventSet(nevents)
+  try:
+    body
+  finally:
+    freeWaitEventSet(setVar)
+
+proc addLatchEvent*(set: WaitEventSetPtr, latch: pointer = MyLatch,
+    userData: pointer = nil): int =
+  ## Registers a `WL_LATCH_SET` event in `set` and returns its event position.
+  int(cAddWaitEventToSet(set, uint32(WL_LATCH_SET), PGX_INVALID_SOCKET, latch, userData))
+
+proc addPostmasterDeathEvent*(set: WaitEventSetPtr, exitOnDeath: bool = true,
+    userData: pointer = nil): int =
+  ## Registers postmaster death monitoring in `set`.
+  ## Note: PostgreSQL's `AddWaitEventToSet` requires `WL_EXIT_ON_PM_DEATH` and
+  ## `WL_POSTMASTER_DEATH` to be passed individually (not OR'd together).
+  let mask =
+    if exitOnDeath: uint32(WL_EXIT_ON_PM_DEATH)
+    else: uint32(WL_POSTMASTER_DEATH)
+  int(cAddWaitEventToSet(set, mask, PGX_INVALID_SOCKET, nil, userData))
+
+proc addSocketEvent*(set: WaitEventSetPtr, fd: cint, events: uint32,
+    userData: pointer = nil): int =
+  ## Registers a non-blocking socket `fd` with `events` (e.g. `WL_SOCKET_READABLE`) in `set`.
+  int(cAddWaitEventToSet(set, events, fd, nil, userData))
+
+proc modifyWaitEvent*(set: WaitEventSetPtr, pos: int, events: uint32,
+    latch: pointer = nil) {.inline.} =
+  ## Updates the watched event mask (or latch) for an existing event slot `pos`.
+  cModifyWaitEvent(set, cint(pos), events, latch)
+
+proc waitEventSet*(set: WaitEventSetPtr, timeoutMs: int,
+    occurred: var openArray[WaitEvent],
+    waitEventInfo: uint32 = PG_WAIT_EXTENSION): int =
+  ## Blocks until one or more registered events occur or `timeoutMs` expires
+  ## (`timeoutMs < 0` waits indefinitely). Returns the number of events populated in `occurred`.
+  if occurred.len == 0:
+    return 0
+  int(cWaitEventSetWait(set, clong(timeoutMs), addr occurred[0],
+      cint(occurred.len), waitEventInfo))
