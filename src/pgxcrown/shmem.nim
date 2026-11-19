@@ -7,7 +7,7 @@
 ##   3. Optional PG 17 Named DSM Registry (GetNamedDSMSegment)
 ## =============================================================================
 
-import std/os
+import std/[os, macros, strutils]
 import ./compiler
 import ./lwlock
 import ./memcontext
@@ -340,3 +340,189 @@ proc getNamedDsmSegment*(name: string, size: csize_t, initCb: PgxNamedDsmInitCb,
   if not pgxHasNamedDsmRegistry():
     raise newException(ValueError, "GetNamedDSMSegment requires PostgreSQL 17 or newer")
   return pgxGetNamedDsmSegment(cstring(name), size, initCb, addr found)
+
+# =============================================================================
+# Declarative {.pgxShared.} Pragma Macro & Automatic Hook Registry (PG 14 - 17)
+# =============================================================================
+
+const MAX_PGX_SHARED_SLOTS* = 64
+
+type
+  PgxSharedInitRaw* = proc(p: pointer) {.nimcall.}
+
+  PgxSharedSlot* = object
+    name*: cstring
+    size*: csize_t
+    targetPtr*: ptr pointer
+    initCb*: PgxSharedInitRaw
+
+var
+  pgxSharedSlots {.global.}: array[MAX_PGX_SHARED_SLOTS, PgxSharedSlot]
+  pgxSharedSlotCount* {.global.}: int = 0
+  pgxSharedHooksInstalled {.global.}: bool = false
+  prevPgxSharedReqHook {.global.}: PgxShmemCHook = nil
+  prevPgxSharedStartHook {.global.}: PgxShmemCHook = nil
+
+proc resetPgxSharedRegistry*() =
+  ## Clears registered {.pgxShared.} slots and hook state (intended for unit tests).
+  pgxSharedSlotCount = 0
+  pgxSharedHooksInstalled = false
+  prevPgxSharedReqHook = nil
+  prevPgxSharedStartHook = nil
+
+proc registerSharedSlot*(name: cstring, size: csize_t,
+    targetPtr: ptr pointer, initCb: PgxSharedInitRaw = nil) =
+  ## Registers a statically shared POD variable slot for automatic shmem reservation and init.
+  if pgxSharedSlotCount >= MAX_PGX_SHARED_SLOTS:
+    raise newException(Defect,
+      "Exceeded MAX_PGX_SHARED_SLOTS (" & $MAX_PGX_SHARED_SLOTS & ")")
+  if name == nil or name[0] == '\0' or len($name) >= SHMEM_INDEX_KEYSIZE:
+    raise newException(ValueError,
+      "pgxShared name must be between 1 and " & $(SHMEM_INDEX_KEYSIZE - 1) & " bytes")
+  pgxSharedSlots[pgxSharedSlotCount] = PgxSharedSlot(
+    name: name,
+    size: size,
+    targetPtr: targetPtr,
+    initCb: initCb
+  )
+  inc pgxSharedSlotCount
+
+proc initRawShmemStruct*(name: cstring, size: csize_t,
+    initCb: PgxSharedInitRaw = nil): pointer =
+  ## Low-level shared struct lookup/init under AddinShmemInitLock.
+  var alreadyFound = false
+  var rawPtr: pointer = nil
+  withLock(addinShmemInitLock(), lwExclusive):
+    rawPtr = ShmemInitStruct(name, size, addr alreadyFound)
+    if rawPtr == nil:
+      raise newException(Defect, "ShmemInitStruct returned NULL for '" & $name & "'")
+    if not alreadyFound:
+      zeroMem(rawPtr, size)
+      if initCb != nil:
+        initCb(rawPtr)
+  return rawPtr
+
+proc pgxSharedReqTrampoline() {.cdecl.} =
+  if prevPgxSharedReqHook != nil:
+    prevPgxSharedReqHook()
+  for i in 0 ..< pgxSharedSlotCount:
+    let sz = pgxSharedSlots[i].size
+    RequestAddinShmemSpace(addSize(maxAlign(sz), 64.csize_t))
+
+proc pgxSharedStartTrampoline() {.cdecl.} =
+  if prevPgxSharedStartHook != nil:
+    prevPgxSharedStartHook()
+  withTopMemoryContext:
+    for i in 0 ..< pgxSharedSlotCount:
+      let slot = pgxSharedSlots[i]
+      let p = initRawShmemStruct(slot.name, slot.size, slot.initCb)
+      if slot.targetPtr != nil:
+        slot.targetPtr[] = p
+
+proc installPgxSharedHooks*() =
+  ## Installs shared memory request/startup hooks for all declared {.pgxShared.} slots.
+  ## Chains cleanly with any hooks installed via `installShmemHooks` across PG 14-17.
+  if pgxSharedHooksInstalled or pgxSharedSlotCount == 0:
+    return
+  if not isSharedPreloadInProgress():
+    raise newException(ValueError,
+      "{.pgxShared.} requires the extension to be loaded via 'shared_preload_libraries'.")
+
+  if pgxHasShmemRequestHook():
+    let curReq = pgxGetShmemRequestHook()
+    if curReq != pgxSharedReqTrampoline:
+      prevPgxSharedReqHook = curReq
+      pgxSetShmemRequestHook(pgxSharedReqTrampoline)
+  else:
+    for i in 0 ..< pgxSharedSlotCount:
+      let sz = pgxSharedSlots[i].size
+      RequestAddinShmemSpace(addSize(maxAlign(sz), 64.csize_t))
+
+  let curStart = pgxGetShmemStartupHook()
+  if curStart != pgxSharedStartTrampoline:
+    prevPgxSharedStartHook = curStart
+    pgxSetShmemStartupHook(pgxSharedStartTrampoline)
+
+  pgxSharedHooksInstalled = true
+
+proc unwrapSharedPtrType(t: NimNode): NimNode =
+  if t.kind == nnkPtrTy and t.len > 0:
+    return t[0]
+  return t
+
+proc normalizeSharedTypePragma(typeDef: NimNode): NimNode =
+  result = typeDef.copyNimTree()
+  if result[0].kind == nnkPragmaExpr and result[0].len >= 2 and result[0][1].kind == nnkPragma:
+    var kept = newNimNode(nnkPragma)
+    var hasBycopy = false
+    for p in result[0][1]:
+      let pn = (if p.kind == nnkExprColonExpr: p[0].repr else: p.repr).toLowerAscii
+      if pn != "pgxshared" and pn != "pgx_shared":
+        if pn == "bycopy":
+          hasBycopy = true
+        kept.add(p)
+    if not hasBycopy:
+      kept.add(ident("bycopy"))
+    result[0][1] = kept
+
+macro pgxShared*(args: varargs[untyped]): untyped =
+  ## Declarative pragma macro for shared-memory types and variables:
+  ##   type State* {.pgxShared.} = object ...       # marks as POD {.bycopy.} & skips SQL type DDL
+  ##   var state* {.pgxShared.}: State              # auto-registers shmem slot + lazy/startup accessor
+  ##   var state* {.pgxShared("key").}: State       # custom ShmemInitStruct key
+  ##   var state* {.pgxShared(initCb).}: State      # runs initCb(ptr State) on first shmem creation
+  ##   var state* {.pgxShared("key", initCb).}: State
+  if args.len == 0:
+    error("pgxShared pragma requires a type or var declaration")
+  let decl = args[^1]
+  if decl.kind == nnkTypeDef:
+    return normalizeSharedTypePragma(decl)
+  if decl.kind != nnkVarSection or decl.len == 0:
+    error("pgxShared can only be applied to `type` or `var` declarations")
+
+  var keyNode = newNilLit()
+  var initNode = newNilLit()
+  if args.len == 2:
+    if args[0].kind == nnkStrLit:
+      keyNode = args[0]
+    else:
+      initNode = args[0]
+  elif args.len >= 3:
+    keyNode = args[0]
+    initNode = args[1]
+
+  let identDef = decl[0]
+  var rawIdent = identDef[0]
+  if rawIdent.kind == nnkPragmaExpr and rawIdent.len > 0:
+    rawIdent = rawIdent[0]
+  let isExported = rawIdent.kind == nnkPostfix
+  let symName = if isExported: rawIdent[1].strVal else: rawIdent.strVal
+  let elemType = unwrapSharedPtrType(identDef[^2])
+  let effectiveKey = if keyNode.kind == nnkNilLit: newLit(symName) else: keyNode
+  let storeSym = ident("pgxSharedPtr_" & symName)
+  let initWrapSym = ident("pgxSharedInitWrap_" & symName)
+  let ensureSym = ident("pgxSharedEnsure_" & symName)
+  let accName = if isExported: postfix(ident(symName), "*") else: ident(symName)
+
+  let initBody =
+    if initNode.kind == nnkNilLit:
+      quote do:
+        var `initWrapSym`: PgxSharedInitRaw = nil
+    else:
+      quote do:
+        proc `initWrapSym`(rawP: pointer) {.nimcall.} =
+          `initNode`(cast[ptr `elemType`](rawP))
+
+  result = quote do:
+    var `storeSym`: ptr `elemType` = nil
+    `initBody`
+    proc `ensureSym`(): ptr `elemType` {.inline.} =
+      assertShmemSafe(`elemType`)
+      if `storeSym` == nil:
+        `storeSym` = cast[ptr `elemType`](initRawShmemStruct(cstring(`effectiveKey`),
+          pgSizeOf[`elemType`](), `initWrapSym`))
+      `storeSym`
+    registerSharedSlot(cstring(`effectiveKey`), pgSizeOf[`elemType`](),
+      cast[ptr pointer](addr `storeSym`), `initWrapSym`)
+    template `accName`(): ptr `elemType` =
+      `ensureSym`()

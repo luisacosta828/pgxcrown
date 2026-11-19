@@ -13,6 +13,7 @@
 
 import std/os
 import ./compiler
+import ./lwlock
 import ./shmem
 import ./bgworker
 
@@ -43,6 +44,11 @@ type
   ShmRpcChannel* = object
     reqMq*: ShmMqPtr
     respMq*: ShmMqPtr
+
+  ShmChannel*[T] = object
+    ## Type-safe POD wrapper around an attached `shm_mq_handle`.
+    mq*: ShmMqPtr
+    handle*: ShmMqHandlePtr
 
 # -----------------------------------------------------------------------------
 # Raw C Imports
@@ -210,3 +216,88 @@ proc lookupRpcQueues*(toc: ShmTocPtr, reqKey, respKey: uint64): ShmRpcChannel =
   ## Looks up an existing bidirectional `shm_mq` pair inside `toc`.
   result.reqMq = cast[ShmMqPtr](toc.lookupBytes(reqKey))
   result.respMq = cast[ShmMqPtr](toc.lookupBytes(respKey))
+
+# -----------------------------------------------------------------------------
+# Typed Generic Channel API: ShmChannel[T] (Compile-Time POD Enforced)
+# -----------------------------------------------------------------------------
+
+proc asChannel*[T](handle: ShmMqHandlePtr, mq: ShmMqPtr = nil): ShmChannel[T] {.inline.} =
+  ## Wraps an existing attached `shm_mq_handle` into a typed `ShmChannel[T]`.
+  assertShmemSafe(T)
+  ShmChannel[T](mq: mq, handle: handle)
+
+proc openSendChannel*[T](mq: ShmMqPtr, seg: DsmSegment = nil,
+    worker: WorkerHandle = WorkerHandle(raw: nil)): ShmChannel[T] =
+  ## Binds the current process as sender on `mq` and attaches a typed `ShmChannel[T]`.
+  assertShmemSafe(T)
+  if mq == nil:
+    raise newException(ValueError, "openSendChannel: mq cannot be nil")
+  mq.setSender(myProc())
+  let h = attachMq(mq, seg, worker.raw)
+  ShmChannel[T](mq: mq, handle: h)
+
+proc openRecvChannel*[T](mq: ShmMqPtr, seg: DsmSegment = nil,
+    worker: WorkerHandle = WorkerHandle(raw: nil)): ShmChannel[T] =
+  ## Binds the current process as receiver on `mq` and attaches a typed `ShmChannel[T]`.
+  assertShmemSafe(T)
+  if mq == nil:
+    raise newException(ValueError, "openRecvChannel: mq cannot be nil")
+  mq.setReceiver(myProc())
+  let h = attachMq(mq, seg, worker.raw)
+  ShmChannel[T](mq: mq, handle: h)
+
+proc close*[T](ch: var ShmChannel[T]) {.inline.} =
+  ## Detaches the underlying `shm_mq_handle` if currently open.
+  if ch.handle != nil:
+    detachMq(ch.handle)
+    ch.handle = nil
+
+proc setWorkerHandle*[T](ch: ShmChannel[T], worker: WorkerHandle) {.inline.} =
+  ## Associates a `WorkerHandle` with `ch` so peer death yields `mqDetached`.
+  setWorkerHandle(ch.handle, worker)
+
+proc waitForAttach*[T](ch: ShmChannel[T]): ShmMqResult {.inline.} =
+  ## Waits until the peer attaches to the other end of `ch`.
+  waitForAttach(ch.handle)
+
+proc send*[T](ch: ShmChannel[T], msg: T, nowait: bool = false,
+    forceFlush: bool = true): ShmMqResult =
+  ## Sends a typed POD value `msg` (`pgSizeOf[T]()` bytes) over `ch`.
+  assertShmemSafe(T)
+  var copyMsg = msg
+  let expectedSz = pgSizeOf[T]()
+  cShmMqSend(ch.handle, expectedSz, addr copyMsg, nowait, forceFlush)
+
+proc tryReceive*[T](ch: ShmChannel[T], val: var T): ShmMqResult =
+  ## Non-blocking receive into `val`. Raises `ValueError` if payload byte size
+  ## does not match `pgSizeOf[T]()`.
+  assertShmemSafe(T)
+  let r = receiveZeroCopy(ch.handle, nowait = true)
+  if r.status != mqSuccess:
+    return r.status
+  let expectedSz = pgSizeOf[T]()
+  if r.nbytes != expectedSz:
+    raise newException(ValueError,
+      "ShmChannel receive size mismatch: expected " & $expectedSz &
+      " bytes, got " & $r.nbytes & " bytes")
+  if r.data != nil and expectedSz > 0:
+    copyMem(addr val, r.data, int(expectedSz))
+  return mqSuccess
+
+proc receive*[T](ch: ShmChannel[T],
+    nowait: bool = false): tuple[status: ShmMqResult, value: T] =
+  ## Receives a typed POD message `T` from `ch`.
+  ## Raises `ValueError` if incoming message length differs from `pgSizeOf[T]()`.
+  assertShmemSafe(T)
+  let r = receiveZeroCopy(ch.handle, nowait)
+  if r.status != mqSuccess:
+    return (status: r.status, value: default(T))
+  let expectedSz = pgSizeOf[T]()
+  if r.nbytes != expectedSz:
+    raise newException(ValueError,
+      "ShmChannel receive size mismatch: expected " & $expectedSz &
+      " bytes, got " & $r.nbytes & " bytes")
+  var val: T
+  if r.data != nil and expectedSz > 0:
+    copyMem(addr val, r.data, int(expectedSz))
+  (status: mqSuccess, value: val)

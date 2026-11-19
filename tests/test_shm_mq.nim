@@ -232,8 +232,18 @@ MemoryContext CurrentMemoryContext = NULL;
 MemoryContext TopMemoryContext = NULL;
 """.}
 
+import pgxcrown/lwlock
 import pgxcrown/shmem
 import pgxcrown/shm_mq
+
+type
+  RpcOrderPod {.bycopy.} = object
+    orderId*: int64
+    amountCents*: int64
+    code*: uint32
+
+  NonPodRpc = object
+    badStr*: string
 
 proc mockGetForceFlushCalls(mq: ShmMqPtr): cint {.importc: "mock_get_force_flush_calls", nodecl.}
 
@@ -332,3 +342,42 @@ suite "Pgxcrown - Shared Memory Message Queue (shm_mq) Suite":
     check gotResp.status == mqSuccess and gotResp.payload == "pong"
     detachMq(reqH)
     detachMq(respH)
+
+  test "Generic typed ShmChannel[T] enforces POD safety, size match, and round-trip":
+    check compiles(openSendChannel[RpcOrderPod](nil)) == true
+    check compiles(openSendChannel[NonPodRpc](nil)) == false
+    check compiles(openSendChannel[string](nil)) == false
+
+    var rawMem: array[8192, byte]
+    let mq = createMq(addr rawMem[0], 4096.csize_t)
+    var tx = openSendChannel[RpcOrderPod](mq)
+    var rx = openRecvChannel[RpcOrderPod](mq)
+    check tx.waitForAttach() == mqSuccess
+
+    var emptyOrder: RpcOrderPod
+    check rx.tryReceive(emptyOrder) == mqWouldBlock
+
+    let sent = RpcOrderPod(orderId: 9001, amountCents: 12345, code: 77'u32)
+    check tx.send(sent, nowait = true) == mqSuccess
+    let got = rx.receive(nowait = true)
+    check got.status == mqSuccess
+    check got.value.orderId == 9001
+    check got.value.amountCents == 12345
+    check got.value.code == 77'u32
+
+    # tryReceive non-blocking path
+    check tx.send(RpcOrderPod(orderId: 42, amountCents: 99, code: 3'u32), nowait = true) == mqSuccess
+    var outVal: RpcOrderPod
+    check rx.tryReceive(outVal) == mqSuccess
+    check outVal.orderId == 42 and outVal.amountCents == 99
+
+    # Mismatched byte size fails loudly with ValueError
+    let rawTx = tx.handle
+    check rawTx.send("wrong_size", nowait = true) == mqSuccess
+    expect(ValueError):
+      discard rx.receive(nowait = true)
+
+    tx.close()
+    let detachedRes = rx.receive(nowait = true)
+    check detachedRes.status == mqDetached
+    rx.close()

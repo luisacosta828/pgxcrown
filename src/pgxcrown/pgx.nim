@@ -365,9 +365,18 @@ macro decorateMainFunctions*() =
   let pgx_pragma = newNimNode(nnkPragma)
   pgx_pragma.add(newIdentNode("pgx"))
 
-  # Pass 1: Process type definitions
+  var hasPgxSharedVars = false
+  var sawInitProc = false
+
+  # Pass 1: Process type definitions and detect {.pgxShared.} var declarations
   for el in source:
-    if el.kind == nnkTypeSection:
+    if el.kind == nnkVarSection:
+      for idDef in el:
+        if idDef.kind == nnkIdentDefs and idDef.len >= 3 and idDef[0].kind == nnkPragmaExpr:
+          let pNode = idDef[0][1]
+          if hasProcPragma(pNode, "pgxshared") or hasProcPragma(pNode, "pgx_shared"):
+            hasPgxSharedVars = true
+    elif el.kind == nnkTypeSection:
       for e in el:
         if e.kind != nnkTypeDef:
           continue
@@ -379,7 +388,7 @@ macro decorateMainFunctions*() =
           recordType.add info.name
           sql_shell_types.add "\nCREATE TYPE \"" & info.name & "\";\n"
         else:
-          if hasTypePragma(e, ["pgxshmem", "nosql", "bycopy", "packed", "importc"]):
+          if hasTypePragma(e, ["pgxshmem", "pgxshared", "pgx_shared", "nosql", "bycopy", "packed", "importc"]):
             continue
           var type_checked = check_type_section(e)
           case type_checked:
@@ -426,10 +435,41 @@ macro decorateMainFunctions*() =
           return true
     return false
 
+  proc buildGuardedInitBody(innerBody: NimNode): NimNode =
+    let initScoped = newTree(nnkBlockStmt, newEmptyNode(), innerBody)
+    let pendingErrIdent = newIdentNode("pgxPendingErr")
+    let errCodeIdent = newIdentNode("pgxErrCode")
+    let errMsgIdent = newIdentNode("pgxErrMsg")
+    let errDetailIdent = newIdentNode("pgxErrDetail")
+    let errHintIdent = newIdentNode("pgxErrHint")
+    let eIdent = newIdentNode("e")
+    let initImplIdent = newIdentNode("pgxInitGuardedImpl")
+    quote do:
+      proc `initImplIdent`() =
+        var `pendingErrIdent` = false
+        var `errCodeIdent`: cint = 0
+        var `errMsgIdent`: cstring = nil
+        var `errDetailIdent`: cstring = nil
+        var `errHintIdent`: cstring = nil
+        try:
+          pgxWithTopMemoryContext:
+            installPgxSharedHooks()
+            `initScoped`
+        except Defect as `eIdent`:
+          prepareNimDefect(`eIdent`, `errCodeIdent`, `errMsgIdent`, `errDetailIdent`, `errHintIdent`)
+          `pendingErrIdent` = true
+        except CatchableError as `eIdent`:
+          prepareNimError(`eIdent`, `errCodeIdent`, `errMsgIdent`, `errDetailIdent`, `errHintIdent`)
+          `pendingErrIdent` = true
+        if `pendingErrIdent`:
+          pgxEreportFull(ERROR, `errCodeIdent`, `errMsgIdent`, `errDetailIdent`, `errHintIdent`)
+      pgxRunVoidGuarded(`initImplIdent`)
+
   # Pass 2: Process function definitions
   for el in source:
     if el.kind in {nnkProcDef, nnkFuncDef}:
       if isInitProc(el):
+        sawInitProc = true
         if el.pragma.kind == nnkEmpty:
           el.pragma = newNimNode(nnkPragma)
         if not hasProcPragma(el.pragma, "cdecl"):
@@ -440,33 +480,7 @@ macro decorateMainFunctions*() =
           el.pragma.add(newIdentNode("dynlib"))
         if not hasProcPragma(el.pragma, "stacktrace"):
           el.pragma.add(newColonExpr(newIdentNode("stackTrace"), newIdentNode("off")))
-        let initScoped = newTree(nnkBlockStmt, newEmptyNode(), el.body)
-        let pendingErrIdent = newIdentNode("pgxPendingErr")
-        let errCodeIdent = newIdentNode("pgxErrCode")
-        let errMsgIdent = newIdentNode("pgxErrMsg")
-        let errDetailIdent = newIdentNode("pgxErrDetail")
-        let errHintIdent = newIdentNode("pgxErrHint")
-        let eIdent = newIdentNode("e")
-        let initImplIdent = newIdentNode("pgxInitGuardedImpl")
-        el.body = quote do:
-          proc `initImplIdent`() =
-            var `pendingErrIdent` = false
-            var `errCodeIdent`: cint = 0
-            var `errMsgIdent`: cstring = nil
-            var `errDetailIdent`: cstring = nil
-            var `errHintIdent`: cstring = nil
-            try:
-              pgxWithTopMemoryContext:
-                `initScoped`
-            except Defect as `eIdent`:
-              prepareNimDefect(`eIdent`, `errCodeIdent`, `errMsgIdent`, `errDetailIdent`, `errHintIdent`)
-              `pendingErrIdent` = true
-            except CatchableError as `eIdent`:
-              prepareNimError(`eIdent`, `errCodeIdent`, `errMsgIdent`, `errDetailIdent`, `errHintIdent`)
-              `pendingErrIdent` = true
-            if `pendingErrIdent`:
-              pgxEreportFull(ERROR, `errCodeIdent`, `errMsgIdent`, `errDetailIdent`, `errHintIdent`)
-          pgxRunVoidGuarded(`initImplIdent`)
+        el.body = buildGuardedInitBody(el.body)
         continue
 
       if isWorkerProc(el):
@@ -577,6 +591,14 @@ macro decorateMainFunctions*() =
         if el.pragma.kind == nnkEmpty:
           el.pragma = newNimNode(nnkPragma)
         el.pragma.add(newIdentNode("pgx"))
+
+  if hasPgxSharedVars and not sawInitProc:
+    let autoInitName = newIdentNode("pgxAutoSharedInit")
+    let autoBody = buildGuardedInitBody(newNimNode(nnkDiscardStmt).add(newEmptyNode()))
+    let autoProc = quote do:
+      proc `autoInitName`() {.cdecl, exportc: "_PG_init", dynlib, stackTrace: off.} =
+        `autoBody`
+    source.add autoProc
 
   # Pass 3: Finalize Base Type DDLs
   for typeName, info in baseTypes:

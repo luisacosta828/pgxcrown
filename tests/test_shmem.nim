@@ -92,7 +92,13 @@ char mockLastStructName[64] = {0};
 Size mockLastStructSize = 0;
 bool mockForceStructFound = false;
 int mockStructLockHeld = 0;
-unsigned char mockStructStorage[1024];
+typedef struct MockNamedStruct {
+    char name[64];
+    unsigned char data[256];
+    bool used;
+} MockNamedStruct;
+MockNamedStruct mockNamedStructs[8];
+unsigned char *mockStructStorage = mockNamedStructs[0].data;
 
 void RequestAddinShmemSpace(Size size) {
     mockRequestedBytes += size;
@@ -103,11 +109,25 @@ void *ShmemInitStruct(const char *name, Size size, bool *foundPtr) {
     mockLastStructSize = size;
     mockLastStructName[0] = '\0';
     if (name) strncpy(mockLastStructName, name, sizeof(mockLastStructName) - 1);
+    int slotIdx = 0;
+    for (int i = 0; i < 8; i++) {
+        if (mockNamedStructs[i].used && name && strcmp(mockNamedStructs[i].name, name) == 0) {
+            slotIdx = i;
+            break;
+        }
+        if (!mockNamedStructs[i].used) {
+            slotIdx = i;
+            mockNamedStructs[i].used = true;
+            if (name) strncpy(mockNamedStructs[i].name, name, 63);
+            break;
+        }
+    }
     if (foundPtr) *foundPtr = mockForceStructFound;
     if (!mockForceStructFound) {
-        memset(mockStructStorage, 0xAA, sizeof(mockStructStorage));
+        memset(mockNamedStructs[slotIdx].data, 0xAA, sizeof(mockNamedStructs[slotIdx].data));
     }
-    return (void *)mockStructStorage;
+    mockStructStorage = mockNamedStructs[slotIdx].data;
+    return (void *)mockNamedStructs[slotIdx].data;
 }
 
 Size add_size(Size s1, Size s2) { return s1 + s2; }
@@ -285,6 +305,8 @@ void pgx_reset_shmem_mocks(void) {
     mockLastStructSize = 0;
     mockForceStructFound = false;
     mockStructLockHeld = 0;
+    memset(mockNamedStructs, 0, sizeof(mockNamedStructs));
+    mockStructStorage = mockNamedStructs[0].data;
     mockPrevReqCalls = 0;
     mockPrevStartCalls = 0;
     for (int i = 0; i < MAX_MOCK_DSM; i++) {
@@ -343,6 +365,17 @@ type
 
   BadSeqShmem* {.bycopy.} = object
     vals*: seq[int32]
+
+  SharedPragmaPod* {.pgxShared.} = object
+    hits*: pg_atomic_uint64
+    tag*: FixedString[24]
+
+proc initSharedPragmaPod(p: ptr SharedPragmaPod) =
+  (addr p.hits).init(10'u64)
+  p.tag.setStr("pragma_ok")
+
+var autoSharedPod {.pgxShared("pgx_pragma_pod", initSharedPragmaPod).}: SharedPragmaPod
+var zeroSharedPod {.pgxShared.}: GoodPodState
 
 proc resetShmemMocks() {.importc: "pgx_reset_shmem_mocks", nodecl.}
 proc setupPrevHooks() {.importc: "pgx_setup_prev_hooks", nodecl.}
@@ -526,3 +559,53 @@ suite "Pgxcrown - Shared Memory & Dynamic Shared Memory (DSM / shm_toc) Suite":
     else:
       expect(ValueError):
         discard getNamedDsmSegment("pgx_named_test", 128.csize_t, nil, found)
+
+  test "{.pgxShared.} pragma handles types, zero-boilerplate slots, and hook chaining":
+    resetShmemMocks()
+    check compiles(pgSizeOf[SharedPragmaPod]()) == true
+    check pgxSharedSlotCount >= 2
+
+    var mockPreload {.importc: "process_shared_preload_libraries_in_progress".}: bool
+    var mockRequestedBytes {.importc: "mockRequestedBytes".}: csize_t
+    var mockLastStructName {.importc: "mockLastStructName".}: array[64, char]
+    var mockPrevReqCalls {.importc: "mockPrevReqCalls".}: cint
+    var mockPrevStartCalls {.importc: "mockPrevStartCalls".}: cint
+
+    # Reject non-preload startup
+    mockPreload = false
+    expect(ValueError):
+      installPgxSharedHooks()
+
+    # Install chained with prior hooks + explicit installShmemHooks
+    resetShmemMocks()
+    mockPreload = true
+    setupPrevHooks()
+    installPgxSharedHooks()
+
+    var customReqRan = false
+    var customStartRan = false
+    installShmemHooks(
+      proc() =
+        customReqRan = true
+        RequestAddinShmemSpace(64.csize_t)
+      ,
+      proc() =
+        customStartRan = true
+    )
+
+    fireHooks()
+    check customReqRan
+    check customStartRan
+    if isPg15Plus() == 1:
+      check mockPrevReqCalls == 1
+    check mockPrevStartCalls == 1
+    check mockRequestedBytes >= pgSizeOf[SharedPragmaPod]() + pgSizeOf[GoodPodState]() + 64.csize_t
+    check $cast[cstring](addr mockLastStructName[0]) == "zeroSharedPod"
+
+    # Both typed accessors work directly
+    check (addr autoSharedPod.hits).load() == 10'u64
+    check $autoSharedPod.tag == "pragma_ok"
+    check (addr zeroSharedPod.magic)[] == 0'u64
+
+    # Cleanup test registry
+    resetPgxSharedRegistry()

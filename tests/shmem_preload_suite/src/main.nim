@@ -7,6 +7,16 @@ type
     cv*: ConditionVariable
     banner*: FixedString[32]
 
+  PragmaSharedMetrics* {.pgxShared.} = object
+    requests*: pg_atomic_uint64
+    tag*: FixedString[24]
+
+proc initPragmaMetrics(p: ptr PragmaSharedMetrics) =
+  (addr p.requests).init(100'u64)
+  p.tag.setStr("pragma_shared_ok")
+
+var pragmaMetrics* {.pgxShared("pgx_pragma_metrics", initPragmaMetrics).}: PragmaSharedMetrics
+
 var
   gState: ptr PreloadBenchState = nil
 
@@ -71,3 +81,7 @@ proc shmem_await_ticks*(minTicks: int64, timeoutMs: int64): bool {.volatile.} =
 proc shmem_worker_ticks*(): int64 {.volatile.} =
   let st = ensurePreloadState()
   result = int64((addr st.workerTicks).load())
+
+proc shmem_pragma_bump*(delta: int64): string {.volatile.} =
+  let val = (addr pragmaMetrics.requests).addFetch(delta)
+  result = $pragmaMetrics.tag & ":" & $val

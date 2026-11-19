@@ -10,7 +10,13 @@ SELECT ipc_rpc_roundtrip('pgxcrown_dsm_mq') AS rpc_two;
  reply=echo:PGXCROWN_DSM_MQ|stored=echo:PGXCROWN_DSM_MQ|count=1|sock=1
 (1 row)
 
-SELECT COUNT(*) AS zero_fake_sql_types FROM pg_type WHERE typname = 'IpcSharedState';
+SELECT ipc_typed_channel_roundtrip(6, 7, 'typed_mq') AS typed_rpc;
+         typed_rpc
+----------------------------
+ ok:typed_mq|sum=13|prod=42
+(1 row)
+
+SELECT COUNT(*) AS zero_fake_sql_types FROM pg_type WHERE typname IN ('IpcSharedState', 'IpcTypedReq', 'IpcTypedResp');
  zero_fake_sql_types
 ---------------------
                    0

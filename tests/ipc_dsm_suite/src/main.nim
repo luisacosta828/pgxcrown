@@ -16,6 +16,52 @@ type
     socketPings*: pg_atomic_uint32
     lastReply*: FixedString[64]
 
+  IpcTypedReq* {.pgxShared.} = object
+    a*: int64
+    b*: int64
+    label*: FixedString[24]
+
+  IpcTypedResp* {.pgxShared.} = object
+    sum*: int64
+    product*: int64
+    label*: FixedString[24]
+
+proc ipc_typed_worker*() {.pgxWorker.} =
+  workerInit()
+  ensureResourceOwner("ipc_typed_worker")
+
+  let handle = DsmHandle(MyBgworkerEntry.bgw_main_arg)
+  let seg = dsmAttachOrFind(handle)
+  if seg == nil:
+    workerExit(1)
+
+  let toc = attachToc(seg, IPC_TOC_MAGIC)
+  let rpc = lookupRpcQueues(toc, KEY_REQ_MQ, KEY_RESP_MQ)
+  var reqCh = openRecvChannel[IpcTypedReq](rpc.reqMq, seg)
+  var respCh = openSendChannel[IpcTypedResp](rpc.respMq, seg)
+
+  while not isWorkerSigtermSet():
+    if MyLatch != nil:
+      ResetLatch(MyLatch)
+    CHECK_FOR_INTERRUPTS()
+    if isWorkerSigtermSet():
+      break
+    let got = reqCh.receive(nowait = false)
+    if got.status == mqDetached:
+      break
+    if got.status == mqSuccess:
+      var resp: IpcTypedResp
+      resp.sum = got.value.a + got.value.b
+      resp.product = got.value.a * got.value.b
+      resp.label.setStr("ok:" & $got.value.label)
+      if respCh.send(resp) == mqDetached:
+        break
+
+  respCh.close()
+  reqCh.close()
+  dsmDetach(seg)
+  workerExit(0)
+
 proc ipc_rpc_worker*() {.pgxWorker.} =
   workerInit()
   ensureResourceOwner("ipc_dsm_worker")
@@ -177,6 +223,62 @@ proc ipc_rpc_roundtrip*(msg: string): string {.volatile.} =
       detachMq(reqH)
     if respH != nil:
       detachMq(respH)
+    if workerOpt.isSome:
+      workerOpt.get().terminate()
+      discard workerOpt.get().waitForShutdown()
+    dsmDetach(seg)
+
+proc ipc_typed_channel_roundtrip*(a: int64, b: int64, label: string): string {.volatile.} =
+  var est = initEstimator()
+  est.estimateRpcQueues(QUEUE_BYTES, QUEUE_BYTES)
+
+  let seg = dsmCreate(est.estimate())
+  if seg == nil:
+    raise newException(ValueError, "dsmCreate returned nil")
+
+  var reqCh: ShmChannel[IpcTypedReq]
+  var respCh: ShmChannel[IpcTypedResp]
+  var workerOpt: Option[WorkerHandle] = none(WorkerHandle)
+
+  try:
+    let toc = createToc(seg, IPC_TOC_MAGIC)
+    let rpc = createRpcQueues(toc, KEY_REQ_MQ, KEY_RESP_MQ, QUEUE_BYTES, QUEUE_BYTES)
+
+    let cfg = bgWorker("ipc_dsm_suite"):
+      entrypoint "ipc_typed_worker"
+      mainArg dsmHandle(seg)
+
+    workerOpt = registerDynamicWorker(cfg)
+    if workerOpt.isNone:
+      raise newException(ValueError, "registerDynamicWorker failed")
+    let wh = workerOpt.get()
+    let (status, _) = wh.waitForStartup()
+    if status != bgwStarted:
+      raise newException(ValueError, "dynamic worker failed to start")
+
+    reqCh = openSendChannel[IpcTypedReq](rpc.reqMq, seg, wh)
+    respCh = openRecvChannel[IpcTypedResp](rpc.respMq, seg, wh)
+
+    var req: IpcTypedReq
+    req.a = a
+    req.b = b
+    req.label.setStr($label)
+    if reqCh.send(req) != mqSuccess:
+      raise newException(ValueError, "ShmChannel[IpcTypedReq] send failed")
+
+    let got = respCh.receive()
+    if got.status != mqSuccess:
+      raise newException(ValueError, "ShmChannel[IpcTypedResp] receive failed")
+
+    reqCh.close()
+    respCh.close()
+    wh.terminate()
+    discard wh.waitForShutdown()
+
+    result = $got.value.label & "|sum=" & $got.value.sum & "|prod=" & $got.value.product
+  finally:
+    reqCh.close()
+    respCh.close()
     if workerOpt.isSome:
       workerOpt.get().terminate()
       discard workerOpt.get().waitForShutdown()
