@@ -186,15 +186,23 @@ proc removeContainer*(docker: DockerDriver, containerName: string): bool =
   let (_, exitCode) = docker.execCmdRaw("rm -f " & quoteShell(containerName))
   return exitCode == 0
 
-proc startPgContainer*(docker: DockerDriver, containerName: string, pgVersion: int): bool =
+proc startPgContainer*(docker: DockerDriver, containerName: string, pgVersion: int,
+                       preloadSupervisor: bool = false): bool =
   discard docker.removeContainer(containerName)
-  
+
   let imageTag = docker.resolveCanonicalImageTag(pgVersion)
-  # Run container in background without mapping host ports to prevent any local database conflicts
-  let runCmd = "run --name " & quoteShell(containerName) &
+  # Run container in background without mapping host ports to prevent any local database conflicts.
+  # When shared_preload_libraries restarts are needed, keep PID 1 alive as a lightweight supervisor
+  # so pg_ctl restart does not terminate the container.
+  var runCmd = "run --name " & quoteShell(containerName) &
                " -e POSTGRES_PASSWORD=postgres" &
-               " -e POSTGRES_HOST_AUTH_METHOD=trust" &
-               " -d " & quoteShell(imageTag)
+               " -e POSTGRES_HOST_AUTH_METHOD=trust -d"
+  if preloadSupervisor:
+    let superCmd = "docker-entrypoint.sh postgres >/tmp/pg_stdout.log 2>&1 & " &
+                   "trap 'exit 0' TERM INT; while :; do sleep 1; done"
+    runCmd.add " --entrypoint bash " & quoteShell(imageTag) & " -lc " & quoteShell(superCmd)
+  else:
+    runCmd.add " " & quoteShell(imageTag)
 
   let (output, exitCode) = docker.execCmdRaw(runCmd)
   if exitCode != 0:

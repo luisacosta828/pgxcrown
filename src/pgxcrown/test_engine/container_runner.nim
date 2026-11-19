@@ -28,11 +28,12 @@ proc inspectContainerPaths*(docker: DockerDriver, containerName: string): (strin
 
   return (pkglibdir, extensiondir)
 
-proc setupPgSandbox*(docker: DockerDriver, containerName: string, pgVersion: int): PgContainerContext =
+proc setupPgSandbox*(docker: DockerDriver, containerName: string, pgVersion: int,
+                     preloadSupervisor: bool = false): PgContainerContext =
   if not docker.ensureImage(pgVersion):
     quit("❌ Failed to ensure image for PostgreSQL " & $pgVersion)
 
-  if not docker.startPgContainer(containerName, pgVersion):
+  if not docker.startPgContainer(containerName, pgVersion, preloadSupervisor = preloadSupervisor):
     quit("❌ Failed to start container '" & containerName & "'")
 
   if not docker.waitForPgReady(containerName, timeoutSec = 35):
@@ -52,6 +53,49 @@ proc setupPgSandbox*(docker: DockerDriver, containerName: string, pgVersion: int
     pkglibdir: pkglibdir,
     extensiondir: extensiondir
   )
+
+proc enableSharedPreloadAndRestart*(ctx: PgContainerContext, libraryName: string): bool =
+  ## Configures `shared_preload_libraries` for `libraryName`, restarts PostgreSQL cleanly
+  ## inside the supervised container, and verifies the server is ready with preload active.
+  let (dataOut, dataCode) = ctx.docker.execInContainer(ctx.containerName, "psql -U postgres -Atc \"SHOW data_directory;\"")
+  let dataDir = dataOut.strip()
+  if dataCode != 0 or dataDir.len == 0:
+    echo "❌ Failed to query PostgreSQL data_directory for shared_preload_libraries: ", dataOut
+    return false
+
+  let (binOut, binCode) = ctx.docker.execInContainer(ctx.containerName, "pg_config --bindir")
+  let bindir = binOut.strip()
+  if binCode != 0 or bindir.len == 0:
+    echo "❌ Failed to query pg_config --bindir for shared_preload_libraries restart: ", binOut
+    return false
+
+  let escapedLib = libraryName.replace("'", "''")
+  let alterSql = "ALTER SYSTEM SET shared_preload_libraries = '" & escapedLib & "';"
+  let (alterOut, alterCode) = ctx.docker.execInContainer(ctx.containerName, "psql -U postgres -d postgres -c " & quoteShell(alterSql))
+  if alterCode != 0:
+    echo "❌ Failed to set shared_preload_libraries for '", libraryName, "': ", alterOut
+    return false
+
+  let innerPgCtl = quoteShell(bindir / "pg_ctl") & " -D " & quoteShell(dataDir) & " -l /tmp/pg_restarted.log -m fast restart"
+  let restartShell =
+    "if [ \"$(id -u)\" -eq 0 ]; then su - postgres -c " & quoteShell(innerPgCtl) & "; " &
+    "else " & innerPgCtl & "; fi"
+  let (restartOut, restartCode) = ctx.docker.execInContainer(ctx.containerName, "bash -lc " & quoteShell(restartShell))
+  if restartCode != 0:
+    let (pgLogOut, _) = ctx.docker.execInContainer(ctx.containerName, "tail -n 40 /tmp/pg_restarted.log 2>/dev/null || cat /tmp/pg_stdout.log 2>/dev/null || true")
+    echo "❌ PostgreSQL failed to restart with shared_preload_libraries = '", libraryName, "':\n", restartOut, "\n", pgLogOut
+    return false
+
+  if not ctx.docker.waitForPgReady(ctx.containerName, timeoutSec = 35):
+    let (pgLogOut, _) = ctx.docker.execInContainer(ctx.containerName, "tail -n 40 /tmp/pg_restarted.log 2>/dev/null || cat /tmp/pg_stdout.log 2>/dev/null || true")
+    echo "❌ PostgreSQL did not become ready after shared_preload_libraries restart:\n", pgLogOut
+    return false
+
+  let (checkOut, checkCode) = ctx.docker.execInContainer(ctx.containerName, "psql -U postgres -Atc \"SHOW shared_preload_libraries;\"")
+  if checkCode != 0 or libraryName notin checkOut:
+    echo "❌ shared_preload_libraries verification failed (got '", checkOut.strip(), "', expected '", libraryName, "')"
+    return false
+  return true
 
 proc buildAndInstallProjectInContainer*(
   ctx: PgContainerContext,
@@ -153,7 +197,8 @@ proc injectExtensionFiles*(ctx: PgContainerContext, projectDir: string, projectN
 
   return true
 
-proc createCleanDatabase*(ctx: PgContainerContext, dbName: string, extensionName: string, isHook: bool = false): bool =
+proc createCleanDatabase*(ctx: PgContainerContext, dbName: string, extensionName: string,
+                          isHook: bool = false, preload: bool = false): bool =
   # Drop old DB if exists
   discard ctx.docker.execInContainer(ctx.containerName, "psql -U postgres -d postgres -c \"DROP DATABASE IF EXISTS \\\"" & dbName & "\\\" WITH (FORCE);\"")
   
@@ -164,21 +209,27 @@ proc createCleanDatabase*(ctx: PgContainerContext, dbName: string, extensionName
     return false
 
   if isHook:
-    let escapedHook = extensionName.replace("'", "''")
-    # Execute ALTER SYSTEM and pg_reload_conf in separate -c calls; psql wraps multi-statement -c in a transaction block.
-    let alterSql = "ALTER SYSTEM SET session_preload_libraries = '" & escapedHook & "';"
-    let (hookOut, hookCode) = ctx.docker.execInContainer(ctx.containerName, "psql -U postgres -d postgres -c " & quoteShell(alterSql))
-    if hookCode != 0:
-      echo "❌ Failed to configure session_preload_libraries for hook '", extensionName, "': ", hookOut
-      return false
-    let (reloadOut, reloadCode) = ctx.docker.execInContainer(ctx.containerName, "psql -U postgres -d postgres -c \"SELECT pg_reload_conf();\"")
-    if reloadCode != 0:
-      echo "❌ Failed to reload PostgreSQL configuration for hook '", extensionName, "': ", reloadOut
-      return false
-    let (verifyOut, verifyCode) = ctx.docker.execInContainer(ctx.containerName, "psql -U postgres -d " & quoteShell(dbName) & " -c \"LOAD '" & escapedHook & "';\"")
-    if verifyCode != 0:
-      echo "❌ Failed to load hook shared library '", extensionName, "' in database '", dbName, "': ", verifyOut
-      return false
+    if preload:
+      let (chkOut, chkCode) = ctx.docker.execInContainer(ctx.containerName, "psql -U postgres -d " & quoteShell(dbName) & " -Atc \"SHOW shared_preload_libraries;\"")
+      if chkCode != 0 or extensionName notin chkOut:
+        echo "❌ Hook '", extensionName, "' was not active in shared_preload_libraries (got '", chkOut.strip(), "')"
+        return false
+    else:
+      let escapedHook = extensionName.replace("'", "''")
+      # Execute ALTER SYSTEM and pg_reload_conf in separate -c calls; psql wraps multi-statement -c in a transaction block.
+      let alterSql = "ALTER SYSTEM SET session_preload_libraries = '" & escapedHook & "';"
+      let (hookOut, hookCode) = ctx.docker.execInContainer(ctx.containerName, "psql -U postgres -d postgres -c " & quoteShell(alterSql))
+      if hookCode != 0:
+        echo "❌ Failed to configure session_preload_libraries for hook '", extensionName, "': ", hookOut
+        return false
+      let (reloadOut, reloadCode) = ctx.docker.execInContainer(ctx.containerName, "psql -U postgres -d postgres -c \"SELECT pg_reload_conf();\"")
+      if reloadCode != 0:
+        echo "❌ Failed to reload PostgreSQL configuration for hook '", extensionName, "': ", reloadOut
+        return false
+      let (verifyOut, verifyCode) = ctx.docker.execInContainer(ctx.containerName, "psql -U postgres -d " & quoteShell(dbName) & " -c \"LOAD '" & escapedHook & "';\"")
+      if verifyCode != 0:
+        echo "❌ Failed to load hook shared library '", extensionName, "' in database '", dbName, "': ", verifyOut
+        return false
   else:
     # Install extension in new DB
     let (extOut, extCode) = ctx.docker.execInContainer(ctx.containerName, "psql -U postgres -d " & quoteShell(dbName) & " -c \"CREATE EXTENSION \\\"" & extensionName & "\\\" CASCADE;\"")

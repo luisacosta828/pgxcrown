@@ -97,11 +97,13 @@ proc runTestSuiteForVersion*(
   verbose: bool = false,
   isHook: bool = false,
   debug: bool = false,
+  preload: bool = false,
   compileCb: CompileCallback = nil
 ): bool =
   let imageTag = docker.resolveCanonicalImageTag(pgVersion)
   echo "\n" & ColCyan & ColBold & "======================================================================" & ColReset
-  echo ColCyan & ColBold & "🐘 Pgxcrown Test Runner [" & imageTag & " — native in-container build & test]" & ColReset
+  echo ColCyan & ColBold & "🐘 Pgxcrown Test Runner [" & imageTag & " — native in-container build & test" &
+       (if preload: " (shared_preload_libraries)" else: "") & "]" & ColReset
   echo ColCyan & ColBold & "======================================================================" & ColReset
 
   var testCases = discoverTests(projectDir)
@@ -112,16 +114,22 @@ proc runTestSuiteForVersion*(
 
   let containerName = "pgxtool_sandbox_" & project & "_pg" & $pgVersion
   echo "🚀 [1/4] Starting PostgreSQL " & $pgVersion & " sandbox container (" & imageTag & ")..."
-  let ctx = setupPgSandbox(docker, containerName, pgVersion)
+  let ctx = setupPgSandbox(docker, containerName, pgVersion, preloadSupervisor = preload)
 
   echo "📦 [2/4] Copying project '" & project & "' & compiling natively inside container..."
   if not ctx.buildAndInstallProjectInContainer(projectDir, project, isHook = isHook, debug = debug, verbose = verbose):
     if not keepContainer: ctx.cleanupSandbox()
     return false
 
+  if preload:
+    echo "🔄 [2.5/4] Enabling shared_preload_libraries = '", project, "' and restarting PostgreSQL..."
+    if not ctx.enableSharedPreloadAndRestart(project):
+      if not keepContainer: ctx.cleanupSandbox()
+      return false
+
   let testDb = "pgxtool_test_" & project
   echo "🗄️  [3/4] Creating clean database '" & testDb & "' and loading " & (if isHook: "hook" else: "extension") & "..."
-  if not ctx.createCleanDatabase(testDb, project, isHook = isHook):
+  if not ctx.createCleanDatabase(testDb, project, isHook = isHook, preload = preload):
     if not keepContainer: ctx.cleanupSandbox()
     echo ColRed & "❌ Failed to create clean test database and load " & (if isHook: "hook." else: "extension.") & ColReset
     return false
@@ -189,10 +197,12 @@ proc runLocalTestSuite(
   bless: bool,
   verbose: bool,
   isHook: bool,
+  preload: bool,
   compileCb: CompileCallback
 ): bool =
   echo "\n" & ColCyan & ColBold & "======================================================================" & ColReset
-  echo ColCyan & ColBold & "🐘 Pgxcrown Test Runner [PostgreSQL " & $pgVersion & " — local engine]" & ColReset
+  echo ColCyan & ColBold & "🐘 Pgxcrown Test Runner [PostgreSQL " & $pgVersion & " — local engine" &
+       (if preload: " (shared_preload_libraries)" else: "") & "]" & ColReset
   echo ColCyan & ColBold & "======================================================================" & ColReset
 
   let testCases = discoverTests(projectDir)
@@ -209,6 +219,24 @@ proc runLocalTestSuite(
   if not installProjectLocally(projectDir, project):
     return false
 
+  if preload:
+    let escapedLib = project.replace("'", "''")
+    let (dataOut, dataCode) = execCmdEx("psql -U postgres -Atc \"SHOW data_directory;\"")
+    let (binOut, binCode) = execCmdEx("pg_config --bindir")
+    if dataCode != 0 or dataOut.strip().len == 0 or binCode != 0 or binOut.strip().len == 0:
+      echo ColRed & "❌ Failed to query local PG data_directory/bindir for --preload." & ColReset
+      return false
+    let (alterOut, alterCode) = execCmdEx("psql -U postgres -d postgres -c " & quoteShell("ALTER SYSTEM SET shared_preload_libraries = '" & escapedLib & "';"))
+    if alterCode != 0:
+      echo ColRed & "❌ Failed to set local shared_preload_libraries: " & alterOut & ColReset
+      return false
+    let pgCtlCmd = quoteShell(binOut.strip() / "pg_ctl") & " -D " & quoteShell(dataOut.strip()) & " -l /tmp/pg_restarted.log -m fast restart"
+    let restartCmd = "if [ \"$(id -u)\" -eq 0 ]; then su - postgres -c " & quoteShell(pgCtlCmd) & "; else " & pgCtlCmd & "; fi"
+    let (rOut, rCode) = execCmdEx("bash -lc " & quoteShell(restartCmd))
+    if rCode != 0:
+      echo ColRed & "❌ Failed to restart local PostgreSQL with shared_preload_libraries: " & rOut & ColReset
+      return false
+
   let testDb = "pgxtool_test_" & project
   echo "🗄️  [2/3] Creating clean database '" & testDb & "' and loading " & (if isHook: "hook" else: "extension") & "..."
   discard execCmdEx("psql -U postgres -d postgres -c \"DROP DATABASE IF EXISTS \\\"" & testDb & "\\\" WITH (FORCE);\"")
@@ -217,21 +245,27 @@ proc runLocalTestSuite(
     echo ColRed & "❌ Failed to create database '" & testDb & "': " & createOut & ColReset
     return false
   if isHook:
-    let escapedHook = project.replace("'", "''")
-    # Execute ALTER SYSTEM and pg_reload_conf in separate -c calls; psql wraps multi-statement -c in a transaction block.
-    let alterSql = "ALTER SYSTEM SET session_preload_libraries = '" & escapedHook & "';"
-    let (hookOut, hookCode) = execCmdEx("psql -U postgres -d postgres -c " & quoteShell(alterSql))
-    if hookCode != 0:
-      echo ColRed & "❌ Failed to configure session_preload_libraries for hook '" & project & "': " & hookOut & ColReset
-      return false
-    let (reloadOut, reloadCode) = execCmdEx("psql -U postgres -d postgres -c \"SELECT pg_reload_conf();\"")
-    if reloadCode != 0:
-      echo ColRed & "❌ Failed to reload PostgreSQL configuration for hook '" & project & "': " & reloadOut & ColReset
-      return false
-    let (verifyOut, verifyCode) = execCmdEx("psql -U postgres -d " & quoteShell(testDb) & " -c \"LOAD '" & escapedHook & "';\"")
-    if verifyCode != 0:
-      echo ColRed & "❌ Failed to load hook '" & project & "': " & verifyOut & ColReset
-      return false
+    if preload:
+      let (chkOut, chkCode) = execCmdEx("psql -U postgres -d " & quoteShell(testDb) & " -Atc \"SHOW shared_preload_libraries;\"")
+      if chkCode != 0 or project notin chkOut:
+        echo ColRed & "❌ Hook '" & project & "' not active in shared_preload_libraries: " & chkOut & ColReset
+        return false
+    else:
+      let escapedHook = project.replace("'", "''")
+      # Execute ALTER SYSTEM and pg_reload_conf in separate -c calls; psql wraps multi-statement -c in a transaction block.
+      let alterSql = "ALTER SYSTEM SET session_preload_libraries = '" & escapedHook & "';"
+      let (hookOut, hookCode) = execCmdEx("psql -U postgres -d postgres -c " & quoteShell(alterSql))
+      if hookCode != 0:
+        echo ColRed & "❌ Failed to configure session_preload_libraries for hook '" & project & "': " & hookOut & ColReset
+        return false
+      let (reloadOut, reloadCode) = execCmdEx("psql -U postgres -d postgres -c \"SELECT pg_reload_conf();\"")
+      if reloadCode != 0:
+        echo ColRed & "❌ Failed to reload PostgreSQL configuration for hook '" & project & "': " & reloadOut & ColReset
+        return false
+      let (verifyOut, verifyCode) = execCmdEx("psql -U postgres -d " & quoteShell(testDb) & " -c \"LOAD '" & escapedHook & "';\"")
+      if verifyCode != 0:
+        echo ColRed & "❌ Failed to load hook '" & project & "': " & verifyOut & ColReset
+        return false
   else:
     let (extOut, extCode) = execCmdEx("psql -U postgres -d " & quoteShell(testDb) & " -c \"CREATE EXTENSION \\\"" & project & "\\\" CASCADE;\"")
     if extCode != 0:
@@ -267,12 +301,14 @@ proc serveTestEnv*(
   projectDirOverride: string = "",
   isHook: bool = false,
   debug: bool = false,
-  localMode: bool = false
+  localMode: bool = false,
+  preload: bool = false
 ): int =
   let projectDir = if projectDirOverride.len > 0: projectDirOverride else: pgxtool_init_dir / project
   if not dirExists(projectDir):
     quit("❌ Project directory not found: " & projectDir)
 
+  let effectivePreload = preload or fileExists(projectDir / "tests" / "preload")
   ensureTestDirectories(projectDir)
 
   var docker: DockerDriver
@@ -288,7 +324,7 @@ proc serveTestEnv*(
         quit("❌ Unsupported PostgreSQL version: '" & pgVersionStr & "'. Supported versions: " & $SupportedPgVersions)
       if reqVer != hostVer:
         quit("❌ Local container PostgreSQL is " & $hostVer & ", cannot test '--pg " & $reqVer & "' locally. Run from the host with Docker for multi-version testing.")
-    let passed = runLocalTestSuite(project, projectDir, hostVer, bless, verbose, isHook, compileCb)
+    let passed = runLocalTestSuite(project, projectDir, hostVer, bless, verbose, isHook, effectivePreload, compileCb)
     return if passed: 0 else: 1
 
   if not tryDetectDockerEngine(docker):
@@ -330,6 +366,7 @@ proc serveTestEnv*(
       verbose = verbose,
       isHook = isHook,
       debug = debug,
+      preload = effectivePreload,
       compileCb = compileCb
     )
     versionResults.add (ver, passed)

@@ -16,8 +16,15 @@ import std/unittest
 #include "storage/condition_variable.h"
 #include "port/atomics.h"
 #include "utils/palloc.h"
+#include "utils/timestamp.h"
 #include <stdlib.h>
 #include <string.h>
+
+TimestampTz GetCurrentTimestamp(void) {
+    static TimestampTz mockTs = 1000000;
+    mockTs += 1000;
+    return mockTs;
+}
 
 int s_lock(volatile slock_t *lock, const char *file, int line, const char *func) {
     (void)file; (void)line; (void)func;

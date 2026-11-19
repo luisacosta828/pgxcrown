@@ -9,7 +9,7 @@
 ##   - Compile-time C-ABI / POD memory safety guards (assertShmemSafe, pgSizeOf)
 ## =============================================================================
 
-import std/[typetraits, times, os]
+import std/[typetraits, os]
 import ./compiler
 import ./memcontext
 import ./allocator
@@ -173,6 +173,7 @@ proc ConditionVariableBroadcast*(cv: ptr ConditionVariable) {.importc.}
 {.pop.}
 
 proc cvCancelSleep*() {.importc: "pgx_cv_cancel_sleep", header: "pgx_ipc.h".}
+proc pgxCurrentTimeMs*(): int64 {.importc: "pgx_current_time_ms", header: "pgx_ipc.h".}
 
 # =============================================================================
 # Idiomatic Nim Wrappers & RAII Guards
@@ -301,7 +302,7 @@ template waitUntil*(cv: ptr ConditionVariable, lock: ptr LWLock,
   let lckPtr = lock
   let reqTimeout = timeoutMs
   let deadlineMs =
-    if reqTimeout > 0: int64(epochTime() * 1000.0) + reqTimeout
+    if reqTimeout > 0: pgxCurrentTimeMs() + reqTimeout
     else: -1'i64
   var satisfied = false
   prepareToSleep(cvPtr)
@@ -312,8 +313,8 @@ template waitUntil*(cv: ptr ConditionVariable, lock: ptr LWLock,
           satisfied = true
       if satisfied or reqTimeout == 0:
         break
-      if deadlineMs > 0:
-        let nowMs = int64(epochTime() * 1000.0)
+      if reqTimeout > 0:
+        let nowMs = pgxCurrentTimeMs()
         let remMs = deadlineMs - nowMs
         if remMs <= 0:
           break

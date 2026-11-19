@@ -1,0 +1,47 @@
+SHOW shared_preload_libraries;
+ shared_preload_libraries
+--------------------------
+ shmem_preload_suite
+(1 row)
+
+SELECT shmem_banner() AS banner;
+         banner
+------------------------
+ pgxcrown_preload_ready
+(1 row)
+
+SELECT shmem_bump_hits(10) AS hit1;
+ hit1
+------
+   10
+(1 row)
+
+SELECT shmem_bump_hits(5) AS hit2;
+ hit2
+------
+   15
+(1 row)
+
+SELECT shmem_await_ticks(2, 5000) AS worker_ticked;
+ worker_ticked
+---------------
+ t
+(1 row)
+
+SELECT name, allocated_size >= size AS valid_shmem_size FROM pg_shmem_allocations WHERE name = 'pgxcrown_preload_state';
+          name          | valid_shmem_size
+------------------------+------------------
+ pgxcrown_preload_state | t
+(1 row)
+
+SELECT shmem_worker_ticks() >= 2 AS static_worker_running;
+ static_worker_running
+-----------------------
+ t
+(1 row)
+
+SELECT COUNT(*) AS zero_fake_sql_types FROM pg_type WHERE typname = 'PreloadBenchState';
+ zero_fake_sql_types
+---------------------
+                   0
+(1 row)

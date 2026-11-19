@@ -245,6 +245,7 @@ Commands:
      * pgxtool test <name> --bless
      * pgxtool test <name> --keep
      * pgxtool test <name> --local
+     * pgxtool test <name> --preload
      * pgxtool test --help
 
   version: Show installed pgxcrown / pgxtool version
@@ -271,6 +272,7 @@ Options:
   --bless                 Auto-generate or update golden snapshot files (tests/expected/*.out) from actual output
   --keep                  Keep the test sandbox container alive after running tests for manual debugging
   --local                 Run natively against local PostgreSQL (auto-used inside a container)
+  --preload               Load via shared_preload_libraries and restart PostgreSQL (also auto-enabled via tests/preload)
   --help, -h              Display this help message
 
 Examples:
@@ -896,6 +898,7 @@ Clean build artifacts (.so, .sql, .control, install.sh) and the build cache (.pg
     var verbose = false
     var debugBuild = false
     var localMode = false
+    var preloadMode = false
     req = ""
 
     var idx = 2
@@ -929,6 +932,9 @@ Clean build artifacts (.so, .sql, .control, install.sh) and the build cache (.pg
         idx += 1
       elif flag == "--local":
         localMode = true
+        idx += 1
+      elif flag == "--preload":
+        preloadMode = true
         idx += 1
       elif flag.startsWith("-"):
         echo "⚠️  Unknown option: ", flag
@@ -965,7 +971,8 @@ Clean build artifacts (.so, .sql, .control, install.sh) and the build cache (.pg
       projectDirOverride = projectDirOverride,
       isHook = isHook,
       debug = debugBuild,
-      localMode = localMode
+      localMode = localMode,
+      preload = preloadMode
     )
     if exitCode != 0:
       quit(exitCode)

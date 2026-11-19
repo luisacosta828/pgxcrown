@@ -976,7 +976,12 @@ proc isStatement(n: NimNode): bool =
      nnkWhileStmt, nnkForStmt, nnkBlockStmt, nnkStmtList, nnkTryStmt, nnkRaiseStmt, nnkDefer:
     true
   of nnkCall, nnkInfix:
-    if n.len > 0 and n[0].kind == nnkIdent and n[0].repr in ["[]=", "add", "del", "delete", "insert", "inc", "dec"]:
+    if n.len > 0 and n[0].kind == nnkIdent and n[0].repr.toLowerAscii in [
+      "[]=", "add", "del", "delete", "insert", "inc", "dec",
+      "withlock", "withspinlock", "withmemorycontext", "withtopmemorycontext",
+      "withsubcontext", "withwaiteventset", "report", "spi_init",
+      "subtransaction", "savepoint"
+    ]:
       true
     else:
       false

@@ -13,6 +13,7 @@ import pgxcrown/native_functions
 import pgxcrown/allocator
 import pgxcrown/memcontext
 import pgxcrown/lwlock
+import pgxcrown/shmem
 
 template trusted*() {.pragma: [raises: [ValueError], forbids: [IOEffect, TimeEffect], tags: []].}
 template immutable*() {.pragma: [noSideEffect, trusted, forbids: [DbReadEffect, DbWriteEffect]].}
@@ -142,4 +143,5 @@ export native_functions
 export allocator
 export memcontext
 export lwlock
+export shmem
 
