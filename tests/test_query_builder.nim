@@ -6,6 +6,23 @@ import std/[unittest, tables, options, strutils, json]
 import ../src/pgxcrown/query_builder
 import ../src/pgxcrown/spi
 import ../src/pgxcrown/native_functions
+import ../src/pgxcrown/datatypes/[bytea, uuid, temporal, numeric]
+
+proc toParam(v: PgBytea): QueryParam {.inline.} = toParam($v)
+proc toParam(v: PgUuid): QueryParam {.inline.} = toParam($v)
+proc toParam(v: PgDate): QueryParam {.inline.} = toParam($v)
+proc toParam(v: PgTimestamp): QueryParam {.inline.} = toParam($v)
+proc toParam(v: PgTimestampTz): QueryParam {.inline.} = toParam($v)
+proc toParam(v: PgInterval): QueryParam {.inline.} = toParam($v)
+proc toParam(v: PgNumeric): QueryParam {.inline.} =
+  QueryParam(kind: pkRaw, rawVal: quoteLiteral($v) & "::numeric")
+converter toQueryParam(v: PgBytea): QueryParam = toParam(v)
+converter toQueryParam(v: PgUuid): QueryParam = toParam(v)
+converter toQueryParam(v: PgDate): QueryParam = toParam(v)
+converter toQueryParam(v: PgTimestamp): QueryParam = toParam(v)
+converter toQueryParam(v: PgTimestampTz): QueryParam = toParam(v)
+converter toQueryParam(v: PgInterval): QueryParam = toParam(v)
+converter toQueryParam(v: PgNumeric): QueryParam = toParam(v)
 
 suite "pgxcrown v0.16.0 - Type-Safe SQL Query Builder & SPI Execution Suite":
 
@@ -585,5 +602,77 @@ suite "pgxcrown v0.16.0 - Type-Safe SQL Query Builder & SPI Execution Suite":
     check parseValue[seq[float]]("{1.5,2.5}") == @[1.5, 2.5]
     check parseValue[seq[string]]("{}") == newSeq[string]()
     check parseValue[uint64]("9876543210") == 9876543210'u64
+
+  test "v0.29.0 Production SQL Data Types DDL, QueryBuilder Params, and SPI Row Mapping":
+    type
+      InvoiceStatus {.pure.} = enum
+        isPending = "pending"
+        isPaid = "paid"
+      LedgerId = distinct int64
+      InvoiceRow = object
+        id: PgUuid
+        ledger: LedgerId
+        payload: PgBytea
+        issued_on: PgDate
+        settled_at: Option[PgTimestampTz]
+        grace: PgInterval
+        amount: PgNumeric
+        status: InvoiceStatus
+
+    let ddl = createTableFrom(InvoiceRow)
+    check "\"id\" UUID PRIMARY KEY" in ddl
+    check "\"ledger\" BIGINT NOT NULL" in ddl
+    check "\"payload\" BYTEA NOT NULL" in ddl
+    check "\"issued_on\" DATE NOT NULL" in ddl
+    check "\"settled_at\" TIMESTAMPTZ" in ddl
+    check "\"settled_at\" TIMESTAMPTZ NOT NULL" notin ddl
+    check "\"grace\" INTERVAL NOT NULL" in ddl
+    check "\"amount\" NUMERIC NOT NULL" in ddl
+    check "\"status\" TEXT NOT NULL" in ddl
+
+    let uid = parsePgUuid("550e8400-e29b-41d4-a716-446655440000")
+    let rawBin = toPgBytea(@[0x00'u8, 0xff'u8, 0x10'u8])
+    let dt = initPgDate(2024, 2, 29)
+    let ts = initPgTimestampTz(2024, 2, 29, 12, 30, 0, 500_000)
+    let iv = initPgInterval(months = 1, days = 2, hours = 3)
+    let amt = pgNumeric("1234567890123456789012345678.95")
+
+    let inv = table("invoicerow", "i")
+    let qSel = Select(inv.id, inv.amount)
+      .From(inv)
+      .Where(inv.status == InvoiceStatus.isPaid and inv.id == uid)
+    check "\"i\".\"status\" = 'paid'" in $qSel
+    check "\"i\".\"id\" = '550e8400-e29b-41d4-a716-446655440000'" in $qSel
+
+    let qIns = InsertInto("invoices", "id", "ledger", "payload", "issued_on", "grace", "amount", "status")
+      .Values(uid, LedgerId(77'i64), rawBin, dt, iv, amt, InvoiceStatus.isPending)
+    check "'550e8400-e29b-41d4-a716-446655440000'" in $qIns
+    check "'\\x00ff10'" in $qIns
+    check "'1234567890123456789012345678.95'::numeric" in $qIns
+    check "'pending'" in $qIns
+
+    let mockDbRow = {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "ledger": "77",
+      "payload": "\\x00ff10",
+      "issued_on": "2024-02-29",
+      "settled_at": "2024-02-29 12:30:00.5+00",
+      "grace": "1 mon 2 days 03:00:00",
+      "amount": "1234567890123456789012345678.95",
+      "status": "paid"
+    }.toTable
+    let mapped = mapRowTo[InvoiceRow](mockDbRow)
+    check mapped.id == uid
+    check int64(mapped.ledger) == 77'i64
+    check mapped.payload == rawBin
+    check mapped.issued_on == dt
+    check mapped.settled_at == some(ts)
+    check mapped.grace == iv
+    check mapped.amount == amt
+    check mapped.status == InvoiceStatus.isPaid
+
+    check parseValue[seq[PgUuid]]("{550e8400-e29b-41d4-a716-446655440000,00000000-0000-0000-0000-000000000000}") ==
+      @[uid, nilUuid()]
+
 
 

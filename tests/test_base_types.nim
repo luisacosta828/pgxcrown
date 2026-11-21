@@ -80,3 +80,11 @@ suite "Pgxcrown - Comprehensive Base Types Generation & Parsing Suite":
     check "parseBool($s).is_active" in boolSrc
     check "$val.bool" in boolSrc
     check "SELECT 'true'::is_active;" in boolSql
+
+  test "All 15 base types generate valid input/output wrappers and SQL":
+    for bt in available_base_types:
+      let (src, sql) = generateTypeSource("custom_" & bt, bt)
+      check "{.pgxType: " & bt & ".} = distinct " & bt in src
+      check "{.pgxInput, immutable, parallelSafe.}" in src
+      check "{.pgxOutput, immutable, parallelSafe.}" in src
+      check "::custom_" & bt & ";" in sql

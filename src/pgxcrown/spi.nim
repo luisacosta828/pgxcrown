@@ -4,10 +4,15 @@
 ## (.fetchOne[T]), scalar aggregations (.fetchScalar[T]), and collection reducers.
 ## =============================================================================
 
-import std/[tables, options, strutils, json]
+import std/[tables, options, strutils, json, typetraits]
 export json, tables
 from datatypes/basic import PDatum, POid, NameData, Oid, oidvector, safePfree
 from datatypes/heaptuples import HeapTuple, TupleDesc
+from datatypes/bytea import PgBytea, initPgBytea, fromHexBytea
+from datatypes/uuid import PgUuid, nilUuid, parsePgUuid
+from datatypes/temporal import PgDate, PgTimestamp, PgTimestampTz, PgInterval,
+  parsePgDate, parsePgTimestamp, parsePgTimestampTz, parsePgInterval
+from datatypes/numeric import PgNumeric, initPgNumericZero, pgNumeric
 export HeapTuple, TupleDesc
 import query_builder
 import reports/reports
@@ -168,6 +173,22 @@ proc parseValue*[T](val: string): T {.tags: [].} =
       else: (try: parseJson(val) except CatchableError: newJNull())
   elif T is enum:
     try: parseEnum[T](val) except CatchableError: default(T)
+  elif T is PgUuid:
+    try: parsePgUuid(val) except CatchableError: nilUuid()
+  elif T is PgBytea:
+    try: fromHexBytea(val) except CatchableError: initPgBytea()
+  elif T is PgDate:
+    try: parsePgDate(val) except CatchableError: PgDate()
+  elif T is PgTimestamp:
+    try: parsePgTimestamp(val) except CatchableError: PgTimestamp()
+  elif T is PgTimestampTz:
+    try: parsePgTimestampTz(val) except CatchableError: PgTimestampTz()
+  elif T is PgInterval:
+    try: parsePgInterval(val) except CatchableError: PgInterval()
+  elif T is PgNumeric:
+    try: pgNumeric(val) except CatchableError: initPgNumericZero()
+  elif T is distinct:
+    T(parseValue[distinctBase(T)](val))
   elif T is seq:
     if val.len == 0 or val == "{}":
       @[]

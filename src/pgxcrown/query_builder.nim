@@ -121,6 +121,23 @@ proc formatSqlValue*[T](val: T): string =
     elif typeof(val[0]) is distinct:
       if val.len == 0: "ARRAY[]"
       else: "ARRAY[" & val.mapIt(formatSqlValue(it.distinctBase)).join(", ") & "]"
+    elif typeof(val[0]) is enum:
+      if val.len == 0: "ARRAY[]"
+      else: "ARRAY[" & val.mapIt(quoteLiteral($it)).join(", ") & "]"
+    elif typetraits.name(typeof(val[0])) in ["PgUuid", "PgBytea", "PgDate", "PgTimestamp", "PgTimestampTz", "PgInterval"]:
+      let sqlCast = case typetraits.name(typeof(val[0]))
+        of "PgUuid": "::uuid[]"
+        of "PgBytea": "::bytea[]"
+        of "PgDate": "::date[]"
+        of "PgTimestamp": "::timestamp[]"
+        of "PgTimestampTz": "::timestamptz[]"
+        of "PgInterval": "::interval[]"
+        else: "::text[]"
+      if val.len == 0: "ARRAY[]" & sqlCast
+      else: "ARRAY[" & val.mapIt(quoteLiteral($it)).join(", ") & "]" & sqlCast
+    elif typetraits.name(typeof(val[0])) == "PgNumeric":
+      if val.len == 0: "ARRAY[]::numeric[]"
+      else: "ARRAY[" & val.mapIt(quoteLiteral($it) & "::numeric").join(", ") & "]"
     else:
       quoteLiteral($val)
   else:
@@ -161,6 +178,7 @@ proc toParam*(p: QueryParam): QueryParam = p
 proc toParam*[T](o: Option[T]): QueryParam = (if o.isSome: toParam(o.get) else: QueryParam(kind: pkNull))
 proc toParam*[T](s: seq[T]): QueryParam = QueryParam(kind: pkRaw, rawVal: formatSqlValue(s))
 proc toParam*[T: distinct](v: T): QueryParam = toParam(v.distinctBase)
+proc toParam*[T: enum](v: T): QueryParam = QueryParam(kind: pkString, strVal: $v)
 
 converter toQueryParam*(v: int): QueryParam = toParam(v)
 converter toQueryParam*(v: int32): QueryParam = toParam(v)
@@ -182,6 +200,7 @@ converter toQueryParam*(e: SqlExpr): QueryParam = toParam(e)
 converter toQueryParam*[T](s: seq[T]): QueryParam = toParam(s)
 converter toQueryParam*[T](o: Option[T]): QueryParam = toParam(o)
 converter toQueryParam*[T: distinct](v: T): QueryParam = toParam(v)
+converter toQueryParam*[T: enum](v: T): QueryParam = toParam(v)
 
 proc `$`*(p: QueryParam): string =
   case p.kind
@@ -260,6 +279,7 @@ proc `==`*(c: ColumnRef, val: int64): SqlExpr = SqlExpr(sql: $c & " = " & $val)
 proc `==`*(c: ColumnRef, val: float): SqlExpr = SqlExpr(sql: $c & " = " & $val)
 proc `==`*(c: ColumnRef, val: bool): SqlExpr = SqlExpr(sql: $c & " = " & (if val: "TRUE" else: "FALSE"))
 proc `==`*(c: ColumnRef, val: QueryParam): SqlExpr = SqlExpr(sql: $c & " = " & $val)
+proc `==`*[T: enum](c: ColumnRef, val: T): SqlExpr = SqlExpr(sql: $c & " = " & quoteLiteral($val))
 proc `==`*(c: ColumnRef, val: JsonNode): SqlExpr =
   if val.isNil or val.kind == JNull:
     SqlExpr(sql: $c & " IS NULL")
@@ -273,6 +293,7 @@ proc `!=`*(c: ColumnRef, val: int64): SqlExpr = SqlExpr(sql: $c & " != " & $val)
 proc `!=`*(c: ColumnRef, val: float): SqlExpr = SqlExpr(sql: $c & " != " & $val)
 proc `!=`*(c: ColumnRef, val: bool): SqlExpr = SqlExpr(sql: $c & " != " & (if val: "TRUE" else: "FALSE"))
 proc `!=`*(c: ColumnRef, val: QueryParam): SqlExpr = SqlExpr(sql: $c & " != " & $val)
+proc `!=`*[T: enum](c: ColumnRef, val: T): SqlExpr = SqlExpr(sql: $c & " != " & quoteLiteral($val))
 proc `!=`*(c: ColumnRef, val: JsonNode): SqlExpr =
   if val.isNil or val.kind == JNull:
     SqlExpr(sql: $c & " IS NOT NULL")
@@ -1291,87 +1312,59 @@ proc toSql*(st: QueryState): string =
 # 11. Object Schema Inspection & DDL Generation (createTableFrom)
 # =============================================================================
 
+proc nimFieldToSqlColType[F](): string =
+  when F is int or F is int32: "INTEGER"
+  elif F is int64: "BIGINT"
+  elif F is int16 or F is int8 or F is byte: "SMALLINT"
+  elif F is uint or F is uint32: "BIGINT"
+  elif F is uint64: "NUMERIC(20)"
+  elif F is uint16 or F is uint8: "INTEGER"
+  elif F is float or F is float64: "DOUBLE PRECISION"
+  elif F is float32: "REAL"
+  elif F is bool: "BOOLEAN"
+  elif F is string or F is cstring: "TEXT"
+  elif F is char: "CHAR(1)"
+  elif F is JsonNode: "JSONB"
+  elif F is distinct:
+    nimFieldToSqlColType[distinctBase(F)]()
+  elif typetraits.name(F) == "PgUuid": "UUID"
+  elif typetraits.name(F) == "PgBytea": "BYTEA"
+  elif typetraits.name(F) == "PgDate": "DATE"
+  elif typetraits.name(F) == "PgTimestamp": "TIMESTAMP"
+  elif typetraits.name(F) == "PgTimestampTz": "TIMESTAMPTZ"
+  elif typetraits.name(F) == "PgInterval": "INTERVAL"
+  elif typetraits.name(F) == "PgNumeric": "NUMERIC"
+  elif F is seq:
+    type ElemF = typeof(default(F)[0])
+    when ElemF is int or ElemF is int32: "INTEGER[]"
+    elif ElemF is int64: "BIGINT[]"
+    elif ElemF is string: "TEXT[]"
+    elif ElemF is float or ElemF is float64: "DOUBLE PRECISION[]"
+    elif ElemF is bool: "BOOLEAN[]"
+    elif ElemF is JsonNode: "JSONB[]"
+    elif typetraits.name(ElemF) == "PgUuid": "UUID[]"
+    elif typetraits.name(ElemF) == "PgBytea": "BYTEA[]"
+    elif typetraits.name(ElemF) == "PgDate": "DATE[]"
+    elif typetraits.name(ElemF) == "PgTimestamp": "TIMESTAMP[]"
+    elif typetraits.name(ElemF) == "PgTimestampTz": "TIMESTAMPTZ[]"
+    elif typetraits.name(ElemF) == "PgInterval": "INTERVAL[]"
+    elif typetraits.name(ElemF) == "PgNumeric": "NUMERIC[]"
+    else: "TEXT[]"
+  else: "TEXT"
+
 proc columnDefsFromType*[T: object](primaryKey: string = "id"): seq[(string, string)] =
   ## Inspects properties of object type T and returns a sequence of (columnName, sqlTypeDef)
   result = @[]
   var dummy: T
   for name, val in fieldPairs(dummy):
     let colName = name
-    var sqlColType: string
     var isNullable = false
-
-    when typeof(val) is int or typeof(val) is int32:
-      sqlColType = "INTEGER"
-    elif typeof(val) is int64:
-      sqlColType = "BIGINT"
-    elif typeof(val) is int16 or typeof(val) is int8 or typeof(val) is byte:
-      sqlColType = "SMALLINT"
-    elif typeof(val) is uint or typeof(val) is uint32:
-      sqlColType = "BIGINT"
-    elif typeof(val) is uint64:
-      sqlColType = "NUMERIC(20)"
-    elif typeof(val) is uint16 or typeof(val) is uint8:
-      sqlColType = "INTEGER"
-    elif typeof(val) is float or typeof(val) is float64:
-      sqlColType = "DOUBLE PRECISION"
-    elif typeof(val) is float32:
-      sqlColType = "REAL"
-    elif typeof(val) is bool:
-      sqlColType = "BOOLEAN"
-    elif typeof(val) is string or typeof(val) is cstring:
-      sqlColType = "TEXT"
-    elif typeof(val) is char:
-      sqlColType = "CHAR(1)"
-    elif typeof(val) is JsonNode:
-      sqlColType = "JSONB"
-    elif typeof(val) is seq[int] or typeof(val) is seq[int32]:
-      sqlColType = "INTEGER[]"
-    elif typeof(val) is seq[int64]:
-      sqlColType = "BIGINT[]"
-    elif typeof(val) is seq[string]:
-      sqlColType = "TEXT[]"
-    elif typeof(val) is seq[float] or typeof(val) is seq[float64]:
-      sqlColType = "DOUBLE PRECISION[]"
-    elif typeof(val) is seq[bool]:
-      sqlColType = "BOOLEAN[]"
-    elif typeof(val) is seq[JsonNode]:
-      sqlColType = "JSONB[]"
-    elif typeof(val) is Option:
+    var sqlColType: string
+    when typeof(val) is Option:
       isNullable = true
-      when typeof(val.get) is int or typeof(val.get) is int32:
-        sqlColType = "INTEGER"
-      elif typeof(val.get) is int64:
-        sqlColType = "BIGINT"
-      elif typeof(val.get) is int16 or typeof(val.get) is int8:
-        sqlColType = "SMALLINT"
-      elif typeof(val.get) is float or typeof(val.get) is float64:
-        sqlColType = "DOUBLE PRECISION"
-      elif typeof(val.get) is float32:
-        sqlColType = "REAL"
-      elif typeof(val.get) is bool:
-        sqlColType = "BOOLEAN"
-      elif typeof(val.get) is string or typeof(val.get) is cstring:
-        sqlColType = "TEXT"
-      elif typeof(val.get) is char:
-        sqlColType = "CHAR(1)"
-      elif typeof(val.get) is JsonNode:
-        sqlColType = "JSONB"
-      elif typeof(val.get) is seq[string]:
-        sqlColType = "TEXT[]"
-      elif typeof(val.get) is seq[int] or typeof(val.get) is seq[int32]:
-        sqlColType = "INTEGER[]"
-      elif typeof(val.get) is seq[int64]:
-        sqlColType = "BIGINT[]"
-      elif typeof(val.get) is seq[float] or typeof(val.get) is seq[float64]:
-        sqlColType = "DOUBLE PRECISION[]"
-      elif typeof(val.get) is seq[bool]:
-        sqlColType = "BOOLEAN[]"
-      elif typeof(val.get) is seq[JsonNode]:
-        sqlColType = "JSONB[]"
-      else:
-        sqlColType = "TEXT"
+      sqlColType = nimFieldToSqlColType[typeof(val.get)]()
     else:
-      sqlColType = "TEXT"
+      sqlColType = nimFieldToSqlColType[typeof(val)]()
 
     var constraint = ""
     if colName.toLowerAscii == primaryKey.toLowerAscii:

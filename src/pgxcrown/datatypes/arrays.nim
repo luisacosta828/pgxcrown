@@ -1,9 +1,20 @@
 import basic
 import heaptuples
 import jsonb
-import std/options
+import bytea
+import uuid
+import temporal
+import numeric
+import std/[options, os]
 export heaptuples
 export options
+
+const PgxCHeadersDir = currentSourcePath.parentDir.parentDir / "c_headers"
+{.passC: "-I" & quoteShell(PgxCHeadersDir).}
+
+{.push header: "pgx_types.h".}
+proc arr_lookup_type_oid(typname: cstring): Oid {.importc: "pgx_lookup_type_oid".}
+{.pop.}
 
 {.push header: "postgres.h".}
 proc pfree*(p: pointer) {.importc: "pfree".}
@@ -77,12 +88,19 @@ proc buildPgArray*(
 # Type OIDs for PostgreSQL primitive types
 const
   BOOLOID*: Oid = 16
+  BYTEAOID*: Oid = 17
   INT8OID*: Oid = 20
   INT2OID*: Oid = 21
   INT4OID*: Oid = 23
   TEXTOID*: Oid = 25
   FLOAT4OID*: Oid = 700
   FLOAT8OID*: Oid = 701
+  DATEOID*: Oid = 1082
+  TIMESTAMPOID*: Oid = 1114
+  TIMESTAMPTZOID*: Oid = 1184
+  INTERVALOID*: Oid = 1186
+  NUMERICOID*: Oid = 1700
+  UUIDOID*: Oid = 2950
   JSONBOID*: Oid = 3802
   RECORDOID*: Oid = 2249
 
@@ -711,3 +729,134 @@ proc seqTupleHeaderToObjects*[T: object | tuple](arrayDatum: Datum): seq[T] =
   result = newSeq[T](thSeq.len)
   for i in 0 ..< thSeq.len:
     result[i] = tupleHeaderToObject[T](thSeq[i])
+
+# -----------------------------------------------------------------------------
+# Extended Production Types & Enum Arrays (PgUuid, PgBytea, Temporal, PgNumeric)
+# -----------------------------------------------------------------------------
+
+template unpackArrayWith[T](
+  arrayDatum: Datum,
+  elmOid: Oid,
+  elmLen: cint,
+  elmByVal: bool,
+  elmAlign: cchar,
+  elemGetter: untyped
+): seq[T] =
+  var res: seq[T] = @[]
+  if arrayDatum != 0:
+    let arrPtr = DatumGetArrayTypeP(arrayDatum)
+    if arrPtr != nil:
+      var elemsPtr: ptr Datum
+      var nullsPtr: ptr bool
+      var nElems: cint
+      deconstruct_array(arrPtr, elmOid, elmLen, elmByVal, elmAlign,
+                        addr elemsPtr, addr nullsPtr, addr nElems)
+      let elemArray = cast[ptr UncheckedArray[Datum]](elemsPtr)
+      let nullArray = cast[ptr UncheckedArray[bool]](nullsPtr)
+      res = newSeq[T](nElems)
+      for i in 0 ..< nElems:
+        if nullArray != nil and nullArray[i]:
+          res[i] = default(T)
+        else:
+          res[i] = elemGetter(elemArray[i])
+      if elemsPtr != nil: pfree(elemsPtr)
+      if nullsPtr != nil: pfree(nullsPtr)
+  res
+
+template packArrayWith[T](
+  s: seq[T],
+  elmOid: Oid,
+  elmLen: cint,
+  elmByVal: bool,
+  elmAlign: cchar,
+  freeAfterConstruct: static bool,
+  elemPutter: untyped
+): Datum =
+  if s.len == 0:
+    let arrPtr = construct_array(nil, 0'i32, elmOid, elmLen, elmByVal, elmAlign)
+    PointerGetDatum(cast[Pointer](arrPtr))
+  else:
+    let elemsBuf = cast[ptr UncheckedArray[Datum]](palloc(cuint(s.len * sizeof(Datum))))
+    for i in 0 ..< s.len:
+      elemsBuf[i] = elemPutter(s[i])
+    let arrPtr = construct_array(cast[ptr Datum](elemsBuf), s.len.cint,
+                                 elmOid, elmLen, elmByVal, elmAlign)
+    when freeAfterConstruct:
+      for i in 0 ..< s.len:
+        if elemsBuf[i] != 0:
+          pfree(DatumGetPointer(elemsBuf[i]))
+    pfree(elemsBuf)
+    PointerGetDatum(cast[Pointer](arrPtr))
+
+proc unpackEnumElem[E: enum](d: Datum): E {.inline, noSideEffect, raises: [ValueError], tags: [].} =
+  oidToEnum[E](DatumGetObjectId(d))
+
+proc getArrayPgUuid*(d: Datum): seq[PgUuid] {.noSideEffect, tags: [].} =
+  {.cast(noSideEffect).}: {.cast(tags: []).}:
+    unpackArrayWith[PgUuid](d, UUIDOID, 16'i32, false, 'c'.cchar, getPgUuid)
+
+proc returnArrayPgUuid*(s: seq[PgUuid]): Datum {.noSideEffect, tags: [].} =
+  {.cast(noSideEffect).}: {.cast(tags: []).}:
+    packArrayWith(s, UUIDOID, 16'i32, false, 'c'.cchar, true, returnPgUuid)
+
+proc getArrayPgBytea*(d: Datum): seq[PgBytea] {.noSideEffect, tags: [].} =
+  {.cast(noSideEffect).}: {.cast(tags: []).}:
+    unpackArrayWith[PgBytea](d, BYTEAOID, -1'i32, false, 'i'.cchar, getPgBytea)
+
+proc returnArrayPgBytea*(s: seq[PgBytea]): Datum {.noSideEffect, tags: [].} =
+  {.cast(noSideEffect).}: {.cast(tags: []).}:
+    packArrayWith(s, BYTEAOID, -1'i32, false, 'i'.cchar, true, returnPgBytea)
+
+proc getArrayPgDate*(d: Datum): seq[PgDate] {.noSideEffect, tags: [].} =
+  {.cast(noSideEffect).}: {.cast(tags: []).}:
+    unpackArrayWith[PgDate](d, DATEOID, 4'i32, true, 'i'.cchar, getPgDate)
+
+proc returnArrayPgDate*(s: seq[PgDate]): Datum {.noSideEffect, tags: [].} =
+  {.cast(noSideEffect).}: {.cast(tags: []).}:
+    packArrayWith(s, DATEOID, 4'i32, true, 'i'.cchar, false, returnPgDate)
+
+proc getArrayPgTimestamp*(d: Datum): seq[PgTimestamp] {.noSideEffect, tags: [].} =
+  {.cast(noSideEffect).}: {.cast(tags: []).}:
+    unpackArrayWith[PgTimestamp](d, TIMESTAMPOID, 8'i32, true, 'd'.cchar, getPgTimestamp)
+
+proc returnArrayPgTimestamp*(s: seq[PgTimestamp]): Datum {.noSideEffect, tags: [].} =
+  {.cast(noSideEffect).}: {.cast(tags: []).}:
+    packArrayWith(s, TIMESTAMPOID, 8'i32, true, 'd'.cchar, false, returnPgTimestamp)
+
+proc getArrayPgTimestampTz*(d: Datum): seq[PgTimestampTz] {.noSideEffect, tags: [].} =
+  {.cast(noSideEffect).}: {.cast(tags: []).}:
+    unpackArrayWith[PgTimestampTz](d, TIMESTAMPTZOID, 8'i32, true, 'd'.cchar, getPgTimestampTz)
+
+proc returnArrayPgTimestampTz*(s: seq[PgTimestampTz]): Datum {.noSideEffect, tags: [].} =
+  {.cast(noSideEffect).}: {.cast(tags: []).}:
+    packArrayWith(s, TIMESTAMPTZOID, 8'i32, true, 'd'.cchar, false, returnPgTimestampTz)
+
+proc getArrayPgInterval*(d: Datum): seq[PgInterval] {.noSideEffect, tags: [].} =
+  {.cast(noSideEffect).}: {.cast(tags: []).}:
+    unpackArrayWith[PgInterval](d, INTERVALOID, 16'i32, false, 'd'.cchar, getPgInterval)
+
+proc returnArrayPgInterval*(s: seq[PgInterval]): Datum {.noSideEffect, tags: [].} =
+  {.cast(noSideEffect).}: {.cast(tags: []).}:
+    packArrayWith(s, INTERVALOID, 16'i32, false, 'd'.cchar, true, returnPgInterval)
+
+proc getArrayPgNumeric*(d: Datum): seq[PgNumeric] {.noSideEffect, tags: [].} =
+  {.cast(noSideEffect).}: {.cast(tags: []).}:
+    unpackArrayWith[PgNumeric](d, NUMERICOID, -1'i32, false, 'i'.cchar, getPgNumeric)
+
+proc returnArrayPgNumeric*(s: seq[PgNumeric]): Datum {.noSideEffect, raises: [ValueError], tags: [].} =
+  {.cast(noSideEffect).}: {.cast(tags: []).}:
+    packArrayWith(s, NUMERICOID, -1'i32, false, 'i'.cchar, false, returnPgNumeric)
+
+proc getArrayEnum*[E: enum](d: Datum): seq[E] {.noSideEffect, raises: [ValueError], tags: [].} =
+  {.cast(noSideEffect).}: {.cast(tags: []).}:
+    let enumOid = arr_lookup_type_oid(cstring(sqlTypeNameFor[E]()))
+    if enumOid == 0.Oid:
+      raise newException(ValueError, "PostgreSQL enum type not found for " & sqlTypeNameFor[E]())
+    unpackArrayWith[E](d, enumOid, 4'i32, true, 'i'.cchar, unpackEnumElem[E])
+
+proc returnArrayEnum*[E: enum](s: seq[E]): Datum {.noSideEffect, raises: [ValueError], tags: [].} =
+  {.cast(noSideEffect).}: {.cast(tags: []).}:
+    let enumOid = arr_lookup_type_oid(cstring(sqlTypeNameFor[E]()))
+    if enumOid == 0.Oid:
+      raise newException(ValueError, "PostgreSQL enum type not found for " & sqlTypeNameFor[E]())
+    packArrayWith(s, enumOid, 4'i32, true, 'i'.cchar, false, enumToDatum)

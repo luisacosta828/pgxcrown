@@ -4,6 +4,10 @@ import pgxcrown/datatypes/heaptuples
 import pgxcrown/datatypes/arrays
 import pgxcrown/datatypes/jsonb
 import pgxcrown/datatypes/strings
+import pgxcrown/datatypes/bytea
+import pgxcrown/datatypes/uuid
+import pgxcrown/datatypes/temporal
+import pgxcrown/datatypes/numeric
 include pgxcrown/pgxmacros
 import pgxcrown/reports/reports
 import pgxcrown/query_builder
@@ -128,6 +132,21 @@ template ActivateHooks*() =
 
 proc toParam*(v: PgText): QueryParam {.inline.} = toParam(toString(v))
 proc toQueryParam*(v: PgText): QueryParam {.inline.} = toParam(toString(v))
+proc toParam*(v: PgBytea): QueryParam {.inline.} = toParam($v)
+proc toQueryParam*(v: PgBytea): QueryParam {.inline.} = toParam($v)
+proc toParam*(v: PgUuid): QueryParam {.inline.} = toParam($v)
+proc toQueryParam*(v: PgUuid): QueryParam {.inline.} = toParam($v)
+proc toParam*(v: PgDate): QueryParam {.inline.} = toParam($v)
+proc toQueryParam*(v: PgDate): QueryParam {.inline.} = toParam($v)
+proc toParam*(v: PgTimestamp): QueryParam {.inline.} = toParam($v)
+proc toQueryParam*(v: PgTimestamp): QueryParam {.inline.} = toParam($v)
+proc toParam*(v: PgTimestampTz): QueryParam {.inline.} = toParam($v)
+proc toQueryParam*(v: PgTimestampTz): QueryParam {.inline.} = toParam($v)
+proc toParam*(v: PgInterval): QueryParam {.inline.} = toParam($v)
+proc toQueryParam*(v: PgInterval): QueryParam {.inline.} = toParam($v)
+proc toParam*(v: PgNumeric): QueryParam {.inline.} =
+  QueryParam(kind: pkRaw, rawVal: quoteLiteral($v) & "::numeric")
+proc toQueryParam*(v: PgNumeric): QueryParam {.inline.} = toParam(v)
 
 
 export compiler
@@ -136,6 +155,10 @@ export reports
 export heaptuples
 export arrays
 export jsonb
+export bytea
+export uuid
+export temporal
+export numeric
 export query_builder
 export spi
 export strings

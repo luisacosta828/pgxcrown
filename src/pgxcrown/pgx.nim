@@ -5,6 +5,8 @@ export pgxcrown
 
 const entrypoint {.strdefine.} = ""
 var recordType {.compileTime.}: seq[string] = @[]
+var plainDistinctTypes {.compileTime.} = initTable[string, string]()
+var enumValueMap {.compileTime.} = initTable[string, string]()
 
 type
   BaseTypeInfo = object
@@ -33,14 +35,28 @@ proc NimToSQLType(dt: string): string =
   of "cstring": "cstring"
   of "char": "char"
   of "bool", "boolean": "boolean"
+  of "PgBytea": "bytea"
+  of "PgUuid": "uuid"
+  of "PgDate": "date"
+  of "PgTimestamp": "timestamp"
+  of "PgTimestampTz": "timestamptz"
+  of "PgInterval": "interval"
+  of "PgNumeric": "numeric"
   of "JsonNode", "Json", "json": "jsonb"
   of "Jsonb", "jsonb": "jsonb"
   of "seq[int]", "seq[int32]": "int4[]"
   of "seq[int64]": "int8[]"
   of "seq[float]", "seq[float32]": "float4[]"
   of "seq[float64]": "float8[]"
-  of "seq[string]": "text[]"
+  of "seq[string]", "seq[PgText]": "text[]"
   of "seq[bool]": "bool[]"
+  of "seq[PgBytea]": "bytea[]"
+  of "seq[PgUuid]": "uuid[]"
+  of "seq[PgDate]": "date[]"
+  of "seq[PgTimestamp]": "timestamp[]"
+  of "seq[PgTimestampTz]": "timestamptz[]"
+  of "seq[PgInterval]": "interval[]"
+  of "seq[PgNumeric]": "numeric[]"
   of "seq[JsonNode]", "seq[Jsonb]", "seq[jsonb]": "jsonb[]"
   of "PgVector[int32]", "PgVector[int]": "int4[]"
   of "PgVector[int64]": "int8[]"
@@ -54,6 +70,8 @@ proc NimToSQLType(dt: string): string =
       let sqlInner = if inner in recordType: "\"" & inner & "\"" else: NimToSQLType(inner)
       let finalSqlInner = if sqlInner.endsWith("[]"): sqlInner else: sqlInner & "[]"
       finalSqlInner
+    elif cleanDt in plainDistinctTypes:
+      NimToSQLType(plainDistinctTypes[cleanDt])
     elif cleanDt in recordType:
       "\"" & cleanDt & "\""
     else:
@@ -65,14 +83,19 @@ proc project(path: string): string {.inline.} =
     p = p.parentDir
   return p.lastPathPart
 
+proc extractTypeName(nameNode: NimNode): string =
+  if nameNode.kind == nnkPragmaExpr and nameNode.len >= 1:
+    return extractTypeName(nameNode[0])
+  return nameNode.repr.strip(chars = {'*'}).strip()
+
 proc extractBaseType(typedefNode: NimNode): Option[BaseTypeInfo] =
   if typedefNode.kind == nnkTypeDef:
     let nameNode = typedefNode[0]
     var typeName = ""
     var baseType = ""
-    
+
     if nameNode.kind == nnkPragmaExpr and nameNode.len >= 2:
-      typeName = nameNode[0].repr.strip(chars = {'*'})
+      typeName = extractTypeName(nameNode)
       let pragmaNode = nameNode[1]
       for p in pragmaNode:
         if p.kind == nnkExprColonExpr and p[0].repr.toLowerAscii in ["pgxtype", "pgx_type"]:
@@ -82,10 +105,7 @@ proc extractBaseType(typedefNode: NimNode): Option[BaseTypeInfo] =
             baseType = typedefNode[2][0].repr.strip(chars = {'*'})
           else:
             baseType = typedefNode[2].repr.strip(chars = {'*'})
-    elif typedefNode[2].kind == nnkDistinctTy:
-      typeName = nameNode.repr.strip(chars = {'*'})
-      baseType = typedefNode[2][0].repr.strip(chars = {'*'})
-    
+
     if typeName.len > 0 and baseType.len > 0:
       return some(BaseTypeInfo(name: typeName, baseType: baseType, sqlBaseType: NimToSQLType(baseType)))
   return none(BaseTypeInfo)
@@ -188,12 +208,29 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
             entry.add defaultNode.repr
           elif defaultNode.repr in ["nil", "none"]:
             entry.add "NULL"
+          elif defaultNode.repr in enumValueMap:
+            entry.add "'" & enumValueMap[defaultNode.repr] & "'"
+          else:
+            entry.add defaultNode.repr
+        of nnkDotExpr:
+          if defaultNode.repr in enumValueMap:
+            entry.add "'" & enumValueMap[defaultNode.repr] & "'"
           else:
             entry.add defaultNode.repr
         of nnkCall:
           if defaultNode[0].repr == "none":
             entry.add "NULL"
           elif defaultNode[0].repr == "some":
+            if defaultNode[1].kind in {nnkStrLit, nnkTripleStrLit}:
+              entry.add "'" & defaultNode[1].strVal.replace("'", "''") & "'"
+            elif defaultNode[1].repr in enumValueMap:
+              entry.add "'" & enumValueMap[defaultNode[1].repr] & "'"
+            else:
+              entry.add defaultNode[1].repr
+          elif defaultNode[0].repr in ["pgNumeric", "parsePgUuid", "parsePgDate", "parsePgTimestamp", "parsePgTimestampTz", "parsePgInterval", "fromHexBytea"] and
+               defaultNode.len >= 2 and defaultNode[1].kind in {nnkStrLit, nnkTripleStrLit}:
+            entry.add "'" & defaultNode[1].strVal.replace("'", "''") & "'"
+          elif defaultNode[0].repr in plainDistinctTypes and defaultNode.len >= 2:
             if defaultNode[1].kind in {nnkStrLit, nnkTripleStrLit}:
               entry.add "'" & defaultNode[1].strVal.replace("'", "''") & "'"
             else:
@@ -245,21 +282,41 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
   sql_scripts.add optionsStr
 
 proc buildEnumType(element: NimNode, sql_scripts: var string) =
-  var 
-    enum_template = "\nCREATE TYPE \"$ENUM_NAME\" AS ENUM ($ENUM_LIST);\n"
-    enum_name     = element[0].repr.strip(chars = {'*'})
-    enum_list: seq[string] = @[]
+  let enum_name = extractTypeName(element[0])
+  var enum_list: seq[string] = @[]
 
   for el in element[2]:
-    if el.kind == nnkIdent:
-      enum_list.add "'" & el.repr & "'"
-  
-  sql_scripts.add enum_template.replace("$ENUM_NAME", enum_name).replace("$ENUM_LIST", enum_list.join(","))
+    var identName = ""
+    var labelStr = ""
+    case el.kind
+    of nnkIdent, nnkSym:
+      identName = el.repr.strip(chars = {'*'})
+      labelStr = identName
+    of nnkEnumFieldDef:
+      identName = el[0].repr.strip(chars = {'*'})
+      if el.len >= 2 and el[1].kind in {nnkStrLit, nnkTripleStrLit}:
+        labelStr = el[1].strVal
+      elif el.len >= 2 and el[1].kind in {nnkTupleConstr, nnkPar} and el[1].len >= 2 and
+           el[1][1].kind in {nnkStrLit, nnkTripleStrLit}:
+        labelStr = el[1][1].strVal
+      else:
+        labelStr = identName
+    else:
+      discard
+
+    if identName.len > 0:
+      let escaped = labelStr.replace("'", "''")
+      enum_list.add "'" & escaped & "'"
+      enumValueMap[identName] = escaped
+      enumValueMap[enum_name & "." & identName] = escaped
+
+  if enum_list.len > 0:
+    sql_scripts.add "\nCREATE TYPE \"" & enum_name & "\" AS ENUM (" & enum_list.join(", ") & ");\n"
 
 proc buildObjectType(element: NimNode, sql_scripts: var string) =
-  var objName = element[0].repr.strip(chars = {'*'})
+  let objName = extractTypeName(element[0])
   var fields: seq[string] = @[]
-  
+
   if element[2].kind == nnkObjectTy and element[2].len >= 3:
     let recList = element[2][2]
     if recList.kind == nnkRecList:
@@ -285,17 +342,15 @@ proc lift_base_datatypes(function: NimNode, custom_datatypes: Table[string, stri
       if paramRepr in custom_datatypes:
         function.params[idx][1] = newIdentNode(custom_datatypes[paramRepr])
 
-template check_type_section(element):string =
+template check_type_section(element): string =
   case element[2].kind:
-  of nnkIdent:  "plain"
+  of nnkIdent: "plain"
   of nnkEnumTy: "enum"
+  of nnkDistinctTy: "distinct"
   of nnkObjectTy: "object"
   of nnkTupleConstr: "tupleConstr"
   else: element.treerepr
 
-template addEnumDefaultCase(element) =
-  element[2].add newIdentNode("PgxUnknownValue")
-  
 proc isImportc(fn: NimNode): bool =
   if fn.pragma.kind != nnkEmpty:
     for p in fn.pragma:
@@ -304,11 +359,6 @@ proc isImportc(fn: NimNode): bool =
       elif p.kind == nnkExprColonExpr and p[0].repr == "importc":
         return true
   return false
-
-proc extractTypeName(nameNode: NimNode): string =
-  if nameNode.kind == nnkPragmaExpr and nameNode.len >= 1:
-    return extractTypeName(nameNode[0])
-  return nameNode.repr.strip(chars = {'*'}).strip()
 
 proc hasTypePragma(typeDef: NimNode, names: openArray[string]): bool =
   if typeDef.kind != nnkTypeDef or typeDef.len < 1:
@@ -384,7 +434,10 @@ macro decorateMainFunctions*() =
         if baseOpt.isSome:
           let info = baseOpt.get
           baseTypes[info.name] = info
-          custom_datatypes[info.name] = info.baseType
+          if e[2].kind == nnkDistinctTy:
+            attachTypePragma(e, pgx_pragma)
+          else:
+            custom_datatypes[info.name] = info.baseType
           recordType.add info.name
           sql_shell_types.add "\nCREATE TYPE \"" & info.name & "\";\n"
         else:
@@ -395,10 +448,13 @@ macro decorateMainFunctions*() =
           of "enum":
             let cleanName = extractTypeName(e[0])
             recordType.add cleanName
-            addEnumDefaultCase(e)
             buildEnumType(e, sql_enums)
             attachTypePragma(e, pgx_pragma)
-          of "tupleConstr": 
+          of "distinct":
+            let cleanName = extractTypeName(e[0])
+            plainDistinctTypes[cleanName] = e[2][0].repr.strip(chars = {'*'}).strip()
+            attachTypePragma(e, pgx_pragma)
+          of "tupleConstr":
             attachTypePragma(e, pgx_pragma)
           of "object":
             let cleanName = extractTypeName(e[0])
@@ -593,9 +649,7 @@ macro decorateMainFunctions*() =
             var info = baseTypes[targetType]
             case role
             of "input": info.inputFn = fnNameStr
-            of "output":
-              info.outputFn = fnNameStr
-              el.params[0] = newIdentNode("cstring")
+            of "output": info.outputFn = fnNameStr
             of "receive": info.receiveFn = fnNameStr
             of "send": info.sendFn = fnNameStr
             else: discard
