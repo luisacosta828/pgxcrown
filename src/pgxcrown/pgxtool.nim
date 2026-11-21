@@ -87,7 +87,12 @@ proc generateTypeSource*(udf: string, baseType: string): (string, string) =
     parseCode = "parseInt($s)." & baseType & "." & udf
     testLiteral = "'42'"
 
-  let src = "import pgxcrown\nimport std/strutils\n\ntype\n  " & udf & "* {.pgxType: " & baseType & ".} = distinct " & baseType & "\n\nproc parse_" & udf & "*(s: cstring): " & udf & " {.pgxInput, immutable, parallelSafe.} =\n  " & parseCode & "\n\nproc format_" & udf & "*(val: " & udf & "): string {.pgxOutput, immutable, parallelSafe.} =\n  $val." & baseType & "\n"
+  let imports =
+    if baseType in ["string", "cstring", "char"]:
+      "import pgxcrown\n\n"
+    else:
+      "import pgxcrown\nimport std/strutils\n\n"
+  let src = imports & "type\n  " & udf & "* {.pgxType: " & baseType & ".} = distinct " & baseType & "\n\nproc parse_" & udf & "*(s: cstring): " & udf & " {.pgxInput, immutable, parallelSafe.} =\n  " & parseCode & "\n\nproc format_" & udf & "*(val: " & udf & "): string {.pgxOutput, immutable, parallelSafe.} =\n  $val." & baseType & "\n"
   let testSql = "SELECT " & testLiteral & "::" & udf & ";\n"
   return (src, testSql)
 
@@ -159,7 +164,7 @@ proc generateHookSource*(hookName: string): (string, string) =
       "var\n" &
       "  post_parse_analyze_hook {.original_hook.}: post_parse_analyze_hook_type\n" &
       "  prev_post_parse_analyze {.user_hook.}: post_parse_analyze_hook_type\n\n" &
-      "proc custom_proc(pstate: ptr ParseState, query: ptr Query, jstate: ptr JumbleState) {.cdecl.} =\n" &
+      "proc custom_proc(pstate: ptr ParseState, query: ptr Query, jstate: JumbleStatePtr) {.cdecl.} =\n" &
       "  if prev_post_parse_analyze != nil:\n" &
       "    prev_post_parse_analyze(pstate, query, jstate)\n\n" &
       "proc pg_init() {.exportc: \"_PG_init\", pginitexport.} =\n" &
@@ -235,7 +240,7 @@ Commands:
   path-finders: List Postgres pg_config, libdir, includedir paths
      * pgxtool path-finders
 
-  test: Run SQL regression tests inside pgxcrown Docker containers (PostgreSQL 14 to 17)
+  test: Run SQL regression tests inside pgxcrown Docker containers (PostgreSQL 14 to 18)
      * pgxtool test <name|path>
      * pgxtool test --pg 16
      * pgxtool test <name> --verbose
@@ -266,9 +271,9 @@ Arguments:
 Options:
   --verbose, -v           Display build logs, full SQL script, and raw PostgreSQL responses
   --debug, -d             Enable pgxDebug compile-time AST and DDL debug output inside container
-  --pg <version>          Target PostgreSQL version (14, 15, 16, 17, or 'latest', or comma list '14,17')
-                          Defaults to host PostgreSQL version (if detected) or 17
-  --all, --all-versions   Execute test suite across all supported PostgreSQL versions (14 to 17)
+  --pg <version>          Target PostgreSQL version (14, 15, 16, 17, 18, or 'latest', or comma list '14,18')
+                          Defaults to host PostgreSQL version (if detected) or 18
+  --all, --all-versions   Execute test suite across all supported PostgreSQL versions (14 to 18)
   --bless                 Auto-generate or update golden snapshot files (tests/expected/*.out) from actual output
   --keep                  Keep the test sandbox container alive after running tests for manual debugging
   --local                 Run natively against local PostgreSQL (auto-used inside a container)
@@ -277,7 +282,7 @@ Options:
 
 Examples:
   * pgxtool test my_ext --pg 16
-  * pgxtool test ./my_ext --pg 17 --bless
+  * pgxtool test ./my_ext --pg 18 --bless
   * pgxtool test --pg 14          (from inside project directory)
   * pgxtool test my_ext --all
   * pgxtool test my_ext --keep -v
@@ -288,9 +293,22 @@ proc wrap(s: string): string {. inline .} = "\"" & s & "\""
 proc getPgxcrownPath(): string {.inline.} =
   let repoSrc = currentSourcePath.parentDir.parentDir
   if dirExists(repoSrc / "pgxcrown"):
-    " --path:" & wrap(repoSrc) & " "
-  else:
-    " "
+    return " --path:" & wrap(repoSrc) & " "
+  var resolved = getAppFilename()
+  when not defined(windows):
+    var hops = 0
+    while resolved.len > 0 and hops < 8 and symlinkExists(resolved):
+      inc hops
+      try:
+        let target = expandSymlink(resolved)
+        resolved = if target.isAbsolute: target else: resolved.parentDir / target
+      except OSError:
+        break
+  if resolved.len > 0:
+    let pkgRoot = resolved.parentDir.parentDir
+    if dirExists(pkgRoot / "pgxcrown") and fileExists(pkgRoot / "pgxcrown.nim"):
+      return " --path:" & wrap(pkgRoot) & " "
+  return " "
 
 proc getCIncludes(): string {.inline.} =
   let incServer = pgIncludeServerFinder()
@@ -915,7 +933,7 @@ Clean build artifacts (.so, .sql, .control, install.sh) and the build cache (.pg
         idx += 1
       elif flag == "--pg":
         if idx + 1 > pc:
-          quit("❌ Missing PostgreSQL version after '--pg'. Example: pgxtool test my_ext --pg 17")
+          quit("❌ Missing PostgreSQL version after '--pg'. Example: pgxtool test my_ext --pg 18")
         pgVersionStr = paramStr(idx + 1)
         idx += 2
       elif flag.startsWith("--pg="):

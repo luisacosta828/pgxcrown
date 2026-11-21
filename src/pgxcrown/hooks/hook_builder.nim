@@ -77,7 +77,7 @@ macro build_hook*() =
     of "post_parse_analyze": @[
       newIdentDefs(ident("pstate"), newNimNode(nnkPtrTy).add(ident("ParseState"))),
       newIdentDefs(ident("query"), newNimNode(nnkPtrTy).add(ident("Query"))),
-      newIdentDefs(ident("jstate"), newNimNode(nnkPtrTy).add(ident("JumbleState")))
+      newIdentDefs(ident("jstate"), ident("JumbleStatePtr"))
     ]
     else: @[]
 

@@ -62,7 +62,11 @@ int mockSawLatchSetInWait = 0;
 void SetLatch(struct Latch *latch) { mockLatchSet = 1; }
 void ResetLatch(struct Latch *latch) { mockLatchSet = 0; mockResetCount++; }
 void pfree(void *ptr) { if (ptr) free(ptr); }
+#if PG_VERSION_NUM >= 180000
+void pqsignal(int signo, pqsigfunc func) { (void)signo; (void)func; }
+#else
 pqsigfunc pqsignal(int signo, pqsigfunc func) { return NULL; }
+#endif
 int WaitLatch(struct Latch *latch, int wakeEvents, long timeout, uint32 wait_event_info) {
     mockWaitCalls++;
     mockLastWaitFlags = wakeEvents;
@@ -572,6 +576,8 @@ suite "Pgxcrown - PostgreSQL Background Worker (BGWorker) Suite":
     check mockSawLatchSetInWait == 1
     check (mockLastWaitFlags and WL_LATCH_SET) != 0
     check (mockLastWaitFlags and WL_TIMEOUT) == 0
+    check (mockLastWaitFlags and WL_POSTMASTER_DEATH) != 0
+    check (mockLastWaitFlags and WL_EXIT_ON_PM_DEATH) == 0
     workerGotSigterm = 0
 
   test "WaitEventSet multiplexing, RAII cleanup, and non-blocking socket helper":

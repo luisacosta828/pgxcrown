@@ -60,60 +60,7 @@ template PG_MODULE_MAGIC*() =
 #include "fmgr.h"
 #include "funcapi.h"
 """.}
-  when pgTargetVersion >= 15:
-    {.emit: """
-#ifdef PG_MAGIC_FUNCTION_NAME
-extern PGDLLEXPORT const void *PG_MAGIC_FUNCTION_NAME(void);
-typedef struct
-{
-	int			len;
-	int			version;
-	int			funcmaxargs;
-	int			indexmaxkeys;
-	int			nameddatalen;
-	int			float8byval;
-	char		abi[32];
-} Pg_magic_struct_v15;
-
-const void *
-PG_MAGIC_FUNCTION_NAME(void)
-{
-    static const Pg_magic_struct_v15 Pg_magic_data = {
-        sizeof(Pg_magic_struct_v15),
-        """ & $(pgTargetVersion * 100) & """,
-        FUNC_MAX_ARGS,
-        INDEX_MAX_KEYS,
-        NAMEDATALEN,
-        FLOAT8PASSBYVAL,
-        "PostgreSQL"
-    };
-    return &Pg_magic_data;
-}
-extern int no_such_variable;
-#endif
-""".}
-  elif pgTargetVersion > 0:
-    {.emit: """
-#ifdef PG_MAGIC_FUNCTION_NAME
-extern PGDLLEXPORT const Pg_magic_struct *PG_MAGIC_FUNCTION_NAME(void);
-const Pg_magic_struct *
-PG_MAGIC_FUNCTION_NAME(void)
-{
-    static const Pg_magic_struct Pg_magic_data = {
-        sizeof(Pg_magic_struct),
-        """ & $(pgTargetVersion * 100) & """,
-        FUNC_MAX_ARGS,
-        INDEX_MAX_KEYS,
-        NAMEDATALEN,
-        FLOAT8PASSBYVAL
-    };
-    return &Pg_magic_data;
-}
-extern int no_such_variable;
-#endif
-""".}
-  else:
-    {.emit: """PG_MODULE_MAGIC;""" .}
+  {.emit: """PG_MODULE_MAGIC;""".}
 
 
 template PG_FUNCTION_INFO_V1*(funcname: typed) =
@@ -128,25 +75,42 @@ template ActivateHooks*() =
   {.emit: """/*INCLUDESECTION*/
     #include "postgres.h"
     #include "fmgr.h"
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((weak)) int pgx_force_libc_alloc = 0;
+    __attribute__((constructor(101))) static void pgx_hook_pre_nim_init(void) {
+      pgx_force_libc_alloc++;
+    }
+    static void pgx_hook_post_nim_init(void) {
+      if (pgx_force_libc_alloc > 0) {
+        pgx_force_libc_alloc--;
+      }
+    }
+#else
+    static void pgx_hook_post_nim_init(void) {}
+#endif
   """.}
+  proc pgxHookPostNimInit() {.importc: "pgx_hook_post_nim_init", nodecl.}
+  pgxHookPostNimInit()
 
 proc toParam*(v: PgText): QueryParam {.inline.} = toParam(toString(v))
 proc toQueryParam*(v: PgText): QueryParam {.inline.} = toParam(toString(v))
+proc Set*(step: UpdateStep or UpdateSetStep, col: ColumnRef, val: PgText): UpdateSetStep {.inline.} =
+  Set(step, col, toParam(val))
 proc toParam*(v: PgBytea): QueryParam {.inline.} = toParam($v)
-proc toQueryParam*(v: PgBytea): QueryParam {.inline.} = toParam($v)
+converter toQueryParam*(v: PgBytea): QueryParam = toParam($v)
 proc toParam*(v: PgUuid): QueryParam {.inline.} = toParam($v)
-proc toQueryParam*(v: PgUuid): QueryParam {.inline.} = toParam($v)
+converter toQueryParam*(v: PgUuid): QueryParam = toParam($v)
 proc toParam*(v: PgDate): QueryParam {.inline.} = toParam($v)
-proc toQueryParam*(v: PgDate): QueryParam {.inline.} = toParam($v)
+converter toQueryParam*(v: PgDate): QueryParam = toParam($v)
 proc toParam*(v: PgTimestamp): QueryParam {.inline.} = toParam($v)
-proc toQueryParam*(v: PgTimestamp): QueryParam {.inline.} = toParam($v)
+converter toQueryParam*(v: PgTimestamp): QueryParam = toParam($v)
 proc toParam*(v: PgTimestampTz): QueryParam {.inline.} = toParam($v)
-proc toQueryParam*(v: PgTimestampTz): QueryParam {.inline.} = toParam($v)
+converter toQueryParam*(v: PgTimestampTz): QueryParam = toParam($v)
 proc toParam*(v: PgInterval): QueryParam {.inline.} = toParam($v)
-proc toQueryParam*(v: PgInterval): QueryParam {.inline.} = toParam($v)
+converter toQueryParam*(v: PgInterval): QueryParam = toParam($v)
 proc toParam*(v: PgNumeric): QueryParam {.inline.} =
   QueryParam(kind: pkRaw, rawVal: quoteLiteral($v) & "::numeric")
-proc toQueryParam*(v: PgNumeric): QueryParam {.inline.} = toParam(v)
+converter toQueryParam*(v: PgNumeric): QueryParam = toParam(v)
 
 
 export compiler

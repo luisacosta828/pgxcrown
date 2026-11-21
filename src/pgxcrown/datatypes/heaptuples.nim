@@ -220,14 +220,15 @@ proc nextValidTableColumn*(tupDesc: TupleDesc,
       break
 
 proc getTupleAttrOid(tupDesc: TupleDesc, idx: cint): Oid {.inline, noSideEffect, tags: [].} =
-  if tupDesc == nil: return 0.Oid
+  if tupDesc == nil or idx < 1 or idx > cast[TupleDescStruct](tupDesc).natts:
+    return 0.Oid
   let attr = TupleDescAttr(tupDesc, idx - 1)
   if attr == nil: return 0.Oid
   attr.atttypid
 
 proc arrayLayoutForElem[ElemT](): tuple[oid: Oid, len: cint, byVal: bool, align: cchar] =
-  when ElemT is int32 or ElemT is cint: (23.Oid, 4'i32, true, 'i'.cchar)
-  elif ElemT is int64 or ElemT is clonglong or ElemT is int: (20.Oid, 8'i32, true, 'd'.cchar)
+  when ElemT is int32 or ElemT is cint or ElemT is int: (23.Oid, 4'i32, true, 'i'.cchar)
+  elif ElemT is int64 or ElemT is clonglong: (20.Oid, 8'i32, true, 'd'.cchar)
   elif ElemT is int16 or ElemT is cshort or ElemT is uint16: (21.Oid, 2'i32, true, 's'.cchar)
   elif ElemT is uint64: (20.Oid, 8'i32, true, 'd'.cchar)
   elif ElemT is uint32 or ElemT is uint or ElemT is cuint: (26.Oid, 4'i32, true, 'i'.cchar)
@@ -246,8 +247,8 @@ proc arrayLayoutForElem[ElemT](): tuple[oid: Oid, len: cint, byVal: bool, align:
   else: (25.Oid, -1'i32, false, 'i'.cchar)
 
 proc unpackDatumToElem[ElemT](d: Datum): ElemT =
-  when ElemT is int32 or ElemT is cint: ElemT(DatumGetInt32(d))
-  elif ElemT is int64 or ElemT is clonglong or ElemT is int: ElemT(DatumGetInt64(d))
+  when ElemT is int32 or ElemT is cint or ElemT is int: ElemT(DatumGetInt32(d))
+  elif ElemT is int64 or ElemT is clonglong: ElemT(DatumGetInt64(d))
   elif ElemT is int16 or ElemT is cshort: ElemT(DatumGetInt16(d))
   elif ElemT is uint16: uint16(DatumGetUInt16(d))
   elif ElemT is uint64: DatumGetUInt64(d)
@@ -339,7 +340,7 @@ proc extractField*[FieldT](th: HeapTupleHeader, tupDesc: TupleDesc, idx: cint,
           except CatchableError: default(FieldT)
       elif FieldT is seq:
         if rawDatum == 0:
-          @[]
+          result = @[]
         else:
           type ElemT = typeof(default(FieldT)[0])
           let arrPtr = htup_DatumGetArrayTypeP(rawDatum)
@@ -359,7 +360,7 @@ proc extractField*[FieldT](th: HeapTupleHeader, tupDesc: TupleDesc, idx: cint,
             if elemsPtr != nil: htup_pfree(elemsPtr)
             if nullsPtr != nil: htup_pfree(nullsPtr)
           else:
-            @[]
+            result = @[]
       else:
         getTupleStringAttr(th, tupDesc, idx)
 
@@ -371,22 +372,29 @@ proc tupleHeaderToObject*[T: object | tuple](th: HeapTupleHeader): T {.tags: [].
       if tupDesc.isNil: return default(T)
 
       try:
+        let descNatts = cast[TupleDescStruct](tupDesc).natts
         var idx: cint = 1
         for name, field in fieldPairs(result):
           idx = nextValidTableColumn(tupDesc, idx)
-          var isNull: bool
-          let rawDatum = GetAttributeByNum(th, idx, isNull)
-          if isNull:
+          if idx < 1 or idx > descNatts:
             when typeof(field) is Option:
               field = none(typeof(field.get))
             else:
               field = default(typeof(field))
           else:
-            when typeof(field) is Option:
-              field = some(extractField[typeof(field.get)](th, tupDesc, idx, rawDatum))
+            var isNull: bool
+            let rawDatum = GetAttributeByNum(th, idx, isNull)
+            if isNull:
+              when typeof(field) is Option:
+                field = none(typeof(field.get))
+              else:
+                field = default(typeof(field))
             else:
-              field = extractField[typeof(field)](th, tupDesc, idx, rawDatum)
-          idx += 1
+              when typeof(field) is Option:
+                field = some(extractField[typeof(field.get)](th, tupDesc, idx, rawDatum))
+              else:
+                field = extractField[typeof(field)](th, tupDesc, idx, rawDatum)
+            idx += 1
       finally:
         DecrTupleDescRefCount(tupDesc)
 
@@ -467,7 +475,7 @@ proc htupPackSeq*[E](s: seq[E]): Datum =
     let arrPtr = htup_construct_array(nil, 0'i32, layout.oid, layout.len, layout.byVal, layout.align)
     return PointerGetDatum(cast[Pointer](arrPtr))
 
-  let elemsBuf = cast[ptr UncheckedArray[Datum]](palloc(cuint(s.len * sizeof(Datum))))
+  let elemsBuf = cast[ptr UncheckedArray[Datum]](basic.palloc(cuint(s.len * sizeof(Datum))))
   var needFreeElem = false
   for i in 0 ..< s.len:
     var itemFree = false
@@ -551,7 +559,7 @@ proc buildTupleDescFor*[T: object | tuple](): TupleDesc =
   return BlessTupleDesc(desc)
 
 {.push header: "utils/memutils.h".}
-var TopMemoryContext {.importc: "TopMemoryContext".}: pointer
+var htup_TopMemoryContext {.importc: "TopMemoryContext".}: pointer
 {.pop.}
 
 proc getCachedTupleDescFor*[T: object | tuple](): TupleDesc =
@@ -563,20 +571,28 @@ proc getCachedTupleDescFor*[T: object | tuple](): TupleDesc =
     var dummy: T
     var attrIdx: cint = 0
     for _, val in fieldPairs(dummy):
-      when typeof(val) is enum or (typeof(val) is Option and typeof(val.get) is enum) or
-           (typeof(val) is seq and typeof(default(typeof(val))[0]) is enum):
+      var isEnumField = false
+      when typeof(val) is enum:
+        isEnumField = true
+      elif typeof(val) is Option:
+        when typeof(default(typeof(val)).get()) is enum:
+          isEnumField = true
+      elif typeof(val) is seq:
+        when typeof(default(typeof(val))[0]) is enum:
+          isEnumField = true
+      if isEnumField:
         let attr = TupleDescAttr(cached, attrIdx)
         if attr == nil or attr.atttypid != fieldExpectedPgOid[typeof(val)]():
           rebuild = true
       attrIdx += 1
   if rebuild:
-    let oldCtx = if TopMemoryContext != nil: MemoryContextSwitchTo(
-        TopMemoryContext) else: nil
+    let oldCtx = if htup_TopMemoryContext != nil: basic.MemoryContextSwitchTo(
+        htup_TopMemoryContext) else: nil
     try:
       cached = buildTupleDescFor[T]()
     finally:
       if oldCtx != nil:
-        discard MemoryContextSwitchTo(oldCtx)
+        discard basic.MemoryContextSwitchTo(oldCtx)
   return cached
 
 proc objectToHeapTuple*[T: object | tuple](obj: T,
@@ -596,45 +612,52 @@ proc objectToHeapTuple*[T: object | tuple](obj: T,
       if tupDesc.isNil: return nil
 
       try:
+        let descNatts = cast[TupleDescStruct](tupDesc).natts
+        if descNatts <= 0: return nil
         var numFields: cint = 0
         for name, val in fieldPairs(obj):
           numFields += 1
 
         if numFields == 0: return nil
-        var values = newSeq[Datum](numFields)
-        var nulls = newSeq[bool](numFields)
-        var freeAfterForm = newSeq[bool](numFields)
+        var values = newSeq[Datum](descNatts)
+        var nulls = newSeq[bool](descNatts)
+        var freeAfterForm = newSeq[bool](descNatts)
+        for k in 0 ..< descNatts:
+          nulls[k] = true
 
-        var idx = 0
+        var colIdx: cint = 1
         for name, val in fieldPairs(obj):
-          when typeof(val) is Option:
-            if val.isNone:
-              nulls[idx] = true
-              values[idx] = 0.Datum
+          colIdx = nextValidTableColumn(tupDesc, colIdx)
+          if colIdx >= 1 and colIdx <= descNatts:
+            let slot = int(colIdx - 1)
+            when typeof(val) is Option:
+              if val.isNone:
+                nulls[slot] = true
+                values[slot] = 0.Datum
+              else:
+                nulls[slot] = false
+                let innerVal = val.get
+                when typeof(innerVal) is seq:
+                  values[slot] = htupPackSeq(innerVal)
+                  freeAfterForm[slot] = true
+                else:
+                  var needFree = false
+                  values[slot] = packScalarDatum(innerVal, needFree)
+                  freeAfterForm[slot] = needFree
             else:
-              nulls[idx] = false
-              let innerVal = val.get
-              when typeof(innerVal) is seq:
-                values[idx] = htupPackSeq(innerVal)
-                freeAfterForm[idx] = true
+              nulls[slot] = false
+              when typeof(val) is seq:
+                values[slot] = htupPackSeq(val)
+                freeAfterForm[slot] = true
               else:
                 var needFree = false
-                values[idx] = packScalarDatum(innerVal, needFree)
-                freeAfterForm[idx] = needFree
-          else:
-            nulls[idx] = false
-            when typeof(val) is seq:
-              values[idx] = htupPackSeq(val)
-              freeAfterForm[idx] = true
-            else:
-              var needFree = false
-              values[idx] = packScalarDatum(val, needFree)
-              freeAfterForm[idx] = needFree
-          idx += 1
+                values[slot] = packScalarDatum(val, needFree)
+                freeAfterForm[slot] = needFree
+          colIdx += 1
 
         let htup = heap_form_tuple(tupDesc, cast[ptr Datum](addr values[0]),
             cast[ptr bool](addr nulls[0]))
-        for k in 0 ..< numFields:
+        for k in 0 ..< descNatts:
           if freeAfterForm[k] and not nulls[k] and values[k] != 0:
             htup_pfree(DatumGetPointer(values[k]))
         return htup

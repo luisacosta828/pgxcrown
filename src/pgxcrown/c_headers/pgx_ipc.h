@@ -292,6 +292,14 @@ static inline uint32 pgx_wl_socket_closed(void) {
 #endif
 }
 
+static inline uint32 pgx_wl_socket_connected(void) {
+#ifdef WL_SOCKET_CONNECTED
+    return (uint32)WL_SOCKET_CONNECTED;
+#else
+    return (uint32)WL_SOCKET_WRITEABLE;
+#endif
+}
+
 static inline bool pgx_set_socket_nonblock(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags < 0)

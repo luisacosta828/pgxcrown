@@ -65,6 +65,13 @@ proc WaitForBackgroundWorkerStartup*(handle: BackgroundWorkerHandlePtr,
 proc WaitForBackgroundWorkerShutdown*(handle: BackgroundWorkerHandlePtr): BgwHandleStatus {.importc.}
 proc GetBackgroundWorkerTypeByPid*(pid: cint): cstring {.importc.}
 proc TerminateBackgroundWorker*(handle: BackgroundWorkerHandlePtr) {.importc.}
+{.emit: """
+#include "postmaster/bgworker.h"
+static inline size_t pgx_bgw_library_name_cap(void) {
+  return sizeof(((BackgroundWorker *)0)->bgw_library_name);
+}
+""".}
+proc cBgwLibraryNameCap(): csize_t {.importc: "pgx_bgw_library_name_cap", nodecl.}
 
 var MyBgworkerEntry* {.importc: "MyBgworkerEntry".}: ptr BackgroundWorker
 
@@ -245,11 +252,12 @@ macro bgWorker*(workerName: untyped, body: untyped = nil): untyped =
 
 
 proc copyToFixedChecked[N: static int](dest: var array[N, char],
-    src: string, fieldName: string) =
-  if src.len >= N:
+    src: string, fieldName: string, runtimeCap: int = N) =
+  let effCap = min(N, runtimeCap)
+  if src.len >= effCap:
     raise newException(ValueError,
       "BackgroundWorker " & fieldName & " exceeds PostgreSQL buffer limit: " &
-      $src.len & " bytes provided, max " & $(N - 1) & " bytes")
+      $src.len & " bytes provided, max " & $(effCap - 1) & " bytes")
   if '\0' in src:
     raise newException(ValueError,
       "BackgroundWorker " & fieldName & " cannot contain embedded NUL bytes")
@@ -262,7 +270,8 @@ proc toRawWorker*(cfg: WorkerConfig): BackgroundWorker =
   result.bgw_flags = cint(cfg.flags)
   result.bgw_start_time = cfg.startTime
   result.bgw_restart_time = cint(cfg.restartIntervalSec)
-  copyToFixedChecked(result.bgw_library_name, cfg.libraryName, "bgw_library_name")
+  copyToFixedChecked(result.bgw_library_name, cfg.libraryName, "bgw_library_name",
+      int(cBgwLibraryNameCap()))
   copyToFixedChecked(result.bgw_function_name, cfg.functionName, "bgw_function_name")
   result.bgw_main_arg = cfg.mainArg
   copyToFixedChecked(result.bgw_extra, cfg.extra, "bgw_extra")
@@ -542,7 +551,7 @@ proc SetLatch*(latch: pointer) {.importc, header: "storage/latch.h".}
 proc proc_exit*(code: cint) {.importc: "proc_exit".}
 proc ProcessConfigFile*(context: cint) {.importc, header: "utils/guc.h".}
 proc pqsignal*(signo: cint, handler: proc(
-    signo: cint) {.cdecl.}): pointer {.importc, header: "libpq/pqsignal.h".}
+    signo: cint) {.cdecl.}) {.importc, header: "libpq/pqsignal.h".}
 
 var workerGotSigterm* {.exportc: "pgx_worker_got_sigterm",
     volatile.}: SigAtomic = 0
@@ -578,8 +587,8 @@ proc onSighup(signo: cint) {.cdecl.} =
 proc setupSignals*() =
   volatileStore(addr workerGotSigterm, 0)
   volatileStore(addr workerGotSighup, 0)
-  discard pqsignal(SIGTERM, onSigterm)
-  discard pqsignal(SIGHUP, onSighup)
+  pqsignal(SIGTERM, onSigterm)
+  pqsignal(SIGHUP, onSighup)
 
 proc workerInit*(dbName: cstring = nil, userName: cstring = nil,
     bypassAllowConn: bool = false) =
@@ -640,9 +649,9 @@ template runWorkerLoop*(intervalMs: int, body: untyped,
   let hasTimeout = intervalMs >= 0
   let waitFlags =
     if hasTimeout:
-      WL_LATCH_SET or WL_TIMEOUT or WL_POSTMASTER_DEATH or WL_EXIT_ON_PM_DEATH
+      WL_LATCH_SET or WL_TIMEOUT or WL_POSTMASTER_DEATH
     else:
-      WL_LATCH_SET or WL_POSTMASTER_DEATH or WL_EXIT_ON_PM_DEATH
+      WL_LATCH_SET or WL_POSTMASTER_DEATH
   let waitTimeoutMs = if hasTimeout: clong(intervalMs) else: clong(0)
   let idleLabel =
     if hasTimeout: "waiting for next cycle (" & $intervalMs & "ms)"
@@ -705,7 +714,7 @@ template runWorkerLoop*(intervalMs: int, body: untyped) =
 const
   WL_SOCKET_READABLE* = 1'u32 shl 1   # 0x02
   WL_SOCKET_WRITEABLE* = 1'u32 shl 2  # 0x04
-  WL_SOCKET_CONNECTED* = 1'u32 shl 6  # 0x40
+  WL_SOCKET_CONNECTED* = when defined(windows): 1'u32 shl 6 else: 1'u32 shl 2
   PGX_INVALID_SOCKET* = -1.cint
 
 type
@@ -728,11 +737,16 @@ proc cWaitEventSetWait(set: WaitEventSetPtr, timeout: clong,
     occurredEvents: ptr WaitEvent, nevents: cint,
     waitEventInfo: uint32): cint {.importc: "WaitEventSetWait", header: "storage/latch.h".}
 proc cWlSocketClosed(): uint32 {.importc: "pgx_wl_socket_closed", header: "pgx_ipc.h".}
+proc cWlSocketConnected(): uint32 {.importc: "pgx_wl_socket_connected", header: "pgx_ipc.h".}
 proc cSetSocketNonBlock(fd: cint): bool {.importc: "pgx_set_socket_nonblock", header: "pgx_ipc.h".}
 
 proc wlSocketClosed*(): uint32 {.inline.} =
-  ## Returns `WL_SOCKET_CLOSED` on PG 15-17, or `0` on PG 14 where the flag does not exist.
+  ## Returns `WL_SOCKET_CLOSED` on PG 15+, or `0` on PG 14 where the flag does not exist.
   cWlSocketClosed()
+
+proc wlSocketConnected*(): uint32 {.inline.} =
+  ## Returns PostgreSQL's native `WL_SOCKET_CONNECTED` bitmask (`WL_SOCKET_WRITEABLE` on POSIX).
+  cWlSocketConnected()
 
 proc setSocketNonBlocking*(fd: cint): bool {.inline.} =
   ## Configures a file descriptor / socket as non-blocking (`O_NONBLOCK`).

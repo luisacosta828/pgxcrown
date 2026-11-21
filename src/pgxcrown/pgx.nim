@@ -24,16 +24,16 @@ proc NimToSQLType(dt: string): string =
   of "int", "int32": "int4"
   of "int64": "int8"
   of "int16": "int2"
-  of "int8": "char"
+  of "int8": "\"char\""
   of "uint", "uint32": "oid"
   of "uint16": "int2"
   of "uint64": "int8"
-  of "uint8": "char"
+  of "uint8": "\"char\""
   of "float", "float32": "float4"
   of "float64": "float8"
   of "string", "PgText": "Text"
   of "cstring": "cstring"
-  of "char": "char"
+  of "char": "\"char\""
   of "bool", "boolean": "boolean"
   of "PgBytea": "bytea"
   of "PgUuid": "uuid"
@@ -65,7 +65,9 @@ proc NimToSQLType(dt: string): string =
   of "PgVector[float64]": "float8[]"
   of "PgVector[bool]": "bool[]"
   else:
-    if cleanDt.startsWith("seq["):
+    if cleanDt.startsWith("Option[") and cleanDt.endsWith("]"):
+      NimToSQLType(cleanDt[7 .. ^2])
+    elif cleanDt.startsWith("seq["):
       let inner = cleanDt[4 .. ^2].strip(chars = {'*'})
       let sqlInner = if inner in recordType: "\"" & inner & "\"" else: NimToSQLType(inner)
       let finalSqlInner = if sqlInner.endsWith("[]"): sqlInner else: sqlInner & "[]"
@@ -173,7 +175,7 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
   var paramLen = fn.params.len - 1
   var procTy = if returnTypeStr == "": "PROCEDURE " else: "FUNCTION "
   
-  var param_list: seq[string]
+  var paramEntries: seq[tuple[text: string, hasExplicitDefault: bool, isOption: bool]]
   for i in 1 .. paramLen:
     let identDef = fn.params[i]
     let paramTypeNode = identDef[^2]
@@ -247,9 +249,20 @@ proc buildSQLFunction(fn: NimNode, sql_scripts: var string) =
             entry.add "'" & defaultNode.repr[2 .. ^1] & "'"
           else:
             entry.add defaultNode.repr
-      elif isOptionParam:
-        entry.add " DEFAULT NULL"
-      param_list.add entry
+      paramEntries.add((text: entry, hasExplicitDefault: defaultNode.kind != nnkEmpty, isOption: isOptionParam))
+
+  var suffixHasDefault = true
+  for idx in countdown(paramEntries.len - 1, 0):
+    if paramEntries[idx].hasExplicitDefault:
+      discard
+    elif paramEntries[idx].isOption and suffixHasDefault:
+      paramEntries[idx].text.add " DEFAULT NULL"
+    else:
+      suffixHasDefault = false
+
+  var param_list: seq[string] = @[]
+  for pe in paramEntries:
+    param_list.add pe.text
 
   var volatility = ""
   var parallel = ""

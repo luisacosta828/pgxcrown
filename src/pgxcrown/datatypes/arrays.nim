@@ -17,7 +17,8 @@ proc arr_lookup_type_oid(typname: cstring): Oid {.importc: "pgx_lookup_type_oid"
 {.pop.}
 
 {.push header: "postgres.h".}
-proc pfree*(p: pointer) {.importc: "pfree".}
+proc arr_pfree(p: pointer) {.importc: "pfree".}
+proc arr_palloc(size: csize_t): pointer {.importc: "palloc".}
 {.pop.}
 
 {.push header: "utils/array.h".}
@@ -759,8 +760,8 @@ template unpackArrayWith[T](
           res[i] = default(T)
         else:
           res[i] = elemGetter(elemArray[i])
-      if elemsPtr != nil: pfree(elemsPtr)
-      if nullsPtr != nil: pfree(nullsPtr)
+      if elemsPtr != nil: arr_pfree(cast[pointer](elemsPtr))
+      if nullsPtr != nil: arr_pfree(cast[pointer](nullsPtr))
   res
 
 template packArrayWith[T](
@@ -776,7 +777,7 @@ template packArrayWith[T](
     let arrPtr = construct_array(nil, 0'i32, elmOid, elmLen, elmByVal, elmAlign)
     PointerGetDatum(cast[Pointer](arrPtr))
   else:
-    let elemsBuf = cast[ptr UncheckedArray[Datum]](palloc(cuint(s.len * sizeof(Datum))))
+    let elemsBuf = cast[ptr UncheckedArray[Datum]](arr_palloc(csize_t(s.len * sizeof(Datum))))
     for i in 0 ..< s.len:
       elemsBuf[i] = elemPutter(s[i])
     let arrPtr = construct_array(cast[ptr Datum](elemsBuf), s.len.cint,
@@ -784,8 +785,8 @@ template packArrayWith[T](
     when freeAfterConstruct:
       for i in 0 ..< s.len:
         if elemsBuf[i] != 0:
-          pfree(DatumGetPointer(elemsBuf[i]))
-    pfree(elemsBuf)
+          arr_pfree(cast[pointer](DatumGetPointer(elemsBuf[i])))
+    arr_pfree(cast[pointer](elemsBuf))
     PointerGetDatum(cast[Pointer](arrPtr))
 
 proc unpackEnumElem[E: enum](d: Datum): E {.inline, noSideEffect, raises: [ValueError], tags: [].} =

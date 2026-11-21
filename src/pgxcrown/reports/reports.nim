@@ -9,11 +9,16 @@ export errcodes
 #include "postgres.h"
 #include "fmgr.h"
 #include "utils/elog.h"
+#include "utils/lsyscache.h"
 #include "utils/memutils.h"
 
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((weak)) MemoryContext CurrentMemoryContext = (MemoryContext)0;
 __attribute__((weak)) MemoryContext TopMemoryContext = (MemoryContext)0;
+__attribute__((weak)) Oid pgx_active_fn_nsp = (Oid)0;
+__attribute__((weak)) Oid get_func_namespace(Oid funcid) { (void)funcid; return (Oid)0; }
+#else
+Oid pgx_active_fn_nsp = (Oid)0;
 #endif
 
 void pgx_ereport_full(int elevel, int sqlerrcode, const char *msg, const char *detail, const char *hint) {
@@ -53,13 +58,20 @@ void pgx_call_guarded_rethrow(pgx_guarded_fn fn, void *data, pgx_guarded_fn on_c
 
 void pgx_call_v1_rethrow(void *fn_ptr, void *fcinfo_ptr, void *out_datum, pgx_guarded_fn on_catch, void *catch_ctx) {
   volatile Datum res = (Datum)0;
+  volatile Oid prev_fn_nsp = pgx_active_fn_nsp;
+  FunctionCallInfo fc = (FunctionCallInfo)fcinfo_ptr;
   pgx_v1_raw_fn fn = (pgx_v1_raw_fn)fn_ptr;
+  if (fc != NULL && fc->flinfo != NULL && OidIsValid(fc->flinfo->fn_oid)) {
+    pgx_active_fn_nsp = get_func_namespace(fc->flinfo->fn_oid);
+  }
   PG_TRY();
   {
-    res = fn((FunctionCallInfo)fcinfo_ptr);
+    res = fn(fc);
+    pgx_active_fn_nsp = prev_fn_nsp;
   }
   PG_CATCH();
   {
+    pgx_active_fn_nsp = prev_fn_nsp;
     if (on_catch != NULL) {
       on_catch(catch_ctx);
     }

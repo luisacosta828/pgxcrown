@@ -244,14 +244,13 @@ proc hasReturn(node: NimNode): bool =
         return false
     return hasElse
   of nnkCaseStmt:
-    var hasElse = false
+    if node.len <= 1:
+      return false
     for i in 1 ..< node.len:
       let branch = node[i]
-      if branch.kind == nnkElse:
-        hasElse = true
       if branch.len == 0 or not hasReturn(branch[^1]):
         return false
-    return hasElse
+    return true
   else:
     return false
 
@@ -1065,6 +1064,17 @@ proc isStatement(n: NimNode): bool =
      nnkDiscardStmt, nnkBreakStmt, nnkContinueStmt, nnkIfStmt, nnkWhenStmt,
      nnkWhileStmt, nnkForStmt, nnkBlockStmt, nnkStmtList, nnkTryStmt, nnkRaiseStmt, nnkDefer:
     true
+  of nnkCaseStmt:
+    for i in 1 ..< n.len:
+      let branch = n[i]
+      if branch.len > 0:
+        let body = branch[^1]
+        let lastNode =
+          if body.kind == nnkStmtList and body.len > 0: body[^1]
+          else: body
+        if hasReturn(body) or isStatement(lastNode):
+          return true
+    false
   of nnkCall, nnkInfix:
     if n.len > 0 and n[0].kind == nnkIdent and n[0].repr.toLowerAscii in [
       "[]=", "add", "del", "delete", "insert", "inc", "dec",
@@ -1153,22 +1163,23 @@ proc explainWrapper(fn: NimNode): NimNode =
   let isOptionReturn = fn.params[0].kind == nnkBracketExpr and fn.params[0][0].repr == "Option"
   let isSeqReturn = retTypeStr.startsWith("seq[")
 
+  proc finalizeImplicitReturn(body: var NimNode, hasRetType: bool) =
+    if not hasReturn(body) and hasRetType and body.len > 0:
+      if isStatement(body[^1]):
+        body.add newTree(nnkReturnStmt, ident("userResult"))
+      else:
+        body[^1] = newTree(nnkReturnStmt, body[^1])
+
+  let hasRetType = fn.params[0].kind != nnkEmpty
   if isSeqReturn:
+    finalizeImplicitReturn(rbody, hasRetType)
     rbody = wrapSeqReturn(rbody, retTypeStr)
   elif isOptionReturn:
     let innerTypeStr = fn.params[0][1].repr
-    if not hasReturn(rbody) and fn.params[0].kind != nnkEmpty and rbody.len > 0:
-      if isStatement(rbody[^1]):
-        rbody.add newTree(nnkReturnStmt, ident("userResult"))
-      else:
-        rbody[^1] = newTree(nnkReturnStmt, rbody[^1])
+    finalizeImplicitReturn(rbody, hasRetType)
     rbody = wrapOptionReturn(rbody, innerTypeStr)
   else:
-    if not hasReturn(rbody) and fn.params[0].kind != nnkEmpty and rbody.len > 0:
-      if isStatement(rbody[^1]):
-        rbody.add newTree(nnkReturnStmt, ident("userResult"))
-      else:
-        rbody[^1] = newTree(nnkReturnStmt, rbody[^1])
+    finalizeImplicitReturn(rbody, hasRetType)
     rbody = wrapScalarReturn(rbody, retTypeStr, isOutputFn)
 
   let pendingErrIdent = ident("pgxPendingErr")

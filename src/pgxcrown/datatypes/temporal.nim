@@ -17,14 +17,17 @@ proc pgx_datum_to_timestamp(d: Datum): int64 {.importc.}
 proc pgx_timestamp_to_datum(v: int64): Datum {.importc.}
 proc pgx_datum_to_timestamptz(d: Datum): int64 {.importc.}
 proc pgx_timestamptz_to_datum(v: int64): Datum {.importc.}
-proc pgx_datum_to_interval(d: Datum, usec: ptr int64, day: ptr int32, month: ptr int32): bool {.importc.}
-proc pgx_interval_to_datum(usec: int64, day: int32, month: int32): Datum {.importc.}
+proc pgx_datum_to_interval(d: Datum, usec: ptr int64, day: ptr int32,
+    month: ptr int32): bool {.importc.}
+proc pgx_interval_to_datum(usec: int64, day: int32,
+    month: int32): Datum {.importc.}
 {.pop.}
 
 const
   PostgresEpochJDate* = 2451545'i32
   UnixEpochJDate* = 2440588'i32
-  PgUnixEpochDays* = PostgresEpochJDate - UnixEpochJDate ## 10957 days (1970-01-01 -> 2000-01-01)
+  PgUnixEpochDays* = PostgresEpochJDate -
+      UnixEpochJDate ## 10957 days (1970-01-01 -> 2000-01-01)
   UsecsPerSec* = 1_000_000'i64
   UsecsPerMin* = 60_000_000'i64
   UsecsPerHour* = 3_600_000_000'i64
@@ -119,52 +122,68 @@ proc j2date*(jd: int32): tuple[year, month, day: int] {.noSideEffect, tags: [].}
 # Special Values & Constructors
 # -----------------------------------------------------------------------------
 
-proc pgDateInf*(): PgDate {.inline, noSideEffect, tags: [].} = PgDate(days: DateNoEnd)
-proc pgDateNegInf*(): PgDate {.inline, noSideEffect, tags: [].} = PgDate(days: DateNoBegin)
+proc pgDateInf*(): PgDate {.inline, noSideEffect, tags: [].} = PgDate(
+    days: DateNoEnd)
+proc pgDateNegInf*(): PgDate {.inline, noSideEffect, tags: [].} = PgDate(
+    days: DateNoBegin)
 proc isInfinity*(d: PgDate): bool {.inline, noSideEffect, tags: [].} = d.days == DateNoEnd
 proc isNegInfinity*(d: PgDate): bool {.inline, noSideEffect, tags: [].} = d.days == DateNoBegin
-proc isFinite*(d: PgDate): bool {.inline, noSideEffect, tags: [].} = d.days != DateNoBegin and d.days != DateNoEnd
+proc isFinite*(d: PgDate): bool {.inline, noSideEffect, tags: [].} = d.days !=
+    DateNoBegin and d.days != DateNoEnd
 
 proc pgTimestampInf*(): PgTimestamp {.inline, noSideEffect, tags: [].} = PgTimestamp(usec: DtNoEnd)
-proc pgTimestampNegInf*(): PgTimestamp {.inline, noSideEffect, tags: [].} = PgTimestamp(usec: DtNoBegin)
+proc pgTimestampNegInf*(): PgTimestamp {.inline, noSideEffect, tags: [].} = PgTimestamp(
+    usec: DtNoBegin)
 proc isInfinity*(ts: PgTimestamp): bool {.inline, noSideEffect, tags: [].} = ts.usec == DtNoEnd
 proc isNegInfinity*(ts: PgTimestamp): bool {.inline, noSideEffect, tags: [].} = ts.usec == DtNoBegin
-proc isFinite*(ts: PgTimestamp): bool {.inline, noSideEffect, tags: [].} = ts.usec != DtNoBegin and ts.usec != DtNoEnd
+proc isFinite*(ts: PgTimestamp): bool {.inline, noSideEffect, tags: [].} = ts.usec !=
+    DtNoBegin and ts.usec != DtNoEnd
 
 proc pgTimestampTzInf*(): PgTimestampTz {.inline, noSideEffect, tags: [].} = PgTimestampTz(usec: DtNoEnd)
-proc pgTimestampTzNegInf*(): PgTimestampTz {.inline, noSideEffect, tags: [].} = PgTimestampTz(usec: DtNoBegin)
+proc pgTimestampTzNegInf*(): PgTimestampTz {.inline, noSideEffect, tags: [].} = PgTimestampTz(
+    usec: DtNoBegin)
 proc isInfinity*(ts: PgTimestampTz): bool {.inline, noSideEffect, tags: [].} = ts.usec == DtNoEnd
 proc isNegInfinity*(ts: PgTimestampTz): bool {.inline, noSideEffect, tags: [].} = ts.usec == DtNoBegin
-proc isFinite*(ts: PgTimestampTz): bool {.inline, noSideEffect, tags: [].} = ts.usec != DtNoBegin and ts.usec != DtNoEnd
+proc isFinite*(ts: PgTimestampTz): bool {.inline, noSideEffect, tags: [].} = ts.usec !=
+    DtNoBegin and ts.usec != DtNoEnd
 
-proc initPgDate*(year, month, day: int): PgDate {.noSideEffect, raises: [ValueError], tags: [].} =
+proc initPgDate*(year, month, day: int): PgDate {.noSideEffect, raises: [
+    ValueError], tags: [].} =
   ## Constructs a `PgDate` from civil `(year, month, day)`, raising `ValueError` on invalid calendar dates.
   if month < 1 or month > 12 or day < 1 or day > 31 or year < -4713 or year > 5874897:
-    raise newException(ValueError, "Date out of range: " & $year & "-" & $month & "-" & $day)
+    raise newException(ValueError, "Date out of range: " & $year & "-" &
+        $month & "-" & $day)
   let jd = date2j(year, month, day)
   if jd < 0 or jd >= 2147483494'i32:
-    raise newException(ValueError, "Date outside PostgreSQL Julian bounds: " & $year & "-" & $month & "-" & $day)
+    raise newException(ValueError, "Date outside PostgreSQL Julian bounds: " &
+        $year & "-" & $month & "-" & $day)
   let checkYmd = j2date(jd)
   if checkYmd.year != year or checkYmd.month != month or checkYmd.day != day:
-    raise newException(ValueError, "Invalid calendar date: " & $year & "-" & $month & "-" & $day)
+    raise newException(ValueError, "Invalid calendar date: " & $year & "-" &
+        $month & "-" & $day)
   PgDate(days: jd - PostgresEpochJDate)
 
-proc toYearMonthDay*(d: PgDate): tuple[year, month, day: int] {.noSideEffect, raises: [ValueError], tags: [].} =
+proc toYearMonthDay*(d: PgDate): tuple[year, month, day: int] {.noSideEffect,
+    raises: [ValueError], tags: [].} =
   ## Decomposes a finite `PgDate` into `(year, month, day)`; raises `ValueError` on `±infinity`.
   if not d.isFinite():
     raise newException(ValueError, "Cannot decompose infinite PgDate")
   j2date(d.days + PostgresEpochJDate)
 
 proc year*(d: PgDate): int {.inline, noSideEffect, raises: [ValueError], tags: [].} = d.toYearMonthDay().year
-proc month*(d: PgDate): int {.inline, noSideEffect, raises: [ValueError], tags: [].} = d.toYearMonthDay().month
+proc month*(d: PgDate): int {.inline, noSideEffect, raises: [ValueError],
+    tags: [].} = d.toYearMonthDay().month
 proc day*(d: PgDate): int {.inline, noSideEffect, raises: [ValueError], tags: [].} = d.toYearMonthDay().day
 
-proc validateTimeFields(hour, minute, second, microsecond: int) {.noSideEffect, raises: [ValueError], tags: [].} =
-  if hour < 0 or hour > 23 or minute < 0 or minute > 59 or second < 0 or second > 59 or
+proc validateTimeFields(hour, minute, second, microsecond: int) {.noSideEffect,
+    raises: [ValueError], tags: [].} =
+  if hour < 0 or hour > 23 or minute < 0 or minute > 59 or second < 0 or
+      second > 59 or
      microsecond < 0 or microsecond > 999_999:
     raise newException(ValueError, "Time component out of range")
 
-proc encodeTimestampUsecs(year, month, day, hour, minute, second, microsecond: int): int64 {.noSideEffect, raises: [ValueError], tags: [].} =
+proc encodeTimestampUsecs(year, month, day, hour, minute, second,
+    microsecond: int): int64 {.noSideEffect, raises: [ValueError], tags: [].} =
   let d = initPgDate(year, month, day)
   validateTimeFields(hour, minute, second, microsecond)
   if year > 294276 or (year == 294276 and (month == 12 and day > 31)):
@@ -176,16 +195,20 @@ proc encodeTimestampUsecs(year, month, day, hour, minute, second, microsecond: i
     raise newException(ValueError, "Timestamp outside PostgreSQL valid range")
   res
 
-proc initPgTimestamp*(year, month, day: int, hour = 0, minute = 0, second = 0, microsecond = 0): PgTimestamp {.noSideEffect, raises: [ValueError], tags: [].} =
+proc initPgTimestamp*(year, month, day: int, hour = 0, minute = 0, second = 0,
+    microsecond = 0): PgTimestamp {.noSideEffect, raises: [ValueError], tags: [].} =
   ## Constructs a `PgTimestamp` from civil calendar components.
   PgTimestamp(usec: encodeTimestampUsecs(year, month, day, hour, minute, second, microsecond))
 
-proc initPgTimestampTz*(year, month, day: int, hour = 0, minute = 0, second = 0, microsecond = 0, utcOffsetSeconds = 0): PgTimestampTz {.noSideEffect, raises: [ValueError], tags: [].} =
+proc initPgTimestampTz*(year, month, day: int, hour = 0, minute = 0, second = 0,
+    microsecond = 0, utcOffsetSeconds = 0): PgTimestampTz {.noSideEffect,
+    raises: [ValueError], tags: [].} =
   ## Constructs a `PgTimestampTz` from components and a fixed UTC offset in seconds (converting to UTC).
   let localUsecs = encodeTimestampUsecs(year, month, day, hour, minute, second, microsecond)
   PgTimestampTz(usec: localUsecs - int64(utcOffsetSeconds) * UsecsPerSec)
 
-proc decomposeUsecs(totalUsecs: int64): tuple[year, month, day, hour, minute, second, microsecond: int] {.noSideEffect, tags: [].} =
+proc decomposeUsecs(totalUsecs: int64): tuple[year, month, day, hour, minute,
+    second, microsecond: int] {.noSideEffect, tags: [].} =
   let dayOffset = floorDiv(totalUsecs, UsecsPerDay)
   let timeOfDay = floorMod(totalUsecs, UsecsPerDay)
   let (y, m, d) = j2date(int32(dayOffset + int64(PostgresEpochJDate)))
@@ -196,21 +219,26 @@ proc decomposeUsecs(totalUsecs: int64): tuple[year, month, day, hour, minute, se
   let second = int(secs mod 60)
   (y, m, d, hour, minute, second, usec)
 
-proc toComponents*(ts: PgTimestamp): tuple[year, month, day, hour, minute, second, microsecond: int] {.noSideEffect, raises: [ValueError], tags: [].} =
+proc toComponents*(ts: PgTimestamp): tuple[year, month, day, hour, minute,
+    second, microsecond: int] {.noSideEffect, raises: [ValueError], tags: [].} =
   if not ts.isFinite():
     raise newException(ValueError, "Cannot decompose infinite PgTimestamp")
   decomposeUsecs(ts.usec)
 
-proc toComponents*(ts: PgTimestampTz): tuple[year, month, day, hour, minute, second, microsecond: int] {.noSideEffect, raises: [ValueError], tags: [].} =
+proc toComponents*(ts: PgTimestampTz): tuple[year, month, day, hour, minute,
+    second, microsecond: int] {.noSideEffect, raises: [ValueError], tags: [].} =
   ## Decomposes a finite `PgTimestampTz` in UTC.
   if not ts.isFinite():
     raise newException(ValueError, "Cannot decompose infinite PgTimestampTz")
   decomposeUsecs(ts.usec)
 
-proc initPgInterval*(years = 0, months = 0, days = 0, hours: int64 = 0, minutes: int64 = 0, seconds: int64 = 0, microseconds: int64 = 0): PgInterval {.noSideEffect, tags: [].} =
+proc initPgInterval*(years = 0, months = 0, days = 0, hours: int64 = 0,
+    minutes: int64 = 0, seconds: int64 = 0,
+    microseconds: int64 = 0): PgInterval {.noSideEffect, tags: [].} =
   ## Constructs a `PgInterval` keeping months, days, and microseconds separate just like PostgreSQL.
   PgInterval(
-    usec: hours * UsecsPerHour + minutes * UsecsPerMin + seconds * UsecsPerSec + microseconds,
+    usec: hours * UsecsPerHour + minutes * UsecsPerMin + seconds * UsecsPerSec +
+    microseconds,
     days: int32(days),
     months: int32(years * 12 + months)
   )
@@ -236,7 +264,8 @@ proc formatFracUsecs(usec: int): string {.noSideEffect, tags: [].} =
   "." & s[0 .. last]
 
 proc formatHms(hour, minute, second, usec: int): string {.noSideEffect, tags: [].} =
-  padDigits(hour, 2) & ":" & padDigits(minute, 2) & ":" & padDigits(second, 2) & formatFracUsecs(usec)
+  padDigits(hour, 2) & ":" & padDigits(minute, 2) & ":" & padDigits(second, 2) &
+      formatFracUsecs(usec)
 
 proc `$`*(d: PgDate): string {.noSideEffect, tags: [].} =
   if d.isInfinity(): return "infinity"
@@ -250,7 +279,8 @@ proc `$`*(ts: PgTimestamp): string {.noSideEffect, tags: [].} =
   if ts.isInfinity(): return "infinity"
   if ts.isNegInfinity(): return "-infinity"
   let c = decomposeUsecs(ts.usec)
-  result = formatYmd(c.year, c.month, c.day) & " " & formatHms(c.hour, c.minute, c.second, c.microsecond)
+  result = formatYmd(c.year, c.month, c.day) & " " & formatHms(c.hour, c.minute,
+      c.second, c.microsecond)
   if c.year <= 0:
     result.add(" BC")
 
@@ -259,7 +289,8 @@ proc `$`*(ts: PgTimestampTz): string {.noSideEffect, tags: [].} =
   if ts.isInfinity(): return "infinity"
   if ts.isNegInfinity(): return "-infinity"
   let c = decomposeUsecs(ts.usec)
-  result = formatYmd(c.year, c.month, c.day) & " " & formatHms(c.hour, c.minute, c.second, c.microsecond) & "+00"
+  result = formatYmd(c.year, c.month, c.day) & " " & formatHms(c.hour, c.minute,
+      c.second, c.microsecond) & "+00"
   if c.year <= 0:
     result.add(" BC")
 
@@ -283,7 +314,8 @@ proc `$`*(iv: PgInterval): string {.noSideEffect, tags: [].} =
     let mins = int((totalSecs mod 3600) div 60)
     let secs = int(totalSecs mod 60)
     let signPrefix = if neg: "-" else: ""
-    parts.add(signPrefix & padDigits(hours, 2) & ":" & padDigits(mins, 2) & ":" & padDigits(secs, 2) & formatFracUsecs(frac))
+    parts.add(signPrefix & padDigits(hours, 2) & ":" & padDigits(mins, 2) &
+        ":" & padDigits(secs, 2) & formatFracUsecs(frac))
   result = parts.join(" ")
 
 proc `%`*(d: PgDate): JsonNode {.inline, noSideEffect, tags: [].} =
@@ -298,7 +330,8 @@ proc `%`*(ts: PgTimestampTz): JsonNode {.inline, noSideEffect, tags: [].} =
 proc `%`*(iv: PgInterval): JsonNode {.inline, noSideEffect, tags: [].} =
   {.cast(tags: []).}: newJString($iv)
 
-proc parseIntField(s: string, startPos, maxDigits: int, nextPos: var int): int {.noSideEffect, raises: [ValueError], tags: [].} =
+proc parseIntField(s: string, startPos, maxDigits: int,
+    nextPos: var int): int {.noSideEffect, raises: [ValueError], tags: [].} =
   var i = startPos
   var val = 0
   var count = 0
@@ -311,7 +344,8 @@ proc parseIntField(s: string, startPos, maxDigits: int, nextPos: var int): int {
   nextPos = i
   val
 
-proc parseDatePrefix(s: string, pos: var int): tuple[year, month, day: int] {.noSideEffect, raises: [ValueError], tags: [].} =
+proc parseDatePrefix(s: string, pos: var int): tuple[year, month,
+    day: int] {.noSideEffect, raises: [ValueError], tags: [].} =
   var i = 0
   let year = parseIntField(s, i, 0, i)
   if i >= s.len or s[i] != '-':
@@ -325,7 +359,8 @@ proc parseDatePrefix(s: string, pos: var int): tuple[year, month, day: int] {.no
   pos = i
   (year, month, day)
 
-proc parseFractionUsecs(s: string, pos: var int): int {.noSideEffect, raises: [ValueError], tags: [].} =
+proc parseFractionUsecs(s: string, pos: var int): int {.noSideEffect, raises: [
+    ValueError], tags: [].} =
   if pos >= s.len or s[pos] != '.':
     return 0
   inc pos
@@ -342,7 +377,8 @@ proc parseFractionUsecs(s: string, pos: var int): int {.noSideEffect, raises: [V
     raise newException(ValueError, "Trailing '.' without fractional digits in timestamp: " & s)
   usecs
 
-proc parsePgDate*(s: string): PgDate {.noSideEffect, raises: [ValueError], tags: [].} =
+proc parsePgDate*(s: string): PgDate {.noSideEffect, raises: [ValueError],
+    tags: [].} =
   ## Parses an ISO date string (`YYYY-MM-DD`, `"infinity"`, `"-infinity"`, or `"YYYY-MM-DD BC"`).
   var t = s.strip()
   if t.len == 0:
@@ -364,7 +400,8 @@ proc parsePgDate*(s: string): PgDate {.noSideEffect, raises: [ValueError], tags:
     y = 1 - y
   initPgDate(y, m, d)
 
-proc parseTimestampParts(s: string, allowTz: bool): tuple[usecs: int64, infState: int] {.noSideEffect, raises: [ValueError], tags: [].} =
+proc parseTimestampParts(s: string, allowTz: bool): tuple[usecs: int64,
+    infState: int] {.noSideEffect, raises: [ValueError], tags: [].} =
   var t = s.strip()
   if t.len == 0:
     raise newException(ValueError, "Empty timestamp string")
@@ -405,7 +442,8 @@ proc parseTimestampParts(s: string, allowTz: bool): tuple[usecs: int64, infState
         inc pos
       if pos < t.len:
         if not allowTz:
-          raise newException(ValueError, "Unexpected timezone suffix in PgTimestamp: " & s)
+          raise newException(ValueError,
+              "Unexpected timezone suffix in PgTimestamp: " & s)
         if t[pos] in {'Z', 'z'}:
           inc pos
           tzOffsetSecs = 0
@@ -425,27 +463,31 @@ proc parseTimestampParts(s: string, allowTz: bool): tuple[usecs: int64, infState
             raise newException(ValueError, "Timezone offset out of range: " & s)
           tzOffsetSecs = sign * (tzH * 3600 + tzM * 60 + tzS)
         else:
-          raise newException(ValueError, "Invalid timezone offset in timestamp: " & s)
+          raise newException(ValueError,
+              "Invalid timezone offset in timestamp: " & s)
   if pos != t.len:
     raise newException(ValueError, "Trailing characters in timestamp: " & s)
   let baseUsecs = encodeTimestampUsecs(year, month, day, hour, minute, second, frac)
   (baseUsecs - int64(tzOffsetSecs) * UsecsPerSec, 0)
 
-proc parsePgTimestamp*(s: string): PgTimestamp {.noSideEffect, raises: [ValueError], tags: [].} =
+proc parsePgTimestamp*(s: string): PgTimestamp {.noSideEffect, raises: [
+    ValueError], tags: [].} =
   ## Parses an ISO timestamp string without timezone (accepts `infinity` and `-infinity`).
   let (usecs, infState) = parseTimestampParts(s, allowTz = false)
   if infState > 0: return pgTimestampInf()
   if infState < 0: return pgTimestampNegInf()
   PgTimestamp(usec: usecs)
 
-proc parsePgTimestampTz*(s: string): PgTimestampTz {.noSideEffect, raises: [ValueError], tags: [].} =
+proc parsePgTimestampTz*(s: string): PgTimestampTz {.noSideEffect, raises: [
+    ValueError], tags: [].} =
   ## Parses an ISO timestamp with optional timezone (`Z`, `+HH`, `+HH:MM`, `-HH:MM:SS`) normalized to UTC.
   let (usecs, infState) = parseTimestampParts(s, allowTz = true)
   if infState > 0: return pgTimestampTzInf()
   if infState < 0: return pgTimestampTzNegInf()
   PgTimestampTz(usec: usecs)
 
-proc parseHmsField(tok: string): int64 {.noSideEffect, raises: [ValueError], tags: [].} =
+proc parseHmsField(tok: string): int64 {.noSideEffect, raises: [ValueError],
+    tags: [].} =
   var pos = 0
   var sign = 1'i64
   if tok[pos] == '-':
@@ -468,7 +510,8 @@ proc parseHmsField(tok: string): int64 {.noSideEffect, raises: [ValueError], tag
     raise newException(ValueError, "Invalid interval time component: " & tok)
   sign * (h * UsecsPerHour + m * UsecsPerMin + s * UsecsPerSec + frac)
 
-proc parseIsoInterval(s: string): PgInterval {.noSideEffect, raises: [ValueError], tags: [].} =
+proc parseIsoInterval(s: string): PgInterval {.noSideEffect, raises: [
+    ValueError], tags: [].} =
   var sign = 1
   var idx = 0
   if s[idx] == '-':
@@ -511,23 +554,27 @@ proc parseIsoInterval(s: string): PgInterval {.noSideEffect, raises: [ValueError
       of 'M', 'm': months += unitSign * whole
       of 'W', 'w': days += unitSign * whole * 7
       of 'D', 'd': days += unitSign * whole
-      else: raise newException(ValueError, "Invalid date unit in ISO interval: " & s)
+      else: raise newException(ValueError,
+          "Invalid date unit in ISO interval: " & s)
     else:
       case unit
       of 'H', 'h': usec += int64(unitSign) * int64(whole) * UsecsPerHour
       of 'M', 'm': usec += int64(unitSign) * int64(whole) * UsecsPerMin
       of 'S', 's': usec += int64(unitSign) * (int64(whole) * UsecsPerSec + frac)
-      else: raise newException(ValueError, "Invalid time unit in ISO interval: " & s)
+      else: raise newException(ValueError,
+          "Invalid time unit in ISO interval: " & s)
   if not anyPart:
     raise newException(ValueError, "Empty ISO interval: " & s)
   PgInterval(usec: usec, days: int32(days), months: int32(months))
 
-proc parsePgInterval*(s: string): PgInterval {.noSideEffect, raises: [ValueError], tags: [].} =
+proc parsePgInterval*(s: string): PgInterval {.noSideEffect, raises: [
+    ValueError], tags: [].} =
   ## Parses PostgreSQL `postgres`-style (`1 year 2 mons 3 days 04:05:06.5`) and ISO-8601 intervals.
   let trimmed = s.strip()
   if trimmed.len == 0:
     raise newException(ValueError, "Empty interval string")
-  if trimmed[0] in {'P', 'p'} or (trimmed.len >= 2 and trimmed[0] in {'+', '-'} and trimmed[1] in {'P', 'p'}):
+  if trimmed[0] in {'P', 'p'} or (trimmed.len >= 2 and trimmed[0] in {'+',
+      '-'} and trimmed[1] in {'P', 'p'}):
     return parseIsoInterval(trimmed)
 
   var tokens = trimmed.splitWhitespace()
@@ -555,7 +602,8 @@ proc parsePgInterval*(s: string): PgInterval {.noSideEffect, raises: [ValueError
       inc i
     else:
       if i + 1 >= tokens.len:
-        raise newException(ValueError, "Expected interval unit after value '" & tok & "' in: " & s)
+        raise newException(ValueError, "Expected interval unit after value '" &
+            tok & "' in: " & s)
       let val =
         try: parseBiggestInt(tok)
         except CatchableError:
@@ -580,7 +628,8 @@ proc parsePgInterval*(s: string): PgInterval {.noSideEffect, raises: [ValueError
       elif unit in ["us", "usec", "usecs", "microsecond", "microseconds"]:
         usec += int64(val)
       else:
-        raise newException(ValueError, "Unsupported interval unit: " & tokens[i + 1])
+        raise newException(ValueError, "Unsupported interval unit: " & tokens[
+            i + 1])
       i += 2
 
   PgInterval(
@@ -598,12 +647,14 @@ proc `<`*(a, b: PgDate): bool {.inline, noSideEffect, tags: [].} = a.days < b.da
 proc `<=`*(a, b: PgDate): bool {.inline, noSideEffect, tags: [].} = a.days <= b.days
 proc hash*(d: PgDate): Hash {.inline, noSideEffect, tags: [].} = hash(d.days)
 
-proc `+`*(d: PgDate, deltaDays: int32): PgDate {.noSideEffect, raises: [ValueError], tags: [].} =
+proc `+`*(d: PgDate, deltaDays: int32): PgDate {.noSideEffect, raises: [
+    ValueError], tags: [].} =
   if not d.isFinite():
     return d
   PgDate(days: d.days + deltaDays)
 
-proc `-`*(d: PgDate, deltaDays: int32): PgDate {.noSideEffect, raises: [ValueError], tags: [].} =
+proc `-`*(d: PgDate, deltaDays: int32): PgDate {.noSideEffect, raises: [
+    ValueError], tags: [].} =
   if not d.isFinite():
     return d
   PgDate(days: d.days - deltaDays)
@@ -618,11 +669,13 @@ proc `<`*(a, b: PgTimestamp): bool {.inline, noSideEffect, tags: [].} = a.usec <
 proc `<=`*(a, b: PgTimestamp): bool {.inline, noSideEffect, tags: [].} = a.usec <= b.usec
 proc hash*(ts: PgTimestamp): Hash {.inline, noSideEffect, tags: [].} = hash(ts.usec)
 
-proc addUsecs*(ts: PgTimestamp, deltaUsecs: int64): PgTimestamp {.noSideEffect, tags: [].} =
+proc addUsecs*(ts: PgTimestamp, deltaUsecs: int64): PgTimestamp {.noSideEffect,
+    tags: [].} =
   if not ts.isFinite(): return ts
   PgTimestamp(usec: ts.usec + deltaUsecs)
 
-proc diffUsecs*(a, b: PgTimestamp): int64 {.noSideEffect, raises: [ValueError], tags: [].} =
+proc diffUsecs*(a, b: PgTimestamp): int64 {.noSideEffect, raises: [ValueError],
+    tags: [].} =
   if not a.isFinite() or not b.isFinite():
     raise newException(ValueError, "Cannot subtract infinite PgTimestamp values")
   a.usec - b.usec
@@ -632,11 +685,13 @@ proc `<`*(a, b: PgTimestampTz): bool {.inline, noSideEffect, tags: [].} = a.usec
 proc `<=`*(a, b: PgTimestampTz): bool {.inline, noSideEffect, tags: [].} = a.usec <= b.usec
 proc hash*(ts: PgTimestampTz): Hash {.inline, noSideEffect, tags: [].} = hash(ts.usec)
 
-proc addUsecs*(ts: PgTimestampTz, deltaUsecs: int64): PgTimestampTz {.noSideEffect, tags: [].} =
+proc addUsecs*(ts: PgTimestampTz, deltaUsecs: int64): PgTimestampTz {.noSideEffect,
+    tags: [].} =
   if not ts.isFinite(): return ts
   PgTimestampTz(usec: ts.usec + deltaUsecs)
 
-proc diffUsecs*(a, b: PgTimestampTz): int64 {.noSideEffect, raises: [ValueError], tags: [].} =
+proc diffUsecs*(a, b: PgTimestampTz): int64 {.noSideEffect, raises: [
+    ValueError], tags: [].} =
   if not a.isFinite() or not b.isFinite():
     raise newException(ValueError, "Cannot subtract infinite PgTimestampTz values")
   a.usec - b.usec
@@ -664,7 +719,8 @@ proc hash*(iv: PgInterval): Hash {.inline, noSideEffect, tags: [].} =
 # Bridges to Nim std/times (zero TimeEffect leaks for {.immutable.} UDFs)
 # -----------------------------------------------------------------------------
 
-proc toTime*(ts: PgTimestampTz): Time {.noSideEffect, raises: [ValueError], tags: [].} =
+proc toTime*(ts: PgTimestampTz): Time {.noSideEffect, raises: [ValueError],
+    tags: [].} =
   ## Converts a finite `PgTimestampTz` to `std/times.Time` (UTC instant).
   if not ts.isFinite():
     raise newException(ValueError, "Cannot convert infinite PgTimestampTz to std/times.Time")
@@ -678,18 +734,33 @@ proc toPgTimestampTz*(t: Time): PgTimestampTz {.inline, noSideEffect, tags: [].}
   let unixUsecs = t.toUnix() * UsecsPerSec + int64(t.nanosecond() div 1000)
   PgTimestampTz(usec: unixUsecs - PgUnixEpochUsecs)
 
-proc toDateTimeUtc*(ts: PgTimestampTz): DateTime {.noSideEffect, raises: [ValueError], tags: [].} =
+proc pgxUtcTzInfo(time: Time): ZonedTime {.tags: [], raises: [], gcsafe.} =
+  ZonedTime(utcOffset: 0, isDst: false, time: time)
+
+proc makeEphemeralUtcZone(): Timezone {.inline, noSideEffect, tags: [].} =
+  {.cast(noSideEffect).}:
+    {.cast(tags: []).}:
+      newTimezone("Etc/UTC", pgxUtcTzInfo, pgxUtcTzInfo)
+
+# Pre-warm std/times.utc() at module init time (while pgx_force_libc_alloc > 0)
+# so any user code calling std/times.utc() also lives in real_malloc, not ExprContext.
+discard utc()
+
+proc toDateTimeUtc*(ts: PgTimestampTz): DateTime {.noSideEffect, raises: [
+    ValueError], tags: [].} =
   ## Converts a finite `PgTimestampTz` to a UTC `std/times.DateTime`.
   let t = ts.toTime()
   {.cast(noSideEffect).}:
     {.cast(tags: []).}:
-      inZone(t, utc())
+      inZone(t, makeEphemeralUtcZone())
 
-proc toDateTimeUtc*(ts: PgTimestamp): DateTime {.noSideEffect, raises: [ValueError], tags: [].} =
+proc toDateTimeUtc*(ts: PgTimestamp): DateTime {.noSideEffect, raises: [
+    ValueError], tags: [].} =
   ## Converts a finite `PgTimestamp` (interpreted in UTC) to `std/times.DateTime`.
   PgTimestampTz(usec: ts.usec).toDateTimeUtc()
 
-proc toDateTimeUtc*(d: PgDate): DateTime {.noSideEffect, raises: [ValueError], tags: [].} =
+proc toDateTimeUtc*(d: PgDate): DateTime {.noSideEffect, raises: [ValueError],
+    tags: [].} =
   ## Converts a finite `PgDate` to a UTC `std/times.DateTime` at midnight `00:00:00`.
   if not d.isFinite():
     raise newException(ValueError, "Cannot convert infinite PgDate to DateTime")
@@ -703,13 +774,16 @@ proc toPgTimestampTz*(dt: DateTime): PgTimestampTz {.noSideEffect, tags: [].} =
 
 proc toPgTimestamp*(dt: DateTime): PgTimestamp {.noSideEffect, tags: [].} =
   ## Extracts `(dt.year, dt.month, dt.monthday, dt.hour, dt.minute, dt.second, ns div 1000)` as `PgTimestamp`.
-  initPgTimestamp(dt.year, ord(dt.month), dt.monthday, dt.hour, dt.minute, dt.second, dt.nanosecond div 1000)
+  initPgTimestamp(dt.year, ord(dt.month), dt.monthday, dt.hour, dt.minute,
+      dt.second, dt.nanosecond div 1000)
 
-proc toPgDate*(dt: DateTime): PgDate {.noSideEffect, raises: [ValueError], tags: [].} =
+proc toPgDate*(dt: DateTime): PgDate {.noSideEffect, raises: [ValueError],
+    tags: [].} =
   ## Converts the calendar date portion of a `DateTime` to `PgDate`.
   initPgDate(dt.year, ord(dt.month), dt.monthday)
 
-proc toDuration*(iv: PgInterval): Duration {.noSideEffect, raises: [ValueError], tags: [].} =
+proc toDuration*(iv: PgInterval): Duration {.noSideEffect, raises: [ValueError],
+    tags: [].} =
   ## Converts a month-free `PgInterval` (`months == 0`, 24h days) to `std/times.Duration`.
   if iv.months != 0:
     raise newException(ValueError, "Cannot convert PgInterval with non-zero months to exact Duration")
@@ -766,11 +840,13 @@ proc returnPgTimestamp*(ts: PgTimestamp): Datum {.inline, noSideEffect, tags: []
   {.cast(noSideEffect).}: {.cast(tags: []).}:
     pgx_timestamp_to_datum(ts.usec)
 
-proc getPgTimestampTz*(datum: Datum): PgTimestampTz {.inline, noSideEffect, tags: [].} =
+proc getPgTimestampTz*(datum: Datum): PgTimestampTz {.inline, noSideEffect,
+    tags: [].} =
   {.cast(noSideEffect).}: {.cast(tags: []).}:
     PgTimestampTz(usec: pgx_datum_to_timestamptz(datum))
 
-proc returnPgTimestampTz*(ts: PgTimestampTz): Datum {.inline, noSideEffect, tags: [].} =
+proc returnPgTimestampTz*(ts: PgTimestampTz): Datum {.inline, noSideEffect,
+    tags: [].} =
   {.cast(noSideEffect).}: {.cast(tags: []).}:
     pgx_timestamptz_to_datum(ts.usec)
 

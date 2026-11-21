@@ -1,8 +1,8 @@
 import std/[os, osproc, strutils]
 
 const
-  SupportedPgVersions* = [14, 15, 16, 17]
-  LatestPgVersion* = SupportedPgVersions[^1] # 17 (latest)
+  SupportedPgVersions* = [14, 15, 16, 17, 18]
+  LatestPgVersion* = SupportedPgVersions[^1] # 18 (latest)
   DefaultLocalImageRepo* = "pgxcrown"
   DefaultRegistryImageRepo* = "ghcr.io/luisacosta828/pgxcrown"
   CompileTimeRepoRoot = currentSourcePath.parentDir.parentDir.parentDir.parentDir

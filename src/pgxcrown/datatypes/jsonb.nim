@@ -362,8 +362,8 @@ converter JsonbViewToDatum*(j: JsonbView): Datum =
     return j.rawDatum
   return JsonNodeToDatum(j.toJsonNode())
 
-template getJsonNode*(value: cuint): JsonNode =
-  DatumToJsonNode(getDatum(value))
+proc getJsonNode*(datum: Datum): JsonNode {.inline.} =
+  DatumToJsonNode(datum)
 
 template getJsonbView*(value: cuint): JsonbView =
   initJsonbView(getDatum(value))

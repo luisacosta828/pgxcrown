@@ -20,8 +20,15 @@
 #include "utils/fmgrprotos.h"
 #include "utils/lsyscache.h"
 #include "utils/numeric.h"
+#include "utils/syscache.h"
 #include "utils/timestamp.h"
 #include "utils/uuid.h"
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak)) Oid pgx_active_fn_nsp = InvalidOid;
+#else
+extern Oid pgx_active_fn_nsp;
+#endif
 
 /* Bytea zero-copy and allocation helpers (NUL-byte safe) */
 static inline void *pgx_detoast_bytea(Datum d) {
@@ -216,6 +223,15 @@ static inline Oid pgx_lookup_type_oid(const char *typname) {
 
     if (typname == NULL || typname[0] == '\0')
         return InvalidOid;
+
+    if (OidIsValid(pgx_active_fn_nsp)) {
+        oid = GetSysCacheOid2(TYPENAMENSP,
+                              Anum_pg_type_oid,
+                              CStringGetDatum(typname),
+                              ObjectIdGetDatum(pgx_active_fn_nsp));
+        if (OidIsValid(oid))
+            return oid;
+    }
 
     oid = TypenameGetTypid(typname);
     if (OidIsValid(oid))
