@@ -147,7 +147,7 @@ jobs:
             # macOS Apple Silicon (arm64)
             curl -fL "https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag_name }}/pgxtool-darwin-arm64" -o /usr/local/bin/pgxtool && chmod +x /usr/local/bin/pgxtool
 
-            # Initialize, scaffold, and test across PostgreSQL 14-17 using GHCR automatically:
+            # Initialize, scaffold, and test across PostgreSQL 14-18 using GHCR automatically:
             pgxtool init && pgxtool create-project analytics && pgxtool test analytics --all
             ```
 
@@ -156,8 +156,9 @@ jobs:
             nimble install -y pgxcrown
             ```
 
-            ### Prebuilt GHCR Container Images (`linux/amd64`, PostgreSQL 14–17)
-            - `ghcr.io/luisacosta828/pgxcrown:17` / `:latest` (`:17-${{ steps.meta.outputs.pkg_ver }}`)
+            ### Prebuilt GHCR Container Images (`linux/amd64`, PostgreSQL 14–18)
+            - `ghcr.io/luisacosta828/pgxcrown:18` / `:latest` (`:18-${{ steps.meta.outputs.pkg_ver }}`)
+            - `ghcr.io/luisacosta828/pgxcrown:17` (`:17-${{ steps.meta.outputs.pkg_ver }}`)
             - `ghcr.io/luisacosta828/pgxcrown:16` (`:16-${{ steps.meta.outputs.pkg_ver }}`)
             - `ghcr.io/luisacosta828/pgxcrown:15` (`:15-${{ steps.meta.outputs.pkg_ver }}`)
             - `ghcr.io/luisacosta828/pgxcrown:14` (`:14-${{ steps.meta.outputs.pkg_ver }}`)

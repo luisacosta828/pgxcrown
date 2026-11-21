@@ -7,7 +7,7 @@
 [![Build](https://github.com/luisacosta828/pgxcrown/actions/workflows/build.yml/badge.svg)](https://github.com/luisacosta828/pgxcrown/actions/workflows/build.yml)
 [![Nim Version](https://img.shields.io/badge/Nim-2.0%2B-FFE953?logo=nim&logoColor=white)](https://nim-lang.org/)
 [![PostgreSQL Support](https://img.shields.io/badge/PostgreSQL-14%20--%2018-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![Release](https://img.shields.io/badge/Release-v0.28.0-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
+[![Release](https://img.shields.io/badge/Release-v0.29.0-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
 [![GHCR Containers](https://img.shields.io/badge/GHCR-PG%2014%20--%2018-2496ED?logo=docker&logoColor=white)](https://github.com/luisacosta828/pgxcrown/pkgs/container/pgxcrown)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Memory Safety](https://img.shields.io/badge/Safety-Memory%20Safe-success)](#-fail-safe-panic-shield--sqlstate-mapping)
@@ -673,15 +673,15 @@ proc advance_state*(st: PaymentState): PaymentState {.immutable, parallelSafe.} 
 
 Prebuilt all-in-one container images are published to GitHub Container Registry (`ghcr.io/luisacosta828/pgxcrown`, `linux/amd64`). Each image bundles official `postgres:<ver>`, `postgresql-server-dev-<ver>`, `gcc`, **Nim 2.4.0 + Nimble**, and **`pgxcrown` (`pgxtool`)** so engineers and CI runners can compile, install, and test C/Nim PostgreSQL extensions with zero host PostgreSQL setup.
 
-### Published GHCR Image Matrix (`v0.28.0`)
+### Published GHCR Image Matrix (`v0.29.0`)
 
 | PostgreSQL Version | Rolling Major Tag | Pinned Release Tag |
 | :--- | :--- | :--- |
-| **PostgreSQL 18** | `ghcr.io/luisacosta828/pgxcrown:18` / `:latest` | `ghcr.io/luisacosta828/pgxcrown:18-0.28.0` |
-| **PostgreSQL 17** | `ghcr.io/luisacosta828/pgxcrown:17` | `ghcr.io/luisacosta828/pgxcrown:17-0.28.0` |
-| **PostgreSQL 16** | `ghcr.io/luisacosta828/pgxcrown:16` | `ghcr.io/luisacosta828/pgxcrown:16-0.28.0` |
-| **PostgreSQL 15** | `ghcr.io/luisacosta828/pgxcrown:15` | `ghcr.io/luisacosta828/pgxcrown:15-0.28.0` |
-| **PostgreSQL 14** | `ghcr.io/luisacosta828/pgxcrown:14` | `ghcr.io/luisacosta828/pgxcrown:14-0.28.0` |
+| **PostgreSQL 18** | `ghcr.io/luisacosta828/pgxcrown:18` / `:latest` | `ghcr.io/luisacosta828/pgxcrown:18-0.29.0` |
+| **PostgreSQL 17** | `ghcr.io/luisacosta828/pgxcrown:17` | `ghcr.io/luisacosta828/pgxcrown:17-0.29.0` |
+| **PostgreSQL 16** | `ghcr.io/luisacosta828/pgxcrown:16` | `ghcr.io/luisacosta828/pgxcrown:16-0.29.0` |
+| **PostgreSQL 15** | `ghcr.io/luisacosta828/pgxcrown:15` | `ghcr.io/luisacosta828/pgxcrown:15-0.29.0` |
+| **PostgreSQL 14** | `ghcr.io/luisacosta828/pgxcrown:14` | `ghcr.io/luisacosta828/pgxcrown:14-0.29.0` |
 
 ### Real-World Workflows
 

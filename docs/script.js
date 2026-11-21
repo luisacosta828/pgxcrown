@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Pgxcrown v0.28.0 - Documentation Scripts
+   Pgxcrown v0.29.0 - Documentation Scripts
    ========================================================================== */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -144,7 +144,7 @@ function initHeroCodeTabs() {
    -------------------------------------------------------------------------- */
 const pillarData = {
   zerocopy: {
-    badge: '⚡ Zero-Copy Native Core (v0.28.0)',
+    badge: '⚡ Zero-Copy Native Core (v0.29.0)',
     title: 'Zero-Copy Memory-Mapped Architecture',
     desc: 'Direct pointer-slice views over PostgreSQL varlena and array buffers eliminate intermediate memory allocations, strlen overhead, and garbage collection pauses.',
     checklist: [
@@ -168,7 +168,7 @@ const pillarData = {
   },
 
   bgworker: {
-    badge: '🤖 In-Database Autonomy & IPC (v0.28.0)',
+    badge: '🤖 In-Database Autonomy & IPC (v0.29.0)',
     title: 'Background Workers, Shared Memory & ShmChannel[T]',
     desc: 'Run persistent or dynamic background daemons inside PostgreSQL with {.pgxShared.} static shared state, zero-preload ShmChannel[T] / callWorker RPC over DSM, LWLock/atomics synchronization, and WaitEventSet multiplexing across PG 14–18.',
     checklist: [
@@ -200,7 +200,7 @@ const pillarData = {
   },
 
   shield: {
-    badge: '🛡️ Reliability & Security (v0.28.0)',
+    badge: '🛡️ Reliability & Security (v0.29.0)',
     title: 'Fail-Safe Panic Shield & SQLSTATE Error Mapping',
     desc: 'Every exported UDF is automatically enclosed in a PG_TRY / PG_CATCH barrier. Defects, panics, and overflows safely abort the transaction with zero SIGABRT server crashes.',
     checklist: [
@@ -277,7 +277,7 @@ const pillarData = {
   },
 
   tooling: {
-    badge: '🚀 Developer Experience (v0.28.0)',
+    badge: '🚀 Developer Experience (v0.29.0)',
     title: 'Smart Toolchain with Sub-15ms Incremental Builds',
     desc: 'pgxtool manages extension scaffolding, incremental compilation caching, automated gitignore management, and multi-version Docker sandbox testing.',
     checklist: [
@@ -365,7 +365,7 @@ function initPillarsShowcase() {
 }
 
 /* --------------------------------------------------------------------------
-   3. CLI Terminal Simulator (Updated for v0.28.0)
+   3. CLI Terminal Simulator (Updated for v0.29.0)
    -------------------------------------------------------------------------- */
 const cliLogs = {
   'pgxtool init': [
