@@ -57,7 +57,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pg_version: ["14", "15", "16", "17"]
+        pg_version: ["14", "15", "16", "17", "18"]
 
     steps:
       - name: Checkout repository
@@ -106,13 +106,15 @@ jobs:
               tests/test_allocator.nim \
               tests/test_base_types.nim \
               tests/test_bgworker.nim \
+              tests/test_bytea_uuid.nim \
               tests/test_errors.nim \
               tests/test_lwlock.nim \
               tests/test_pgtext.nim \
               tests/test_pgvector.nim \
               tests/test_query_builder.nim \
               tests/test_shm_mq.nim \
-              tests/test_shmem.nim
+              tests/test_shmem.nim \
+              tests/test_temporal_numeric.nim
             do
               echo "==> Running unit suite: $t"
               nim c -r --hints:off --path:src "$t"
@@ -131,7 +133,7 @@ jobs:
             rm -rf "$TMP_HOOK_HOME"
           '
 
-      - name: Run All 11 E2E Regression Suites (PG ${{ matrix.pg_version }})
+      - name: Run All 12 E2E Regression Suites (PG ${{ matrix.pg_version }})
         run: |
           for suite in \
             arrays_suite \
@@ -144,7 +146,8 @@ jobs:
             pgtry_guard \
             security_suite \
             shmem_preload_suite \
-            srf_suite
+            srf_suite \
+            types_v29_suite
           do
             echo "==> Running E2E suite: tests/$suite (PG ${{ matrix.pg_version }})"
             pgxtool test "tests/$suite" --pg "${{ matrix.pg_version }}"
@@ -163,10 +166,12 @@ jobs:
           pgxtool create-type geo_coord --base-type float64
           pgxtool create-type nickname --base-type string
           pgxtool create-type is_active --base-type bool
+          pgxtool create-type grade_code --base-type char
+          pgxtool create-type big_counter --base-type uint64
           pgxtool create-worker order_archiver
           pgxtool create-hook emit_log
           pgxtool create-hook post_parse_analyze
 
-          for prj in sample_ext factorial geo_coord nickname is_active order_archiver emit_log post_parse_analyze; do
+          for prj in sample_ext factorial geo_coord nickname is_active grade_code big_counter order_archiver emit_log post_parse_analyze; do
             pgxtool test "$prj" --pg "${{ matrix.pg_version }}" --bless
           done

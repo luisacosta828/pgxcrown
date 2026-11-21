@@ -4,14 +4,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-SUPPORTED_VERSIONS=(14 15 16 17)
+SUPPORTED_VERSIONS=(14 15 16 17 18)
 PGXCROWN_SOURCE="${PGXCROWN_SOURCE:-local}"
 NIM_VERSION="${NIM_VERSION:-2.4.0}"
 IMAGE_NAME="${IMAGE_NAME:-pgxcrown}"
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [14|15|16|17|all]
+Usage: $(basename "$0") [14|15|16|17|18|all]
 
 Environment variables:
   IMAGE_NAME       Docker image repository name (default: pgxcrown)
@@ -31,8 +31,8 @@ build_version() {
     --tag "${IMAGE_NAME}:${pg_ver}" \
     "${REPO_ROOT}"
 
-  if [ "${pg_ver}" = "17" ]; then
-    docker tag "${IMAGE_NAME}:17" "${IMAGE_NAME}:latest"
+  if [ "${pg_ver}" = "18" ]; then
+    docker tag "${IMAGE_NAME}:18" "${IMAGE_NAME}:latest"
   fi
 }
 

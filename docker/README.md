@@ -1,6 +1,6 @@
-# Pgxcrown Docker Images (PostgreSQL 14–17)
+# Pgxcrown Docker Images (PostgreSQL 14–18)
 
-Official all-in-one container images pairing each PostgreSQL major version (`14`, `15`, `16`, `17`) with its matching `postgresql-server-dev-<ver>` headers, `gcc`, **Nim 2.4.0 + Nimble**, and **pgxcrown** (`pgxtool`) ready to compile, install, and test native extensions inside the container.
+Official all-in-one container images pairing each PostgreSQL major version (`14`, `15`, `16`, `17`, `18`) with its matching `postgresql-server-dev-<ver>` headers, `gcc`, **Nim 2.4.0 + Nimble**, and **pgxcrown** (`pgxtool`) ready to compile, install, and test native extensions inside the container.
 
 ## Option A: Prebuilt Images from GHCR (`v0.28.0`)
 
@@ -8,7 +8,8 @@ Published images live on GitHub Container Registry (`linux/amd64`, matching upst
 
 | PostgreSQL | Rolling Major Tag | Pinned Release Tag |
 | :--- | :--- | :--- |
-| **PostgreSQL 17** | `ghcr.io/luisacosta828/pgxcrown:17` / `:latest` | `ghcr.io/luisacosta828/pgxcrown:17-0.28.0` |
+| **PostgreSQL 18** | `ghcr.io/luisacosta828/pgxcrown:18` / `:latest` | `ghcr.io/luisacosta828/pgxcrown:18-0.28.0` |
+| **PostgreSQL 17** | `ghcr.io/luisacosta828/pgxcrown:17` | `ghcr.io/luisacosta828/pgxcrown:17-0.28.0` |
 | **PostgreSQL 16** | `ghcr.io/luisacosta828/pgxcrown:16` | `ghcr.io/luisacosta828/pgxcrown:16-0.28.0` |
 | **PostgreSQL 15** | `ghcr.io/luisacosta828/pgxcrown:15` | `ghcr.io/luisacosta828/pgxcrown:15-0.28.0` |
 | **PostgreSQL 14** | `ghcr.io/luisacosta828/pgxcrown:14` | `ghcr.io/luisacosta828/pgxcrown:14-0.28.0` |
@@ -26,11 +27,11 @@ docker pull ghcr.io/luisacosta828/pgxcrown:16-0.28.0
 From the repository root:
 
 ```bash
-# Build all versions (pgxcrown:14, pgxcrown:15, pgxcrown:16, pgxcrown:17 + latest)
+# Build all versions (pgxcrown:14, pgxcrown:15, pgxcrown:16, pgxcrown:17, pgxcrown:18 + latest)
 ./docker/build.sh
 
 # Build a single PostgreSQL version
-./docker/build.sh 17
+./docker/build.sh 18
 ```
 
 By default, `Dockerfile` installs `pgxcrown` from your local repository source (`PGXCROWN_SOURCE=local`). To install from the remote Nimble registry instead:
@@ -108,7 +109,7 @@ pgxtool test ./my_ext --pg 17 --bless
 # Run directly inside a project directory (detects src/main.nim or tests/sql)
 cd my_ext && pgxtool test --pg 14
 
-# Run across PostgreSQL 14, 15, 16, and 17
+# Run across PostgreSQL 14, 15, 16, 17, and 18
 pgxtool test my_ext --all
 ```
 

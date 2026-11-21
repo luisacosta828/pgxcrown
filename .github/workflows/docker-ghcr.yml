@@ -36,7 +36,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pg_version: ["14", "15", "16", "17"]
+        pg_version: ["14", "15", "16", "17", "18"]
 
     steps:
       - name: Checkout repository
@@ -59,7 +59,7 @@ jobs:
             TAGS="${TAGS},${REPO}:${PG_VER}-${PKG_VER}"
           fi
 
-          if [ "${PG_VER}" = "17" ]; then
+          if [ "${PG_VER}" = "18" ]; then
             TAGS="${TAGS},${REPO}:latest"
           fi
 

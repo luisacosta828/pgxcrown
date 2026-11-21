@@ -6,9 +6,9 @@
 
 [![Build](https://github.com/luisacosta828/pgxcrown/actions/workflows/build.yml/badge.svg)](https://github.com/luisacosta828/pgxcrown/actions/workflows/build.yml)
 [![Nim Version](https://img.shields.io/badge/Nim-2.0%2B-FFE953?logo=nim&logoColor=white)](https://nim-lang.org/)
-[![PostgreSQL Support](https://img.shields.io/badge/PostgreSQL-14%20--%2017-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![PostgreSQL Support](https://img.shields.io/badge/PostgreSQL-14%20--%2018-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![Release](https://img.shields.io/badge/Release-v0.28.0-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
-[![GHCR Containers](https://img.shields.io/badge/GHCR-PG%2014%20--%2017-2496ED?logo=docker&logoColor=white)](https://github.com/luisacosta828/pgxcrown/pkgs/container/pgxcrown)
+[![GHCR Containers](https://img.shields.io/badge/GHCR-PG%2014%20--%2018-2496ED?logo=docker&logoColor=white)](https://github.com/luisacosta828/pgxcrown/pkgs/container/pgxcrown)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Memory Safety](https://img.shields.io/badge/Safety-Memory%20Safe-success)](#-fail-safe-panic-shield--sqlstate-mapping)
 
@@ -31,11 +31,12 @@
 - **Fail-Safe Panic Shield (`0 SIGABRTs`)**: Compiles automatic `PG_TRY` boundaries into every UDF—intercepting panics, overflows, and defects to safely abort transactions without crashing the PostgreSQL backend process.
 - **Advanced SQLSTATE Error Mapping**: First-class typed exceptions ([`PgError`](#4-advanced-error-handling--sqlstate-shield) and `PostgresError`) with automatic mapping to standard PostgreSQL error codes (`ERRCODE_DATA_EXCEPTION`, `ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE`, etc.).
 - **Fluent In-Database SPI Engine**: Ergonomic, left-to-right query execution (`.scalar()`, `.first()`, `.all()`, `.rows()`, `.run()`) with multi-column `RETURNING` support and zero `discard` boilerplate.
-- **Universal Objects & Composite Types**: Pure Nim `object` types automatically generate `CREATE TYPE "Name" AS (...)` DDL with bidirectional binary marshaling (`tupleHeaderToObject`, `objectToDatum`).
+- **Production SQL Data Types, Native Enums & Distinct Aliases**: Zero-copy NUL-safe [`PgBytea`](#9-production-sql-data-types-native-enums--distinct-aliases), native 16-byte `PgUuid`, microsecond `PgDate` / `PgTimestamp` / `PgTimestampTz` / `PgInterval`, arbitrary-precision `PgNumeric`, native `enum` (`CREATE TYPE ... AS ENUM`), and zero-boilerplate `distinct` scalar aliases alongside `{.pgxType.}` base types.
+- **Universal Objects & Composite Types**: Pure Nim `object` types automatically generate `CREATE TYPE "Name" AS (...)` DDL with bidirectional binary marshaling (`tupleHeaderToObject`, `objectToDatum`), arrays (`seq[T]`), and `ALTER TYPE ... DROP ATTRIBUTE` alignment safety.
 - **Declarative Custom Base Types**: Declarative pragmas (`{.pgxType.}`, `{.pgxInput.}`, `{.pgxOutput.}`) supporting 15 flat scalar types with type-specific parsing and automatic DDL generation.
-- **Smart Incremental Toolchain (`pgxtool`)**: Sub-15ms incremental builds via SHA-256 source manifests, isolated `.pgx_build/nimcache`, and ephemeral Docker container testing across PostgreSQL 14–17 with golden snapshot diffing (`--bless`).
+- **Smart Incremental Toolchain (`pgxtool`)**: Sub-15ms incremental builds via SHA-256 source manifests, isolated `.pgx_build/nimcache`, and ephemeral Docker container testing across PostgreSQL 14–18 with golden snapshot diffing (`--bless`).
 - **Autonomous Background Workers (`pgxWorker`)**: In-database daemons with sub-1ms dynamic launch (`bgw_notify_pid`), zero-lock live observability (`workerActivity` in `pg_stat_activity`), nested subtransactions (`workerSavepoint`), automatic catalog tracking (`pgxcrown_workers`), and graceful signal shutdown (`onShutdown`).
-- **Multi-Process Shared Memory & IPC (`PG 14–17`)**: Declarative static shared state ([`{.pgxShared.}`](#8-multi-process-concurrency--shared-memory-pg-1417)), dynamic shared memory (`dsm`, `shm_toc`), typed SPSC queues & one-line worker RPC (`ShmChannel[T]`, `callWorker`, `withWorkerChannel`), `LWLock` / `SpinLock` / atomics / `ConditionVariable` (`waitUntil`), and `WaitEventSet` latch+socket multiplexing — all compile-time POD-verified and ABI-safe across PostgreSQL 14–17.
+- **Multi-Process Shared Memory & IPC (`PG 14–18`)**: Declarative static shared state ([`{.pgxShared.}`](#8-multi-process-concurrency--shared-memory-pg-1418)), dynamic shared memory (`dsm`, `shm_toc`), typed SPSC queues & one-line worker RPC (`ShmChannel[T]`, `callWorker`, `withWorkerChannel`), `LWLock` / `SpinLock` / atomics / `ConditionVariable` (`waitUntil`), and `WaitEventSet` latch+socket multiplexing — all compile-time POD-verified and ABI-safe across PostgreSQL 14–18.
 - **Compile-Time Effect Verification**: Static enforcement of SQL volatility (`{.immutable.}`, `{.stable.}`, `{.volatile.}`) preventing illegal database writes at compile time.
 
 ---
@@ -64,7 +65,7 @@ nimble install -y pgxcrown
 ```bash
 pgxtool init
 pgxtool create-project analytics
-pgxtool test analytics --pg 17   # compiles inside GHCR & runs SQL regression tests!
+pgxtool test analytics --pg 18   # compiles inside GHCR & runs SQL regression tests!
 ```
 
 ### 3. Write Your Nim Logic (`analytics/src/main.nim`)
@@ -96,21 +97,21 @@ proc get_top_stats*(minScore: float64): seq[UserStats] {.stable.} =
   return q.fetch(UserStats)
 ```
 
-### 4. Test in Isolated Docker Containers (PG 14–17)
+### 4. Test in Isolated Docker Containers (PG 14–18)
 ```bash
-# Run regression tests in an ephemeral PostgreSQL 16 sandbox (or pick 14/15/17)
+# Run regression tests in an ephemeral PostgreSQL 16 sandbox (or pick 14/15/16/17/18)
 pgxtool test analytics
-pgxtool test analytics --pg 17
+pgxtool test analytics --pg 18
 
 # Run directly inside the extension directory (CWD mode) or via explicit path
 (cd analytics && pgxtool test --pg 14)
 pgxtool test ./analytics --pg 15 --bless
 
-# Or test across the entire multi-version matrix (14, 15, 16, 17)
+# Or test across the entire multi-version matrix (14, 15, 16, 17, 18)
 pgxtool test analytics --all
 
 # Force pulling/using the official GHCR image repository explicitly
-PGXCROWN_IMAGE=ghcr.io/luisacosta828/pgxcrown pgxtool test analytics --pg 17
+PGXCROWN_IMAGE=ghcr.io/luisacosta828/pgxcrown pgxtool test analytics --pg 18
 ```
 
 > **Note:** When installed via `nimble install -y pgxcrown` outside a git checkout, `pgxtool test` automatically pulls `ghcr.io/luisacosta828/pgxcrown:<pg>`. Inside a repository checkout, it reuses local `pgxcrown:<pg>` / GHCR images or builds `docker/Dockerfile` automatically if missing.
@@ -452,15 +453,15 @@ SELECT stop_order_archiver_worker();
 
 ---
 
-### 8. Multi-Process Concurrency & Shared Memory (`PG 14–17`)
+### 8. Multi-Process Concurrency & Shared Memory (`PG 14–18`)
 
-Every PostgreSQL session and Background Worker runs in a separate OS process (`fork()`), with private per-process `MemoryContext` heaps (`--mm:arc`/`orc`). Pgxcrown provides compile-time POD-guarded primitives and high-level ergonomics unified across **PostgreSQL 14, 15, 16, and 17** (`pgxcrown/lwlock`, `pgxcrown/shmem`, `pgxcrown/shm_mq`, and `WaitEventSet` in `pgxcrown/bgworker` — all automatically re-exported by `import pgxcrown`).
+Every PostgreSQL session and Background Worker runs in a separate OS process (`fork()`), with private per-process `MemoryContext` heaps (`--mm:arc`/`orc`). Pgxcrown provides compile-time POD-guarded primitives and high-level ergonomics unified across **PostgreSQL 14, 15, 16, 17, and 18** (`pgxcrown/lwlock`, `pgxcrown/shmem`, `pgxcrown/shm_mq`, and `WaitEventSet` in `pgxcrown/bgworker` — all automatically re-exported by `import pgxcrown`).
 
 #### When to Use Which Tool
 
 | Need / Workload | Recommended API | `shared_preload_libraries` Required? | Notes |
 | :--- | :--- | :---: | :--- |
-| **Global counters, metrics, caches or flags** shared across all sessions & static workers | `{.pgxShared.}` (or `installShmemHooks` + `initShmemStruct`) | **Yes** | Allocated once at Postmaster startup (`shmem_request_hook` on PG 15–17, `_PG_init` on PG 14); survives across queries. |
+| **Global counters, metrics, caches or flags** shared across all sessions & static workers | `{.pgxShared.}` (or `installShmemHooks` + `initShmemStruct`) | **Yes** | Allocated once at Postmaster startup (`shmem_request_hook` on PG 15–18, `_PG_init` on PG 14); survives across queries. |
 | **One-shot or batched typed RPC** between a SQL session and a dynamic worker | `proc w(req): resp {.pgxWorker.}` + `callWorker[TResp]` / `withWorkerChannel` | **No** | Works with `CREATE EXTENSION` alone; hides DSM, `shm_toc`, `ResetLatch`, and worker cleanup. |
 | **Streaming / custom multi-queue DSM layout** (e.g., mixed `LWLock` + ring queues + variable payloads) | `dsmCreate` + `shm_toc` + `ShmChannel[T]` / `send`/`receive` | **No** | Full control over segment pinning, `ShmRpcChannel`, zero-copy reads, and byte/string payloads. |
 | **Cluster-wide synchronization & async I/O** | `pg_atomic_*`, `withLock`, `withSpinLock`, `waitUntil`, `withWaitEventSet` | Depends on storage | Handles atomics, LWLocks, CVs, and non-blocking socket + `MyLatch` multiplexing safely. |
@@ -499,10 +500,10 @@ Enable preload testing automatically by adding an empty `tests/preload` marker f
 touch my_ext/tests/preload
 pgxtool test my_ext --all --bless -v
 # Or manually for any extension/hook:
-pgxtool test my_ext --pg 17 --preload -v
+pgxtool test my_ext --pg 18 --preload -v
 ```
 
-*(Need a custom named `LWLockTranche` or static worker alongside `{.pgxShared.}`? Define `proc my_init() {.pgxInit.}` and call `installShmemHooks(onReq, onStart)` + `registerWorker(cfg)` — Pgxcrown chains your hooks cleanly alongside all `{.pgxShared.}` slots across PG 14–17.)*
+*(Need a custom named `LWLockTranche` or static worker alongside `{.pgxShared.}`? Define `proc my_init() {.pgxInit.}` and call `installShmemHooks(onReq, onStart)` + `registerWorker(cfg)` — Pgxcrown chains your hooks cleanly alongside all `{.pgxShared.}` slots across PG 14–18.)*
 
 #### Case B: Dynamic Typed Worker RPC (`callWorker` & `withWorkerChannel` — No Preload)
 
@@ -548,7 +549,7 @@ Choose the synchronization primitive that matches your critical section rules:
   let ok = waitUntil(state.cv, lock, lwShared, timeoutMs = 5000):
     state.ticks.load() >= targetTicks
   ```
-- **Event Multiplexing (`withWaitEventSet`):** Wait concurrently on `MyLatch`, postmaster death, and **non-blocking** sockets (`setSocketNonBlocking`) portably across PG 14–16 (`TopMemoryContext`) and PG 17 (`ResourceOwner`), handling `wlSocketClosed()` safely on every version:
+- **Event Multiplexing (`withWaitEventSet`):** Wait concurrently on `MyLatch`, postmaster death, and **non-blocking** sockets (`setSocketNonBlocking`) portably across PG 14–16 (`TopMemoryContext`) and PG 17–18 (`ResourceOwner`), handling `wlSocketClosed()` safely on every version:
   ```nim
   withWaitEventSet(wes, 3):
     discard wes.addLatchEvent(MyLatch)
@@ -557,6 +558,57 @@ Choose the synchronization primitive that matches your critical section rules:
     var occurred: array[4, WaitEvent]
     let n = wes.waitEventSet(250, occurred)
   ```
+
+---
+
+### 9. Production SQL Data Types, Native Enums & Distinct Aliases
+
+Pgxcrown provides binary-faithful mappings for PostgreSQL's core domain types (`PgBytea`, `PgUuid`, temporal types, and arbitrary-precision `PgNumeric`), plus full `enum` and `distinct` FFI integration across parameters, `Option[T]`, `seq[T]` arrays, `SETOF` returns, composite fields, and Query Builder / SPI queries:
+
+```nim
+import pgxcrown
+import std/[options, times]
+
+type
+  PaymentState* {.pure.} = enum
+    psPending = "pending"
+    psPaid = "paid"
+    psRefunded = "refunded"
+
+  # Plain distinct alias: compiles directly to underlying PG SQL type (int8 / Text)
+  AccountId* = distinct int64
+
+  # Custom SQL base type ({.pgxType.}): emits CREATE TYPE "slug" with input/output procs
+  slug* {.pgxType: string.} = distinct string
+
+  InvoiceSummary* = object
+    id*: AccountId
+    tx_uuid*: PgUuid
+    issued_on*: PgDate
+    settled_at*: Option[PgTimestampTz]
+    amount*: PgNumeric
+    state*: PaymentState
+    signature*: PgBytea
+
+proc invoice_total*(price, qty, taxRate: PgNumeric): PgNumeric {.immutable, parallelSafe.} =
+  return (price * qty * (pgNumeric("1") + taxRate)).round(2)
+
+proc bump_deadline*(ts: PgTimestampTz, iv: PgInterval): PgTimestampTz {.immutable, parallelSafe.} =
+  return (ts.toTime() + iv.toDuration()).toPgTimestampTz()
+
+proc xor_payload*(raw: PgBytea): PgBytea {.immutable, parallelSafe.} =
+  var buf = newSeq[byte](raw.len)
+  for i in 0 ..< raw.len:
+    buf[i] = raw[i] xor 0xFF'u8
+  return toPgBytea(buf)
+
+proc advance_state*(st: PaymentState): PaymentState {.immutable, parallelSafe.} =
+  case st
+  of PaymentState.psPending: return PaymentState.psPaid
+  of PaymentState.psPaid, PaymentState.psRefunded: return PaymentState.psRefunded
+```
+
+- **When to use plain `distinct` vs `{.pgxType.}`**: Use a plain `distinct` type (like `AccountId* = distinct int64`) for compile-time domain type safety in Nim that maps directly to `int8`, `Text`, `boolean`, etc. in PostgreSQL with zero SQL DDL overhead. Add `{.pgxType: <base>.}` (with `{.pgxInput.}` / `{.pgxOutput.}` procs) when you want a dedicated `CREATE TYPE` in PostgreSQL with custom text parsing/formatting.
 
 ---
 
@@ -578,36 +630,46 @@ Choose the synchronization primitive that matches your critical section rules:
 | **`install`** | `pgxtool install <name>` | Automatically copies `.so`, `.control`, and `.sql` to PostgreSQL directories. |
 | **`create-type`** | `pgxtool create-type <name> --base-type <type>` | Generates a custom distinct base type with dynamic parsing for 15 scalar types. |
 | **`create-hook`** | `pgxtool create-hook <name>` | Scaffolds a Postgres kernel hook template (`emit_log`, `post_parse_analyze`). |
-| **`test`** | `pgxtool test [project\|path] [--pg <v>] [--all] [--local] [--preload] [--bless] [--keep] [--debug]` | Runs SQL regression tests (with optional `shared_preload_libraries` + restart via `--preload` or `tests/preload`) in Docker/GHCR sandboxes (PG 14–17) or locally (`--local`). |
+| **`test`** | `pgxtool test [project\|path] [--pg <v>] [--all] [--local] [--preload] [--bless] [--keep] [--debug]` | Runs SQL regression tests (with optional `shared_preload_libraries` + restart via `--preload` or `tests/preload`) in Docker/GHCR sandboxes (PG 14–18) or locally (`--local`). |
 | **`version`** | `pgxtool --version` | Prints the installed `pgxtool` / `pgxcrown` version. |
 
 ---
 
 ## 📊 Supported Type Mappings
 
-| Nim Type | PostgreSQL Type | Generated SQL DDL | Zero-Copy Support |
+| Nim Type | PostgreSQL Type | Generated SQL DDL | Zero-Copy / Notes |
 | :--- | :--- | :--- | :---: |
-| `PgText` | `TEXT` / `VARCHAR` | `Text` | ✅ Yes |
-| `PgVector[T]` | `T[]` | `int4[]`, `float8[]`, `text[]` | ✅ Yes |
-| `string` / `cstring` | `TEXT` | `Text` / `cstring` | Transparent |
+| `PgText` | `TEXT` / `VARCHAR` | `Text` | ✅ Zero-Copy Varlena |
+| `PgBytea` | `BYTEA` | `bytea` | ✅ NUL-Safe Binary View |
+| `PgUuid` | `UUID` | `uuid` | Native 16-Byte POD |
+| `PgDate` | `DATE` | `date` | Native Julian / `std/times` Bridge |
+| `PgTimestamp` / `PgTimestampTz` | `TIMESTAMP` / `TIMESTAMPTZ` | `timestamp` / `timestamptz` | Microsecond Precision |
+| `PgInterval` | `INTERVAL` | `interval` | Native + `Duration` Bridge |
+| `PgNumeric` | `NUMERIC` | `numeric` | Arbitrary-Precision PG Kernel Math |
+| `PgVector[T]` | `T[]` | `int4[]`, `float8[]`, `text[]` | ✅ Zero-Copy Array View |
+| `seq[T]` (Param / Field) | `T[]` | `int4[]`, `uuid[]`, `numeric[]`, `bytea[]`, ... | Bidirectional PG Array FFI |
+| `seq[T]` (Return) | `SETOF T` | `RETURNS SETOF <type>` | Streamed SRF |
+| `string` / `cstring` | `TEXT` / `CSTRING` | `Text` / `cstring` | Transparent |
+| `char` / `int8` / `uint8` | `"char"` | `"char"` | Single-Byte Internal Char |
 | `int32` / `int` | `INTEGER` | `int4` | Native |
-| `int64` | `BIGINT` | `int8` | Native |
-| `int16` | `SMALLINT` | `int2` | Native |
-| `float64` / `float` | `DOUBLE PRECISION` | `float8` | Native |
-| `float32` | `REAL` | `float4` | Native |
+| `int64` / `uint64` | `BIGINT` | `int8` | Native |
+| `int16` / `uint16` | `SMALLINT` | `int2` | Native |
+| `uint32` / `uint` | `OID` | `oid` | Native Unsigned OID |
+| `float32` / `float` | `REAL` | `float4` | Native |
+| `float64` | `DOUBLE PRECISION` | `float8` | Native |
 | `bool` | `BOOLEAN` | `boolean` | Native |
 | `JsonNode` | `JSONB` | `jsonb` | Native Binary FFI |
-| `Option[T]` | Nullable Type | `type DEFAULT NULL` | Native |
-| `seq[T]` (Return) | `SETOF T` | `RETURNS SETOF <type>` | Streamed |
-| `type T = distinct Base` | Domain Type (`pgxType`) | `CREATE TYPE "T" (...)` | Native |
-| `type T = object` | Composite Type | `CREATE TYPE "T" AS (...)` | Binary Serialized |
-| `type T = enum` | ENUM Type | `CREATE TYPE "T" AS ENUM (...)` | Native |
+| `Option[T]` | Nullable Type | `<type>` (`DEFAULT NULL` trailing) | Native |
+| `type T = distinct Base` | Underlying SQL Type | Underlying SQL DDL | Zero-Boilerplate Type Safety |
+| `type T {.pgxType.} = distinct Base` | Custom Base Type (`pgxType`) | `CREATE TYPE "T" (...)` | Custom Parser / Formatter |
+| `type T = object` | Composite Type | `CREATE TYPE "T" AS (...)` | Binary HeapTuple FFI |
+| `type T = enum` | ENUM Type | `CREATE TYPE "T" AS ENUM (...)` | Native / `{.pure.}` Labels |
 
 ---
 
 ---
 
-## 🐳 Official Docker & GHCR Images (PostgreSQL 14–17)
+## 🐳 Official Docker & GHCR Images (PostgreSQL 14–18)
 
 Prebuilt all-in-one container images are published to GitHub Container Registry (`ghcr.io/luisacosta828/pgxcrown`, `linux/amd64`). Each image bundles official `postgres:<ver>`, `postgresql-server-dev-<ver>`, `gcc`, **Nim 2.4.0 + Nimble**, and **`pgxcrown` (`pgxtool`)** so engineers and CI runners can compile, install, and test C/Nim PostgreSQL extensions with zero host PostgreSQL setup.
 
@@ -615,7 +677,8 @@ Prebuilt all-in-one container images are published to GitHub Container Registry 
 
 | PostgreSQL Version | Rolling Major Tag | Pinned Release Tag |
 | :--- | :--- | :--- |
-| **PostgreSQL 17** | `ghcr.io/luisacosta828/pgxcrown:17` / `:latest` | `ghcr.io/luisacosta828/pgxcrown:17-0.28.0` |
+| **PostgreSQL 18** | `ghcr.io/luisacosta828/pgxcrown:18` / `:latest` | `ghcr.io/luisacosta828/pgxcrown:18-0.28.0` |
+| **PostgreSQL 17** | `ghcr.io/luisacosta828/pgxcrown:17` | `ghcr.io/luisacosta828/pgxcrown:17-0.28.0` |
 | **PostgreSQL 16** | `ghcr.io/luisacosta828/pgxcrown:16` | `ghcr.io/luisacosta828/pgxcrown:16-0.28.0` |
 | **PostgreSQL 15** | `ghcr.io/luisacosta828/pgxcrown:15` | `ghcr.io/luisacosta828/pgxcrown:15-0.28.0` |
 | **PostgreSQL 14** | `ghcr.io/luisacosta828/pgxcrown:14` | `ghcr.io/luisacosta828/pgxcrown:14-0.28.0` |
@@ -624,16 +687,16 @@ Prebuilt all-in-one container images are published to GitHub Container Registry 
 
 ```bash
 # 1) Pull any version directly from GHCR
-docker pull ghcr.io/luisacosta828/pgxcrown:17
+docker pull ghcr.io/luisacosta828/pgxcrown:18
 
 # 2) Compile inside an ephemeral GHCR container (zero host PG/Nim toolchain needed)
 docker run --rm -v "$PWD":/workspace -w /workspace \
-  ghcr.io/luisacosta828/pgxcrown:17 pgxtool build-extension analytics
+  ghcr.io/luisacosta828/pgxcrown:18 pgxtool build-extension analytics
 
-# 3) Start a PostgreSQL 17 dev container and compile + install + run SQL tests (--local)
-docker run -d --name pgxcrown-17 -e POSTGRES_PASSWORD=postgres -p 5417:5432 \
-  -v "$PWD":/workspace -w /workspace ghcr.io/luisacosta828/pgxcrown:17
-docker exec -it pgxcrown-17 pgxtool test analytics --local
+# 3) Start a PostgreSQL 18 dev container and compile + install + run SQL tests (--local)
+docker run -d --name pgxcrown-18 -e POSTGRES_PASSWORD=postgres -p 5418:5432 \
+  -v "$PWD":/workspace -w /workspace ghcr.io/luisacosta828/pgxcrown:18
+docker exec -it pgxcrown-18 pgxtool test analytics --local
 
 # 4) Refresh pgxcrown inside an existing container image when a newer release ships
 nimble refresh && nimble install -y pgxcrown
@@ -645,15 +708,15 @@ nimble refresh && nimble install -y pgxcrown
 2. Otherwise, if local `pgxcrown:<pg>` or cached `ghcr.io/luisacosta828/pgxcrown:<pg>` already exists locally, it reuses it immediately.
 3. Inside a repository checkout containing `docker/Dockerfile`, missing images are built locally as `pgxcrown:<pg>`; outside a checkout (e.g. `nimble install -y pgxcrown`), `pgxtool` automatically pulls `ghcr.io/luisacosta828/pgxcrown:<pg>`.
 
-You can also build images locally with `./docker/build.sh` or orchestrate all four PostgreSQL versions via `docker/compose.yaml`. See [docker/README.md](docker/README.md) for the complete container reference.
+You can also build images locally with `./docker/build.sh` or orchestrate all five PostgreSQL versions via `docker/compose.yaml`. See [docker/README.md](docker/README.md) for the complete container reference.
 
 ---
 
 ## 🖥️ Platform & System Requirements
 
 - **Operating System**: Linux (`x86_64`, `aarch64`), macOS. *(Windows: use WSL2 or Docker).*
-- **Docker-Only Mode *(Zero Host Setup)***: Only **Docker** + standalone `pgxtool` binary from [Releases](https://github.com/luisacosta828/pgxcrown/releases) (`pgxtool init/create-project/test` automatically pull `ghcr.io/luisacosta828/pgxcrown:{14,15,16,17}`).
-- **Host Native Compilation *(Optional)***: PostgreSQL `14`–`17` (`postgresql-server-dev-*` / `pg_config`), Nim Compiler $\ge 2.0.0$, and GCC/Clang.
+- **Docker-Only Mode *(Zero Host Setup)***: Only **Docker** + standalone `pgxtool` binary from [Releases](https://github.com/luisacosta828/pgxcrown/releases) (`pgxtool init/create-project/test` automatically pull `ghcr.io/luisacosta828/pgxcrown:{14,15,16,17,18}`).
+- **Host Native Compilation *(Optional)***: PostgreSQL `14`–`18` (`postgresql-server-dev-*` / `pg_config`), Nim Compiler $\ge 2.0.0$, and GCC/Clang.
 
 ---
 

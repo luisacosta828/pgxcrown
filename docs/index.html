@@ -150,7 +150,7 @@
         <div class="pillar-code-pane">
           <div class="pillar-code-header">
             <span id="pillarCodeHeader">src/main.nim (Zero-Copy Engine)</span>
-            <span>Nim 2.0+ / PostgreSQL 14–17</span>
+            <span>Nim 2.0+ / PostgreSQL 14–18</span>
           </div>
           <pre class="pillar-code-body"><code id="pillarCode"></code></pre>
         </div>
@@ -227,11 +227,11 @@
               <h3 class="bento-title">Prebuilt GHCR &amp; Docker Sandboxes</h3>
             </div>
             <p class="bento-text">
-              Pull all-in-one <code>ghcr.io/luisacosta828/pgxcrown</code> containers (PG 14, 15, 16, 17 + Nim + pgxtool) or let <code>pgxtool test --all</code> isolate regression suites with visual diffs and <code>--bless</code> golden snapshots.
+              Pull all-in-one <code>ghcr.io/luisacosta828/pgxcrown</code> containers (PG 14, 15, 16, 17, 18 + Nim + pgxtool) or let <code>pgxtool test --all</code> isolate regression suites with visual diffs and <code>--bless</code> golden snapshots.
             </p>
           </div>
           <div class="bento-footer">
-            <span class="bento-metric">GHCR PG 14–17 | Diff Engine</span>
+            <span class="bento-metric">GHCR PG 14–18 | Diff Engine</span>
             <span class="bento-pill">Containers</span>
           </div>
         </div>
@@ -367,7 +367,7 @@ nimble install -y pgxcrown</code></pre>
           <div class="qs-step">
             <div class="step-num">2</div>
             <div class="step-content">
-              <h4>Scaffold &amp; Test Across PostgreSQL 14–17</h4>
+              <h4>Scaffold &amp; Test Across PostgreSQL 14–18</h4>
               <pre><code>pgxtool init &amp;&amp; pgxtool create-project analytics
 pgxtool test analytics --all --bless   # auto-pulls GHCR images if needed</code></pre>
             </div>

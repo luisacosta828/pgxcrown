@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 ARG NIM_VERSION=2.4.0
-ARG PG_TAG=17
+ARG PG_TAG=18
 
 FROM nimlang/nim:${NIM_VERSION} AS nim-toolchain
 

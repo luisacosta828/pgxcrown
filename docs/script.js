@@ -98,9 +98,9 @@ const heroCodeSnippets = {
     <span class="syn-fn">raisePgError</span>(ERRCODE_DIVISION_BY_ZERO, <span class="syn-str">"Cannot divide by zero"</span>)
   <span class="syn-kw">return</span> a <span class="syn-kw">div</span> b <span class="syn-cmt"># Defect caught cleanly inside PG_TRY; server never crashes!</span>`,
 
-  testing: `<span class="syn-cmt"># Prebuilt GHCR Images &amp; Sandbox Matrix (PG 14, 15, 16, 17)</span>
+  testing: `<span class="syn-cmt"># Prebuilt GHCR Images &amp; Sandbox Matrix (PG 14, 15, 16, 17, 18)</span>
 <span class="syn-cmt"># Host sandbox: pgxtool test analytics --all --bless</span>
-<span class="syn-cmt"># Running container: docker exec -it pgxcrown-17 pgxtool test analytics --local</span>
+<span class="syn-cmt"># Running container: docker exec -it pgxcrown-18 pgxtool test analytics --local</span>
 
 <span class="syn-sql">CREATE EXTENSION</span> analytics;
 
@@ -170,12 +170,12 @@ const pillarData = {
   bgworker: {
     badge: '🤖 In-Database Autonomy & IPC (v0.28.0)',
     title: 'Background Workers, Shared Memory & ShmChannel[T]',
-    desc: 'Run persistent or dynamic background daemons inside PostgreSQL with {.pgxShared.} static shared state, zero-preload ShmChannel[T] / callWorker RPC over DSM, LWLock/atomics synchronization, and WaitEventSet multiplexing across PG 14–17.',
+    desc: 'Run persistent or dynamic background daemons inside PostgreSQL with {.pgxShared.} static shared state, zero-preload ShmChannel[T] / callWorker RPC over DSM, LWLock/atomics synchronization, and WaitEventSet multiplexing across PG 14–18.',
     checklist: [
       '<strong>Declarative Shared Memory (<code>{.pgxShared.}</code>)</strong>: Share cluster-wide atomic counters and structs safely across SQL sessions and workers (compile-time POD enforced).',
       '<strong>One-Line Typed RPC (<code>callWorker</code> / <code>ShmChannel[T]</code>)</strong>: Communicate with dynamic workers over DSM + <code>shm_mq</code> without touching <code>postgresql.conf</code>.',
       '<strong>Zero-Lock Observability & Savepoints</strong>: Report live progress in <code>pg_stat_activity</code> via <code>workerActivity</code> and isolate failures with <code>workerSavepoint</code>.',
-      '<strong>Sync & Multiplexing (PG 14–17)</strong>: Exception-safe <code>withLock</code> (<code>LWLock</code>), <code>waitUntil</code> condition variables, and <code>withWaitEventSet</code> latch+socket I/O.'
+      '<strong>Sync & Multiplexing (PG 14–18)</strong>: Exception-safe <code>withLock</code> (<code>LWLock</code>), <code>waitUntil</code> condition variables, and <code>withWaitEventSet</code> latch+socket I/O.'
     ],
     tags: ['pgxWorker', 'pgxShared', 'ShmChannel[T]', 'callWorker', 'LWLock', 'WaitEventSet'],
     codeHeader: 'src/main.nim (Shared State & Typed Worker RPC)',
@@ -282,11 +282,11 @@ const pillarData = {
     desc: 'pgxtool manages extension scaffolding, incremental compilation caching, automated gitignore management, and multi-version Docker sandbox testing.',
     checklist: [
       '<strong>Sub-15ms Incremental Rebuilds</strong>: Deterministic SHA-256 source hashing with .pgx_build manifest.',
-      '<strong>Prebuilt GHCR Images (PG 14–17)</strong>: <code>ghcr.io/luisacosta828/pgxcrown:{14,15,16,17,latest}</code> bundles PG headers, gcc, Nim 2.4.0, and pgxtool.',
+      '<strong>Prebuilt GHCR Images (PG 14–18)</strong>: <code>ghcr.io/luisacosta828/pgxcrown:{14,15,16,17,18,latest}</code> bundles PG headers, gcc, Nim 2.4.0, and pgxtool.',
       '<strong>Ephemeral Docker &amp; In-Container Tests</strong>: Run <code>pgxtool test --all --bless</code> on host or <code>pgxtool test --local</code> inside containers.',
       '<strong>Instant Clean Command</strong>: <code>pgxtool clean &lt;name&gt;</code> removes build cache and artifacts instantly.'
     ],
-    tags: ['< 15ms Cache', 'GHCR PG 14-17', 'pgxtool test --local', 'Golden Snapshots', 'pgxtool clean'],
+    tags: ['< 15ms Cache', 'GHCR PG 14-18', 'pgxtool test --local', 'Golden Snapshots', 'pgxtool clean'],
     codeHeader: 'Terminal Commands',
     code: `<span class="syn-cmt"># Multi-version sandbox testing (auto-pulls GHCR when installed via Nimble):</span>
 $ pgxtool test analytics --all --bless
@@ -438,12 +438,13 @@ const cliLogs = {
   ],
   'pgxtool test analytics --all': [
     { text: '🔍 Container Engine: Docker (/usr/bin/docker)', type: 'info' },
-    { text: '🐘 Pgxcrown Multi-Version Test Matrix (PG 14, 15, 16, 17 | GHCR / Local)', type: 'info' },
+    { text: '🐘 Pgxcrown Multi-Version Test Matrix (PG 14, 15, 16, 17, 18 | GHCR / Local)', type: 'info' },
     { text: '  ├─ [PG 14] tests/sql/01_basic.sql ...... ✅ PASSED (16ms)', type: 'success' },
     { text: '  ├─ [PG 15] tests/sql/01_basic.sql ...... ✅ PASSED (15ms)', type: 'success' },
     { text: '  ├─ [PG 16] tests/sql/01_basic.sql ...... ✅ PASSED (14ms)', type: 'success' },
-    { text: '  └─ [PG 17] tests/sql/01_basic.sql ...... ✅ PASSED (14ms)', type: 'success' },
-    { text: '🎉 ALL VERSIONS PASSED: 4/4 environments successful!', type: 'success' }
+    { text: '  ├─ [PG 17] tests/sql/01_basic.sql ...... ✅ PASSED (14ms)', type: 'success' },
+    { text: '  └─ [PG 18] tests/sql/01_basic.sql ...... ✅ PASSED (14ms)', type: 'success' },
+    { text: '🎉 ALL VERSIONS PASSED: 5/5 environments successful!', type: 'success' }
   ]
 };
 

@@ -75,8 +75,28 @@ services:
     volumes:
       - pgxcrown_ws_17:/workspace
 
+  pgxcrown-18:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        PG_TAG: "18"
+        PGXCROWN_SOURCE: ${PGXCROWN_SOURCE:-local}
+        NIM_VERSION: ${NIM_VERSION:-2.4.0}
+    image: pgxcrown:18
+    container_name: pgxcrown-18
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+    ports:
+      - "${PG18_PORT:-5418}:5432"
+    volumes:
+      - pgxcrown_ws_18:/workspace
+
 volumes:
   pgxcrown_ws_14:
   pgxcrown_ws_15:
   pgxcrown_ws_16:
   pgxcrown_ws_17:
+  pgxcrown_ws_18:
