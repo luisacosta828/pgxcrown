@@ -284,6 +284,39 @@ SELECT v30_udf_volatile_ping('dfc') AS udf_volatile_ping;
  pong|pong:dfc
 (1 row)
 
+-- 10. CREATE PROCEDURE (volatile + explicit : void) & SysCache / pg_proc / pg_type null-safe lookup
+SELECT proname, prokind, prosecdef, proconfig
+FROM pg_proc
+WHERE proname IN ('v30_volatile_proc', 'v30_explicit_void_proc')
+ORDER BY proname;
+        proname         | prokind | prosecdef |             proconfig
+------------------------+---------+-----------+------------------------------------
+ v30_explicit_void_proc | p       | t         | {"search_path=public, pg_catalog"}
+ v30_volatile_proc      | p       | f         |
+(2 rows)
+
+CALL v30_volatile_proc(5);
+CALL
+CALL v30_explicit_void_proc(3);
+CALL
+SELECT v30_proc_counter() AS proc_acc_35;
+ proc_acc_35
+-------------
+          35
+(1 row)
+
+SELECT v30_call_procs_dfc(2, 4) AS proc_dfc_77;
+ proc_dfc_77
+-------------
+          77
+(1 row)
+
+SELECT v30_syscache_probe() AS syscache_probe;
+                    syscache_probe
+-------------------------------------------------------
+ type=int4:4:NULL|proc=v30_echo:1:23:0|amop4=true/true
+(1 row)
+
 -- 7. SECURITY DEFINER vs SECURITY INVOKER + trusted non-superuser CREATE EXTENSION
 CREATE TABLE public.arch_v30_priv_vault (id int);
 CREATE TABLE
@@ -383,6 +416,20 @@ SELECT v30_udf_chain(5) AS upgraded_udf_chain;
  upgraded_udf_chain
 --------------------
                4268
+(1 row)
+
+CALL v30_volatile_proc(5);
+CALL
+SELECT v30_proc_counter() AS upgraded_proc_82;
+ upgraded_proc_82
+------------------
+               82
+(1 row)
+
+SELECT v30_syscache_probe() AS upgraded_syscache_probe;
+                upgraded_syscache_probe
+-------------------------------------------------------
+ type=int4:4:NULL|proc=v30_echo:1:23:0|amop4=true/true
 (1 row)
 
 DROP EXTENSION arch_v30_suite;

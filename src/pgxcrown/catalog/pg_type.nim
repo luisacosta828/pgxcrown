@@ -1,76 +1,114 @@
+{.emit: """/*INCLUDESECTION*/
+#include "postgres.h"
+""".}
+
 import ../datatypes/basic
+import ../syscache
 
 {.push header: "catalog/pg_type_d.h".}
 
-var 
-  Anum_pg_type_oid        {.importc.}: cuint
-  Anum_pg_type_typname    {.importc.}: cuint
-  Anum_pg_type_typowner   {.importc.}: cuint
-  Anum_pg_type_typlen     {.importc.}: cuint
-  Anum_pg_type_typtype    {.importc.}: cuint
-  Anum_pg_type_typarray   {.importc.}: cuint
-  Anum_pg_type_typndims   {.importc.}: cuint
-  Anum_pg_type_typdefault {.importc.}: cuint
-  Anum_pg_type_typdefaultbin {.importc.}: cuint
-
+var
+  Anum_pg_type_oid*           {.importc.}: int16
+  Anum_pg_type_typname*       {.importc.}: int16
+  Anum_pg_type_typowner*      {.importc.}: int16
+  Anum_pg_type_typlen*        {.importc.}: int16
+  Anum_pg_type_typtype*       {.importc.}: int16
+  Anum_pg_type_typarray*      {.importc.}: int16
+  Anum_pg_type_typndims*      {.importc.}: int16
+  Anum_pg_type_typdefault*    {.importc.}: int16
+  Anum_pg_type_typdefaultbin* {.importc.}: int16
 
 var TEXTOID* {.importc.}: Oid
 
 {.pop.}
 
 template get_pg_type_oid*(ttuple: typed): Oid =
-  var 
-    attrIsNull = false
-    datum = SysCacheGetAttr(TYPEOID, ttuple, Anum_pg_type_oid, addr(attrIsNull))
-    oid   = DatumGetObjectId(datum)
-  oid
+  block:
+    let pgxTup = ttuple
+    var res = 0.Oid
+    if pgxTup != nil:
+      var attrIsNull = false
+      let datum = SysCacheGetAttr(TYPEOID, pgxTup, Anum_pg_type_oid, addr(attrIsNull))
+      if not attrIsNull:
+        res = DatumGetObjectId(datum)
+    res
 
 template get_pg_type_name*(ttuple: typed): cstring =
-  var 
-    attrIsNull = false
-    datum = SysCacheGetAttr(TYPEOID, ttuple, Anum_pg_type_typname, addr(attrIsNull))
-    name  = DatumGetName(datum)
-  NameStr(name[])
+  block:
+    let pgxTup = ttuple
+    var res: cstring = nil
+    if pgxTup != nil:
+      var attrIsNull = false
+      let datum = SysCacheGetAttr(TYPEOID, pgxTup, Anum_pg_type_typname, addr(attrIsNull))
+      if not attrIsNull:
+        let namePtr = DatumGetName(datum)
+        if namePtr != nil:
+          res = cast[cstring](addr namePtr.data[0])
+    res
 
 template get_pg_type_owner*(ttuple: typed): Oid =
-  var 
-    attrIsNull = false
-    datum = SysCacheGetAttr(TYPEOID, ttuple, Anum_pg_type_typowner, addr(attrIsNull))
-    oid   = DatumGetObjectId(datum)
-  oid 
+  block:
+    let pgxTup = ttuple
+    var res = 0.Oid
+    if pgxTup != nil:
+      var attrIsNull = false
+      let datum = SysCacheGetAttr(TYPEOID, pgxTup, Anum_pg_type_typowner, addr(attrIsNull))
+      if not attrIsNull:
+        res = DatumGetObjectId(datum)
+    res
 
 template get_pg_type_len*(ttuple: typed): int16 =
-  var 
-    attrIsNull = false
-    datum = SysCacheGetAttr(TYPEOID, ttuple, Anum_pg_type_typlen, addr(attrIsNull))
-    typlen = DatumGetInt16(datum)
-  typlen
+  block:
+    let pgxTup = ttuple
+    var res = 0'i16
+    if pgxTup != nil:
+      var attrIsNull = false
+      let datum = SysCacheGetAttr(TYPEOID, pgxTup, Anum_pg_type_typlen, addr(attrIsNull))
+      if not attrIsNull:
+        res = DatumGetInt16(datum)
+    res
 
 template get_pg_type_type*(ttuple: typed): char =
-  var 
-    attrIsNull = false
-    datum  = SysCacheGetAttr(TYPEOID, ttuple, Anum_pg_type_typtype, addr(attrIsNull))
-    argtype = DatumGetChar(datum)
-  argtype
+  block:
+    let pgxTup = ttuple
+    var res = '\0'
+    if pgxTup != nil:
+      var attrIsNull = false
+      let datum = SysCacheGetAttr(TYPEOID, pgxTup, Anum_pg_type_typtype, addr(attrIsNull))
+      if not attrIsNull:
+        res = char(DatumGetChar(datum))
+    res
 
 template get_pg_type_array*(ttuple: typed): Oid =
-  var 
-    attrIsNull = false
-    datum = SysCacheGetAttr(TYPEOID, ttuple, Anum_pg_type_typarray, addr(attrIsNull))
-    oid   = DatumGetObjectId(datum)
-  oid
+  block:
+    let pgxTup = ttuple
+    var res = 0.Oid
+    if pgxTup != nil:
+      var attrIsNull = false
+      let datum = SysCacheGetAttr(TYPEOID, pgxTup, Anum_pg_type_typarray, addr(attrIsNull))
+      if not attrIsNull:
+        res = DatumGetObjectId(datum)
+    res
 
 template get_pg_type_ndims*(ttuple: typed): int32 =
-  var 
-    attrIsNull = false
-    datum = SysCacheGetAttr(TYPEOID, ttuple, Anum_pg_type_typndims, addr(attrIsNull))
-    ndims   = DatumGetInt32(datum)
-  ndims
+  block:
+    let pgxTup = ttuple
+    var res = 0'i32
+    if pgxTup != nil:
+      var attrIsNull = false
+      let datum = SysCacheGetAttr(TYPEOID, pgxTup, Anum_pg_type_typndims, addr(attrIsNull))
+      if not attrIsNull:
+        res = DatumGetInt32(datum)
+    res
 
 template get_pg_type_defaultvalue*(ttuple: typed): cstring =
-  var 
-    attrIsNull = false
-    datum = SysCacheGetAttr(TYPEOID, ttuple, Anum_pg_type_typdefault, addr(attrIsNull))
-  var default_text   = TextDatumGetCString(datum)
-  default_text
+  block:
+    let pgxTup = ttuple
+    var res: cstring = nil
+    if pgxTup != nil:
+      var attrIsNull = false
+      let datum = SysCacheGetAttr(TYPEOID, pgxTup, Anum_pg_type_typdefault, addr(attrIsNull))
+      if not attrIsNull:
+        res = TextDatumGetCString(datum)
+    res
 

@@ -121,3 +121,23 @@ language c IMMUTABLE PARALLEL SAFE STRICT;
 CREATE OR REPLACE FUNCTION v30_udf_volatile_ping(Text) returns Text as
 'arch_v30_suite', 'pgx_v30_udf_volatile_ping_e6ffd7_text'
 language c STRICT;
+
+CREATE OR REPLACE PROCEDURE v30_volatile_proc(int4) as
+'arch_v30_suite', 'pgx_v30_volatile_proc_87f300_int4'
+language c;
+
+CREATE OR REPLACE PROCEDURE v30_explicit_void_proc(int4) as
+'arch_v30_suite', 'pgx_v30_explicit_void_proc_4fc9eb_int4'
+language c SECURITY DEFINER SET search_path = public, pg_catalog;
+
+CREATE OR REPLACE FUNCTION v30_proc_counter() returns int4 as
+'arch_v30_suite', 'pgx_v30_proc_counter_a1c883_void'
+language c VOLATILE STRICT;
+
+CREATE OR REPLACE FUNCTION v30_call_procs_dfc(int4, int4) returns int4 as
+'arch_v30_suite', 'pgx_v30_call_procs_dfc_733b22_int4_int4'
+language c VOLATILE STRICT;
+
+CREATE OR REPLACE FUNCTION v30_syscache_probe() returns Text as
+'arch_v30_suite', 'pgx_v30_syscache_probe_3e3bde_void'
+language c STABLE STRICT;

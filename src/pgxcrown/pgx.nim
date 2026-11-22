@@ -549,8 +549,14 @@ proc buildSQLFunction(fn: NimNode, cSym: string, prjName: string,
     returnTypeStr = ""
     hasOptionOrDefault = false
   let isIter = (fn.kind == nnkIteratorDef)
+  let rawRetStr =
+    if fn.params.len > 0 and fn.params[0].kind != nnkEmpty:
+      fn.params[0].repr.strip(chars = {'*'}).strip()
+    else:
+      ""
+  let isVoidReturn = (rawRetStr.len == 0 or rawRetStr.toLowerAscii() == "void")
 
-  if fn.params.len > 0 and fn.params[0].kind != nnkEmpty:
+  if not isVoidReturn:
     let retTypeNode = fn.params[0]
     if isIter:
       let yieldNode =
@@ -570,7 +576,8 @@ proc buildSQLFunction(fn: NimNode, cSym: string, prjName: string,
     else:
       returnTypeStr = " returns " & NimToSQLType(retTypeNode.repr)
 
-  let procTy = if returnTypeStr == "": "PROCEDURE " else: "FUNCTION "
+  let isProcedure = (not isIter and isVoidReturn)
+  let procTy = if isProcedure: "PROCEDURE " else: "FUNCTION "
   let extractedParams = extractParamSqlTypes(fn)
 
   var paramEntries: seq[tuple[text: string, hasExplicitDefault: bool, isOption: bool]] = @[]
@@ -652,6 +659,11 @@ proc buildSQLFunction(fn: NimNode, cSym: string, prjName: string,
   var securityClause = ""
   var sawDefiner = false
   var sawInvoker = false
+  var sawImmutable = false
+  var sawStable = false
+  var sawParallel = false
+  var sawLeakproof = false
+  var sawExplicitStrict = false
   var leakproofClause = ""
   var searchPathClause = ""
   var isStrict = not hasOptionOrDefault
@@ -660,13 +672,25 @@ proc buildSQLFunction(fn: NimNode, cSym: string, prjName: string,
     for p in fn.pragma:
       let pName = (if p.kind == nnkExprColonExpr: p[0].repr else: p.repr).toLowerAscii
       case pName
-      of "immutable": volatility = " IMMUTABLE"
-      of "stable": volatility = " STABLE"
-      of "volatile": volatility = " VOLATILE"
-      of "parallelsafe", "parallel_safe": parallel = " PARALLEL SAFE"
-      of "parallelrestricted", "parallel_restricted": parallel = " PARALLEL RESTRICTED"
+      of "immutable":
+        sawImmutable = true
+        volatility = " IMMUTABLE"
+      of "stable":
+        sawStable = true
+        volatility = " STABLE"
+      of "volatile":
+        if not isProcedure:
+          volatility = " VOLATILE"
+      of "parallelsafe", "parallel_safe":
+        sawParallel = true
+        parallel = " PARALLEL SAFE"
+      of "parallelrestricted", "parallel_restricted":
+        sawParallel = true
+        parallel = " PARALLEL RESTRICTED"
       of "calledonnullinput", "called_on_null_input": isStrict = false
-      of "strict": isStrict = true
+      of "strict":
+        sawExplicitStrict = true
+        isStrict = true
       of "securitydefiner", "security_definer":
         sawDefiner = true
         securityClause = " SECURITY DEFINER"
@@ -674,6 +698,7 @@ proc buildSQLFunction(fn: NimNode, cSym: string, prjName: string,
         sawInvoker = true
         securityClause = " SECURITY INVOKER"
       of "leakproof":
+        sawLeakproof = true
         leakproofClause = " LEAKPROOF"
       of "searchpath", "search_path":
         if p.kind != nnkExprColonExpr or p[1].kind notin {nnkStrLit, nnkTripleStrLit}:
@@ -684,10 +709,22 @@ proc buildSQLFunction(fn: NimNode, cSym: string, prjName: string,
         searchPathClause = " SET search_path = " & spIdents.join(", ")
       else: discard
 
+  if isProcedure:
+    if sawImmutable:
+      error("SQL PROCEDURE cannot use {.immutable.}; PostgreSQL rejects volatility attributes on CREATE PROCEDURE", fn)
+    if sawStable:
+      error("SQL PROCEDURE cannot use {.stable.}; PostgreSQL rejects volatility attributes on CREATE PROCEDURE", fn)
+    if sawParallel:
+      error("SQL PROCEDURE cannot use parallel safety pragmas ({.parallelSafe.} / {.parallelRestricted.}); PostgreSQL rejects PARALLEL on CREATE PROCEDURE", fn)
+    if sawLeakproof:
+      error("SQL PROCEDURE cannot use {.leakproof.}; PostgreSQL rejects LEAKPROOF on CREATE PROCEDURE", fn)
+    if sawExplicitStrict:
+      error("SQL PROCEDURE cannot use {.strict.}; PostgreSQL rejects STRICT on CREATE PROCEDURE", fn)
+
   if sawDefiner and sawInvoker:
     error("Cannot specify both securityDefiner and securityInvoker on the same SQL routine", fn)
 
-  let strictStr = if isStrict and returnTypeStr != "": " STRICT" else: ""
+  let strictStr = if isStrict and not isProcedure: " STRICT" else: ""
   let optionsStr = "language c" & volatility & parallel & strictStr & securityClause & leakproofClause & searchPathClause & ";\n"
 
   let fnNameStr = fn.name.repr.strip(chars = {'*'})

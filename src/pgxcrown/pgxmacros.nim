@@ -611,7 +611,8 @@ proc buildParamDecls(fn: NimNode, varSection: NimNode, cloneInCtx: bool, addUser
         varSection.add(newIdentDefs(ident(pvar), typeNode, callObj))
       cacheIteration += 1
 
-  if addUserResult and fn.params[0].kind != nnkEmpty:
+  if addUserResult and fn.params.len > 0 and fn.params[0].kind != nnkEmpty and
+      stripStars(fn.params[0].repr).toLowerAscii != "void":
     varSection.add(newIdentDefs(nnkPragmaExpr.newTree(ident("userResult"), newTree(nnkPragma, ident("used"))), fn.params[0], newEmptyNode()))
 
 template move_nim_params_as_locals =
@@ -1108,7 +1109,7 @@ proc buildDirectCallWrapper(
   stubParams.add(retTypeNode)
 
   let retTypeStr = if retTypeNode.kind != nnkEmpty: stripStars(retTypeNode.repr) else: ""
-  let isVoid = retTypeStr.len == 0 or retTypeStr == "void"
+  let isVoid = retTypeStr.len == 0 or retTypeStr.toLowerAscii == "void"
   let isOptionReturn = retTypeNode.kind == nnkBracketExpr and retTypeNode[0].repr == "Option"
   let optInnerType = if isOptionReturn: retTypeNode[1].copyNimTree() else: newEmptyNode()
   let optInnerStr = if isOptionReturn: stripStars(optInnerType.repr) else: ""
@@ -1755,7 +1756,7 @@ proc explainWrapper(fn: NimNode, customCSym: string = "", isOverloadedHint: bool
         else:
           body[^1] = newTree(nnkReturnStmt, body[^1])
 
-    let hasRetType = fn.params[0].kind != nnkEmpty
+    let hasRetType = fn.params[0].kind != nnkEmpty and stripStars(retTypeStr).toLowerAscii != "void"
     if isSeqReturn:
       finalizeImplicitReturn(rbody, hasRetType)
       rbody = wrapSeqReturn(rbody, retTypeStr)

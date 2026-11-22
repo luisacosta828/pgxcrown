@@ -28,11 +28,11 @@ type
 
   oidvector* {.importc.} = object
     vl_len {.importc: "vl_len_".}: int32
-    ndim*: int
+    ndim*: cint
     dataoffset*: int32
     elemtype*: Oid
-    dim1*: int 
-    lbound1: int
+    dim1*: cint
+    lbound1*: cint
     values*: UncheckedArray[Oid]
 
 proc cstring_to_text*(s: const_char): Text {.importc.}

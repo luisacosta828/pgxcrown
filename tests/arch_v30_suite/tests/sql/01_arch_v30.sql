@@ -102,6 +102,18 @@ SELECT pg_temp.try_call('SELECT v30_udf_direct_recurse(50000)::text') AS udf_dir
 SELECT v30_udf_direct_recurse(4) AS udf_direct_recovered_4;
 SELECT v30_udf_volatile_ping('dfc') AS udf_volatile_ping;
 
+-- 10. CREATE PROCEDURE (volatile + explicit : void) & SysCache / pg_proc / pg_type null-safe lookup
+SELECT proname, prokind, prosecdef, proconfig
+FROM pg_proc
+WHERE proname IN ('v30_volatile_proc', 'v30_explicit_void_proc')
+ORDER BY proname;
+
+CALL v30_volatile_proc(5);
+CALL v30_explicit_void_proc(3);
+SELECT v30_proc_counter() AS proc_acc_35;
+SELECT v30_call_procs_dfc(2, 4) AS proc_dfc_77;
+SELECT v30_syscache_probe() AS syscache_probe;
+
 -- 7. SECURITY DEFINER vs SECURITY INVOKER + trusted non-superuser CREATE EXTENSION
 CREATE TABLE public.arch_v30_priv_vault (id int);
 INSERT INTO public.arch_v30_priv_vault VALUES (101), (202);
@@ -144,5 +156,8 @@ SELECT v30_describe(ROW(99, 'upgraded', 'archived')::"ArchItem") AS upgraded_ite
 SELECT v30_echo('upgraded') AS upgraded_echo;
 SELECT array_agg(x ORDER BY x) AS upgraded_stream FROM v30_stream_range(3) AS x;
 SELECT v30_udf_chain(5) AS upgraded_udf_chain;
+CALL v30_volatile_proc(5);
+SELECT v30_proc_counter() AS upgraded_proc_82;
+SELECT v30_syscache_probe() AS upgraded_syscache_probe;
 
 DROP EXTENSION arch_v30_suite;

@@ -115,6 +115,7 @@ jobs:
               tests/test_query_builder.nim \
               tests/test_shm_mq.nim \
               tests/test_shmem.nim \
+              tests/test_syscache_catalog.nim \
               tests/test_temporal_numeric.nim
             do
               echo "==> Running unit suite: $t"
