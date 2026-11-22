@@ -1,0 +1,6 @@
+{
+  "version": "0.0.9",
+  "comment": "Fallback comment from pgxext.json",
+  "relocatable": true,
+  "trusted": false
+}

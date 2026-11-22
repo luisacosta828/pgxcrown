@@ -201,25 +201,26 @@ const pillarData = {
 
   shield: {
     badge: '🛡️ Reliability & Security (v0.29.0)',
-    title: 'Fail-Safe Panic Shield & SQLSTATE Error Mapping',
-    desc: 'Every exported UDF is automatically enclosed in a PG_TRY / PG_CATCH barrier. Defects, panics, and overflows safely abort the transaction with zero SIGABRT server crashes.',
+    title: 'Fail-Safe Panic Shield, Stack Guard & SQL Security',
+    desc: 'Every exported UDF is enclosed in PG_TRY / PG_CATCH barriers with automatic checkStackDepth() (SQLSTATE 54001) protection, compile-time effect sandboxing, and SQL privilege hardening.',
     checklist: [
-      '<strong>0 SIGABRT Crashes</strong>: Eliminates backend worker terminations from integer overflows and array defects.',
+      '<strong>0 SIGABRT Crashes &amp; 54001 Stack Guard</strong>: Catches overflows, panics, and deep recursion safely without killing PostgreSQL workers.',
       '<strong>Typed Exceptions</strong>: First-class <code>PgError</code> and <code>PostgresError</code> with explicit SQLSTATE codes.',
-      '<strong>Automated Mapping</strong>: <code>ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE</code>, <code>ERRCODE_DIVISION_BY_ZERO</code>, etc.',
+      '<strong>SQL Security Pragmas</strong>: <code>{.securityDefiner.}</code>, <code>{.securityInvoker.}</code>, <code>{.leakproof.}</code>, and validated <code>{.searchPath.}</code>.',
       '<strong>Compile-Time Effects</strong>: <code>{.immutable.}</code> and <code>{.stable.}</code> statically forbid unauthorized DB writes.'
     ],
-    tags: ['PG_TRY Barrier', '0 SIGABRTs', 'SQLSTATE Codes', 'Effect Tracking', 'Safe Aborts'],
-    codeHeader: 'src/main.nim (Panic Shield & Error Codes)',
+    tags: ['PG_TRY Barrier', '54001 Stack Guard', 'securityDefiner', 'Effect Tracking', 'Safe Aborts'],
+    codeHeader: 'src/main.nim (Panic Shield & Hardening)',
     code: `<span class="syn-kw">import</span> pgxcrown
 
-<span class="syn-kw">proc</span> <span class="syn-fn">transfer_credits</span>*(sender, receiver: <span class="syn-type">int32</span>, amount: <span class="syn-type">int64</span>): <span class="syn-type">bool</span> <span class="syn-pragma">{.volatile.}</span> =
+<span class="syn-kw">proc</span> <span class="syn-fn">transfer_credits</span>*(sender, receiver: <span class="syn-type">int32</span>, amount: <span class="syn-type">int64</span>): <span class="syn-type">bool</span>
+    <span class="syn-pragma">{.securityDefiner, searchPath: "public, pg_catalog".}</span> =
   <span class="syn-kw">if</span> amount <= 0:
     <span class="syn-fn">raisePgError</span>(ERRCODE_INVALID_PARAMETER_VALUE, <span class="syn-str">"Transfer amount must be positive"</span>)
   <span class="syn-kw">if</span> amount > 1_000_000:
     <span class="syn-fn">raisePgError</span>(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE, <span class="syn-str">"Daily limit exceeded"</span>)
-  
-  <span class="syn-cmt"># Unhandled overflows or panics are caught cleanly by PG_TRY!</span>
+
+  <span class="syn-cmt"># Overflows, panics, and recursion > max_stack_depth abort cleanly!</span>
   <span class="syn-kw">return</span> <span class="syn-kw">true</span>`
   },
 
@@ -251,29 +252,27 @@ const pillarData = {
   },
 
   types: {
-    badge: '📦 Universal Type System',
-    title: 'Universal Objects & Declarative Base Types',
-    desc: 'Pure Nim object types automatically emit CREATE TYPE AS (...) DDL with bidirectional binary marshaling, accompanied by declarative custom domain base types.',
+    badge: '📦 Modular Type & Streaming Architecture',
+    title: 'Multi-Module src/ & private/, Overloads, Migrations & Iterators',
+    desc: 'Separate PostgreSQL SQL modules in src/ from pure-Nim private/ libraries, automate .control and migrations/ upgrades, overload SQL routines cleanly, and stream millions of rows via O(1) iterator SRFs.',
     checklist: [
-      '<strong>Universal Object Types</strong>: Direct binary serialization between Nim objects and PostgreSQL HeapTuples.',
-      '<strong>Declarative Domain Types</strong>: <code>{.pgxType.}</code> generates custom distinct types with dynamic input/output.',
-      '<strong>15 Flat Scalar Types</strong>: <code>int</code>, <code>float</code>, <code>string</code>, <code>bool</code>, unsigned integers, and char.',
-      '<strong>PostgreSQL ENUMs</strong>: Strongly-typed enum mapping and automatic DDL generation.'
+      '<strong>src/ vs private/</strong>: Exported types/procs in <code>src/</code> emit SQL DDL and chain <code>{.pgxInit.}</code>; <code>private/</code> stays pure Nim.',
+      '<strong>Versioning &amp; Migrations</strong>: <code>pgxExtension</code> / <code>pgxext.json</code> metadata and automatic diffed upgrades in <code>migrations/</code>.',
+      '<strong>SQL Overloading</strong>: Collision-checked overloads with stable C symbol mangling across versions.',
+      '<strong>Streaming O(1) Iterators</strong>: Lazy <code>iterator</code> SRFs with <code>Option[T]</code> SQL NULLs and early <code>LIMIT</code> cleanup.'
     ],
-    tags: ['Auto DDL', 'HeapTuple FFI', '15 Scalar Types', 'Distinct Types', 'Enums'],
-    codeHeader: 'src/main.nim (Universal Objects & Base Types)',
+    tags: ['src/ vs private/', 'Migrations', 'Overloading', 'O(1) Iterators', 'Auto DDL'],
+    codeHeader: 'src/main.nim (Modular Architecture & Streaming)',
     code: `<span class="syn-kw">import</span> pgxcrown
+<span class="syn-kw">import</span> ../private/pricing_core <span class="syn-cmt"># Pure Nim, omitted from SQL</span>
 
-<span class="syn-cmt"># Named composite type -> CREATE TYPE "UserProfile" AS (...)</span>
-<span class="syn-kw">type</span>
-  UserProfile* = <span class="syn-kw">object</span>
-    id*: <span class="syn-type">int32</span>
-    handle*: <span class="syn-type">string</span>
-    score*: <span class="syn-type">float64</span>
+<span class="syn-fn">pgxExtension</span>:
+  version = <span class="syn-str">"0.2.0"</span>
+  trusted = <span class="syn-kw">true</span>
 
-<span class="syn-cmt"># Custom domain base type -> distinct scalar with parser:</span>
-<span class="syn-kw">type</span>
-  Nickname* <span class="syn-pragma">{.pgxType: string.}</span> = <span class="syn-kw">distinct</span> <span class="syn-type">string</span>`
+<span class="syn-kw">iterator</span> <span class="syn-fn">stream_ticks</span>*(n: <span class="syn-type">int64</span>): <span class="syn-type">int64</span> =
+  <span class="syn-kw">for</span> i <span class="syn-kw">in</span> 1'i64 .. n:
+    <span class="syn-kw">yield</span> i <span class="syn-cmt"># O(1) memory with early LIMIT cleanup</span>`
   },
 
   tooling: {

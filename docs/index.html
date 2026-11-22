@@ -252,6 +252,23 @@
             <span class="bento-pill">Autonomy</span>
           </div>
         </div>
+
+        <!-- Bento 6: Modular Scale, Streaming & Hardening -->
+        <div class="bento-card glass-card">
+          <div>
+            <div class="bento-header">
+              <div class="bento-icon bento-icon-cyan">🧩</div>
+              <h3 class="bento-title">Multi-Module, Streaming SRFs &amp; Migrations</h3>
+            </div>
+            <p class="bento-text">
+              Separate SQL modules in <code>src/</code> from pure-Nim <code>private/</code> libs, ship versioned <code>.control</code> &amp; <code>migrations/</code> upgrades automatically, overload SQL functions/iterators cleanly, stream millions of rows in $O(1)$ memory via <code>iterator</code> SRFs, and guard recursion with <code>SQLSTATE 54001</code> plus <code>{.securityDefiner.}</code> / <code>{.searchPath.}</code>.
+            </p>
+          </div>
+          <div class="bento-footer">
+            <span class="bento-metric">O(1) Streaming | 54001 Guard</span>
+            <span class="bento-pill">Architecture</span>
+          </div>
+        </div>
       </div>
     </div>
   </section>

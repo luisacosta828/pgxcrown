@@ -38,6 +38,7 @@
 - **Autonomous Background Workers (`pgxWorker`)**: In-database daemons with sub-1ms dynamic launch (`bgw_notify_pid`), zero-lock live observability (`workerActivity` in `pg_stat_activity`), nested subtransactions (`workerSavepoint`), automatic catalog tracking (`pgxcrown_workers`), and graceful signal shutdown (`onShutdown`).
 - **Multi-Process Shared Memory & IPC (`PG 14–18`)**: Declarative static shared state ([`{.pgxShared.}`](#8-multi-process-concurrency--shared-memory-pg-1418)), dynamic shared memory (`dsm`, `shm_toc`), typed SPSC queues & one-line worker RPC (`ShmChannel[T]`, `callWorker`, `withWorkerChannel`), `LWLock` / `SpinLock` / atomics / `ConditionVariable` (`waitUntil`), and `WaitEventSet` latch+socket multiplexing — all compile-time POD-verified and ABI-safe across PostgreSQL 14–18.
 - **Compile-Time Effect Verification**: Static enforcement of SQL volatility (`{.immutable.}`, `{.stable.}`, `{.volatile.}`) preventing illegal database writes at compile time.
+- **Modular Extensions, Versioning, Overloading & Streaming SRFs**: Clean `src/` (PostgreSQL SQL translation surface) vs `private/` (pure-Nim libraries omitted from SQL), declarative `.control` & `migrations/` generation (`pgxExtension`, `pgxext.json`), collision-checked SQL function/iterator overloading with stable mangled C symbols, $O(1)$ streaming `iterator` SRFs, automatic `checkStackDepth()` (`54001`) overflow guards, and `{.securityDefiner.}` / `{.leakproof.}` / `{.searchPath.}` pragmas.
 
 ---
 
@@ -612,6 +613,65 @@ proc advance_state*(st: PaymentState): PaymentState {.immutable, parallelSafe.} 
 
 ---
 
+### 10. Multi-Module Architecture, Versioning, Overloading, Streaming Iterators & Hardening
+
+Large production extensions need clean code organization, repeatable schema upgrades, SQL overloading, bounded-memory set streaming, and hardened privilege boundaries.
+
+#### Modular `src/` vs `private/` Boundary
+
+Pgxcrown establishes an explicit separation between PostgreSQL-exposed code and internal Nim libraries:
+
+- **`src/` (SQL Translation Surface)**: `src/main.nim` and any submodule inside `src/` imported from it are translated into SQL (`CREATE TYPE`, `CREATE FUNCTION`, `CREATE PROCEDURE`), wrapped in `PG_TRY` + `checkStackDepth()`, and have `{.pgxInit.}` hooks automatically chained in topological order into `_PG_init()`. Local `include` files inside `src/` are spliced transparently, and unused-import hints on submodule imports used solely for SQL exports are suppressed automatically. If you want an exported helper proc/type *inside `src/`* excluded from SQL, mark it with `{.noSql.}`.
+- **`private/` (Pure Nim, Omitted from PostgreSQL)**: Anything under `private/` is omitted from PostgreSQL SQL/C wrapper generation. Modules in `private/` do **not** need `import pgxcrown` or `{.noSql.}`, never emit SQL DDL, and can be imported and called directly from `src/` using standard Nim calls with zero intermediate `Datum` overhead.
+
+```nim
+# private/pricing_core.nim — Pure Nim (never emits SQL DDL)
+type DiscountBand* = object
+  pct*: int32
+
+proc applyBand*(cents: int64, band: DiscountBand): int64 =
+  cents - (cents * band.pct div 100)
+```
+
+```nim
+# src/main.nim — PostgreSQL surface
+import pgxcrown
+import ../private/pricing_core  # or unqualified: import pricing_core
+
+pgxExtension:
+  version = "0.2.0"
+  comment = "Billing rules engine"
+  relocatable = true
+  trusted = true
+
+proc net_amount*(cents: int64, pct: int32): int64 {.immutable, parallelSafe.} =
+  applyBand(cents, DiscountBand(pct: pct))
+```
+
+#### Extension Versioning, `.control` Metadata & SQL Migrations
+
+- **Metadata priority**: `pgxExtension:` in `src/` > `pgxext.json` in the project root > `<ext>.nimble` > defaults (`version = "0.1.0"`, `relocatable = true`, `trusted = false`). Supports `version`, `comment`, `relocatable`, `trusted`, `schema`, and `requires` (with compile-time validation forbidding `schema` when `relocatable = true` and checking SQL identifier safety).
+- **Automatic & Preserved Migrations**: Whenever you bump `version` (e.g., `0.1.0` -> `0.2.0`) and rebuild without `--clean`, Pgxcrown diffs structured `.pgx_build/schema_<ver>.json` snapshots and automatically generates `migrations/<ext>--<old>.sql` and `migrations/<ext>--<old>--<new>.sql` (`ALTER TYPE ... ADD VALUE`, `ALTER TYPE ... ADD ATTRIBUTE`, new/updated functions and iterators). Existing files under `migrations/` are **never** overwritten or removed by `pgxtool clean`, and `pgxtool test` / `pgxtool install` ship them automatically so `CREATE EXTENSION ... VERSION '<old>'` and `ALTER EXTENSION ... UPDATE TO '<new>'` work out of the box.
+
+#### SQL Overloading & Deterministic C Symbol Mangling
+
+Write natural Nim overloads (`proc format_val*(x: int32): string` and `proc format_val*(x: string): string`) or overloaded `iterator`s:
+
+- Pgxcrown assigns every exported SQL routine a deterministic signature-hashed C symbol (e.g., `pgx_format_val_<hash>_int4`, `pgx_format_val_<hash>_text`) from `v0.1.0` onward so adding new overloads in `v0.2.0` never breaks `v0.1.0` SQL scripts against the newer `.so`.
+- Duplicate PostgreSQL SQL signatures (e.g. Nim `int` vs `int32` on `int4`) are caught at compile time with an explicit collision error.
+
+#### Streaming $O(1)$ `iterator` SRFs vs Materialized `seq[T]`
+
+- **Use `iterator` SRFs** (`iterator stream_range*(n: int64): int64` or `Option[T]` yields for SQL `NULL`) for large or infinite sets: rows are yielded lazily one by one inside `funcctx->multi_call_memory_ctx`, keeping memory bounded at $O(1)$ and registering a `MemoryContextRegisterResetCallback` so early query termination (`LIMIT N`), exceptions, or query aborts clean up Nim closure state immediately.
+- **Use `seq[T]` SRFs** (`proc small_list*(): seq[string]`) only for small bounded result sets materialized up front.
+
+#### Automatic Stack Guard (`54001`) & Security Pragmas
+
+- **Stack Overflow Protection**: All `{.pgx.}` SQL wrappers, nested procs/iterators inside UDFs, and recursive pure-Nim helpers in `src/` automatically enforce PostgreSQL's `checkStackDepth()`, converting deep recursion into a catchable `SQLSTATE 54001` (`statement_too_complex`) abort rather than crashing the backend with `SIGSEGV`.
+- **SQL Security Pragmas**: Annotate routines with `{.securityDefiner.}`, `{.securityInvoker.}`, `{.leakproof.}`, and validated `{.searchPath: "public, pg_catalog".}` to emit hardened `CREATE OR REPLACE FUNCTION ... SECURITY DEFINER SET search_path = ...` DDL directly.
+
+---
+
 ## 💻 `pgxtool` CLI Reference
 
 `pgxtool` automates the entire PostgreSQL extension lifecycle:
@@ -648,7 +708,8 @@ proc advance_state*(st: PaymentState): PaymentState {.immutable, parallelSafe.} 
 | `PgNumeric` | `NUMERIC` | `numeric` | Arbitrary-Precision PG Kernel Math |
 | `PgVector[T]` | `T[]` | `int4[]`, `float8[]`, `text[]` | ✅ Zero-Copy Array View |
 | `seq[T]` (Param / Field) | `T[]` | `int4[]`, `uuid[]`, `numeric[]`, `bytea[]`, ... | Bidirectional PG Array FFI |
-| `seq[T]` (Return) | `SETOF T` | `RETURNS SETOF <type>` | Streamed SRF |
+| `seq[T]` (Return) | `SETOF T` | `RETURNS SETOF <type>` | Materialized SRF |
+| `iterator` (Return) | `SETOF T` / `Option[T]` | `RETURNS SETOF <type>` | Streaming $O(1)$ SRF (`NULL` via `Option[T]`) |
 | `string` / `cstring` | `TEXT` / `CSTRING` | `Text` / `cstring` | Transparent |
 | `char` / `int8` / `uint8` | `"char"` | `"char"` | Single-Byte Internal Char |
 | `int32` / `int` | `INTEGER` | `int4` | Native |

@@ -1,0 +1,95 @@
+ALTER TYPE "ArchStatus" ADD VALUE IF NOT EXISTS 'archived';
+
+CREATE TYPE "ArchItem" AS (
+  "id" int4,
+  "label" Text,
+  "status" "ArchStatus"
+);
+
+CREATE OR REPLACE FUNCTION v30_echo(int4) returns int4 as
+'arch_v30_suite', 'pgx_v30_echo_356672_int4'
+language c IMMUTABLE PARALLEL SAFE STRICT;
+
+CREATE OR REPLACE FUNCTION v30_echo(int8) returns int8 as
+'arch_v30_suite', 'pgx_v30_echo_7ec6f3_int8'
+language c IMMUTABLE PARALLEL SAFE STRICT;
+
+CREATE OR REPLACE FUNCTION v30_echo(float8) returns float8 as
+'arch_v30_suite', 'pgx_v30_echo_286128_float8'
+language c IMMUTABLE PARALLEL SAFE STRICT;
+
+CREATE OR REPLACE FUNCTION v30_echo(Text) returns Text as
+'arch_v30_suite', 'pgx_v30_echo_41c057_text'
+language c IMMUTABLE PARALLEL SAFE STRICT;
+
+CREATE OR REPLACE FUNCTION v30_echo(int4, int4) returns int4 as
+'arch_v30_suite', 'pgx_v30_echo_2414ac_int4_int4'
+language c IMMUTABLE PARALLEL SAFE STRICT;
+
+CREATE OR REPLACE FUNCTION v30_describe("ArchItem") returns Text as
+'arch_v30_suite', 'pgx_v30_describe_f57b91_architem'
+language c IMMUTABLE PARALLEL SAFE STRICT;
+
+CREATE OR REPLACE FUNCTION v30_describe("ArchStatus") returns Text as
+'arch_v30_suite', 'pgx_v30_describe_151cd6_archstatus'
+language c IMMUTABLE PARALLEL SAFE STRICT;
+
+CREATE OR REPLACE FUNCTION v30_ping(Text) returns Text as
+'arch_v30_suite', 'pgx_v30_ping_a567ee_text'
+language c STRICT;
+
+CREATE OR REPLACE FUNCTION v30_scaled(int4, int4) returns int4 as
+'arch_v30_suite', 'pgx_v30_scaled_2d608d_int4_int4'
+language c IMMUTABLE PARALLEL SAFE STRICT;
+
+CREATE OR REPLACE FUNCTION v30_stream_range(int8) returns SETOF int8 as
+'arch_v30_suite', 'pgx_v30_stream_range_ad3b70_int8'
+language c STRICT;
+
+CREATE OR REPLACE FUNCTION v30_stream_range(int8, int8) returns SETOF int8 as
+'arch_v30_suite', 'pgx_v30_stream_range_a8b3ce_int8_int8'
+language c STRICT;
+
+CREATE OR REPLACE FUNCTION v30_stream_texts(Text, int4) returns SETOF Text as
+'arch_v30_suite', 'pgx_v30_stream_texts_dfc801_text_int4'
+language c STRICT;
+
+CREATE OR REPLACE FUNCTION v30_stream_items(int4) returns SETOF "ArchItem" as
+'arch_v30_suite', 'pgx_v30_stream_items_4727b8_int4'
+language c STRICT;
+
+CREATE OR REPLACE FUNCTION v30_stream_error(int4) returns SETOF int4 as
+'arch_v30_suite', 'pgx_v30_stream_error_55745b_int4'
+language c STRICT;
+
+CREATE OR REPLACE FUNCTION v30_seq_items(int4) returns SETOF Text as
+'arch_v30_suite', 'pgx_v30_seq_items_12199b_int4'
+language c STRICT;
+
+CREATE OR REPLACE FUNCTION v30_privileged_vault_count() returns int8 as
+'arch_v30_suite', 'pgx_v30_privileged_vault_count_25136a_void'
+language c STRICT SECURITY DEFINER SET search_path = public, pg_catalog;
+
+CREATE OR REPLACE FUNCTION v30_caller_vault_count() returns int8 as
+'arch_v30_suite', 'pgx_v30_caller_vault_count_e6ef53_void'
+language c STRICT SECURITY INVOKER SET search_path = public, pg_catalog;
+
+CREATE OR REPLACE FUNCTION v30_safe_is_even(int4) returns boolean as
+'arch_v30_suite', 'pgx_v30_safe_is_even_77ad3e_int4'
+language c IMMUTABLE PARALLEL SAFE STRICT LEAKPROOF;
+
+CREATE OR REPLACE FUNCTION v30_included_magic() returns int4 as
+'arch_v30_suite', 'pgx_v30_included_magic_e61f42_void'
+language c IMMUTABLE PARALLEL SAFE STRICT;
+
+CREATE OR REPLACE FUNCTION v30_init_sum() returns int4 as
+'arch_v30_suite', 'pgx_v30_init_sum_f4a452_void'
+language c STRICT;
+
+CREATE OR REPLACE FUNCTION v30_recurse_module(int4) returns int4 as
+'arch_v30_suite', 'pgx_v30_recurse_module_a53be7_int4'
+language c STRICT;
+
+CREATE OR REPLACE FUNCTION v30_recurse_nested(int4) returns int4 as
+'arch_v30_suite', 'pgx_v30_recurse_nested_5d8a30_int4'
+language c STRICT;

@@ -1,0 +1,4 @@
+.pgx_build/
+tmp_*
+*.so
+*.dll

@@ -109,6 +109,7 @@ jobs:
               tests/test_bytea_uuid.nim \
               tests/test_errors.nim \
               tests/test_lwlock.nim \
+              tests/test_milestone2_arch.nim \
               tests/test_pgtext.nim \
               tests/test_pgvector.nim \
               tests/test_query_builder.nim \
@@ -133,10 +134,11 @@ jobs:
             rm -rf "$TMP_HOOK_HOME"
           '
 
-      - name: Run All 12 E2E Regression Suites (PG ${{ matrix.pg_version }})
+      - name: Run All 13 E2E Regression Suites (PG ${{ matrix.pg_version }})
         run: |
           for suite in \
             arrays_suite \
+            arch_v30_suite \
             defaults_and_nulls \
             ipc_dsm_suite \
             json_suite \
