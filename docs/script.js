@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Pgxcrown v0.30.0 - Documentation Scripts
+   Pgxcrown v0.30.1 - Documentation Scripts
    ========================================================================== */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -144,7 +144,7 @@ function initHeroCodeTabs() {
    -------------------------------------------------------------------------- */
 const pillarData = {
   zerocopy: {
-    badge: '⚡ Zero-Copy Native Core (v0.30.0)',
+    badge: '⚡ Zero-Copy Native Core (v0.30.1)',
     title: 'Zero-Copy Memory-Mapped Architecture',
     desc: 'Direct pointer-slice views over PostgreSQL varlena and array buffers eliminate intermediate memory allocations, strlen overhead, and garbage collection pauses.',
     checklist: [
@@ -168,7 +168,7 @@ const pillarData = {
   },
 
   bgworker: {
-    badge: '🤖 In-Database Autonomy & IPC (v0.30.0)',
+    badge: '🤖 In-Database Autonomy & IPC (v0.30.1)',
     title: 'Background Workers, Shared Memory & ShmChannel[T]',
     desc: 'Run persistent or dynamic background daemons inside PostgreSQL with {.pgxShared.} static shared state, zero-preload ShmChannel[T] / callWorker RPC over DSM, LWLock/atomics synchronization, and WaitEventSet multiplexing across PG 14–18.',
     checklist: [
@@ -200,7 +200,7 @@ const pillarData = {
   },
 
   shield: {
-    badge: '🛡️ Reliability & Security (v0.30.0)',
+    badge: '🛡️ Reliability & Security (v0.30.1)',
     title: 'Fail-Safe Panic Shield, Stack Guard & SQL Security',
     desc: 'Every exported UDF is enclosed in PG_TRY / PG_CATCH barriers with automatic checkStackDepth() (SQLSTATE 54001) protection, compile-time effect sandboxing, and SQL privilege hardening.',
     checklist: [
@@ -276,7 +276,7 @@ const pillarData = {
   },
 
   tooling: {
-    badge: '🚀 Developer Experience (v0.30.0)',
+    badge: '🚀 Developer Experience (v0.30.1)',
     title: 'Smart Toolchain with Sub-15ms Incremental Builds',
     desc: 'pgxtool manages extension scaffolding, incremental compilation caching, automated gitignore management, and multi-version Docker sandbox testing.',
     checklist: [
@@ -364,7 +364,7 @@ function initPillarsShowcase() {
 }
 
 /* --------------------------------------------------------------------------
-   3. CLI Terminal Simulator (Updated for v0.30.0)
+   3. CLI Terminal Simulator (Updated for v0.30.1)
    -------------------------------------------------------------------------- */
 const cliLogs = {
   'pgxtool init': [
