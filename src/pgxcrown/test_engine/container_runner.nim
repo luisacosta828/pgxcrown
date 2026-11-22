@@ -11,9 +11,15 @@ type
 
 proc waitForPgReady*(docker: DockerDriver, containerName: string, timeoutSec: int = 35): bool =
   let startTime = epochTime()
+  let readyCheckCmd =
+    "bash -lc " & quoteShell(
+      "pg_isready -h 127.0.0.1 -p 5432 -U postgres >/dev/null 2>&1 && " &
+      "pg_isready -U postgres >/dev/null 2>&1 && " &
+      "test \"$(psql -h 127.0.0.1 -U postgres -d postgres -Atc 'SELECT 1;' 2>/dev/null)\" = '1'"
+    )
   while epochTime() - startTime < timeoutSec.float:
-    let (output, exitCode) = docker.execInContainer(containerName, "pg_isready -U postgres")
-    if exitCode == 0 and "accepting connections" in output:
+    let (_, exitCode) = docker.execInContainer(containerName, readyCheckCmd)
+    if exitCode == 0:
       return true
     sleep(200)
   return false
@@ -76,24 +82,25 @@ proc enableSharedPreloadAndRestart*(ctx: PgContainerContext, libraryName: string
     echo "❌ Failed to set shared_preload_libraries for '", libraryName, "': ", alterOut
     return false
 
-  let innerPgCtl = quoteShell(bindir / "pg_ctl") & " -D " & quoteShell(dataDir) & " -l /tmp/pg_restarted.log -m fast restart"
+  let innerPgCtl = quoteShell(bindir / "pg_ctl") & " -D " & quoteShell(dataDir) & " -l /tmp/pg_restarted.log -m fast -w restart"
   let restartShell =
     "if [ \"$(id -u)\" -eq 0 ]; then su - postgres -c " & quoteShell(innerPgCtl) & "; " &
     "else " & innerPgCtl & "; fi"
   let (restartOut, restartCode) = ctx.docker.execInContainer(ctx.containerName, "bash -lc " & quoteShell(restartShell))
   if restartCode != 0:
-    let (pgLogOut, _) = ctx.docker.execInContainer(ctx.containerName, "tail -n 40 /tmp/pg_restarted.log 2>/dev/null || cat /tmp/pg_stdout.log 2>/dev/null || true")
+    let (pgLogOut, _) = ctx.docker.execInContainer(ctx.containerName, "bash -lc 'tail -n 40 /tmp/pg_restarted.log 2>/dev/null || tail -n 40 /tmp/pg_stdout.log 2>/dev/null || true'")
     echo "❌ PostgreSQL failed to restart with shared_preload_libraries = '", libraryName, "':\n", restartOut, "\n", pgLogOut
     return false
 
   if not ctx.docker.waitForPgReady(ctx.containerName, timeoutSec = 35):
-    let (pgLogOut, _) = ctx.docker.execInContainer(ctx.containerName, "tail -n 40 /tmp/pg_restarted.log 2>/dev/null || cat /tmp/pg_stdout.log 2>/dev/null || true")
+    let (pgLogOut, _) = ctx.docker.execInContainer(ctx.containerName, "bash -lc 'tail -n 40 /tmp/pg_restarted.log 2>/dev/null || tail -n 40 /tmp/pg_stdout.log 2>/dev/null || true'")
     echo "❌ PostgreSQL did not become ready after shared_preload_libraries restart:\n", pgLogOut
     return false
 
   let (checkOut, checkCode) = ctx.docker.execInContainer(ctx.containerName, "psql -U postgres -Atc \"SHOW shared_preload_libraries;\"")
   if checkCode != 0 or libraryName notin checkOut:
-    echo "❌ shared_preload_libraries verification failed (got '", checkOut.strip(), "', expected '", libraryName, "')"
+    let (pgLogOut, _) = ctx.docker.execInContainer(ctx.containerName, "bash -lc 'tail -n 40 /tmp/pg_restarted.log 2>/dev/null || tail -n 40 /tmp/pg_stdout.log 2>/dev/null || true'")
+    echo "❌ shared_preload_libraries verification failed (got '", checkOut.strip(), "', expected '", libraryName, "'):\n", pgLogOut
     return false
   return true
 
@@ -133,8 +140,8 @@ proc buildAndInstallProjectInContainer*(
     quoteShell(containerSrcDir / ("lib" & projectName & ".so")) & " " &
     quoteShell(containerSrcDir / (projectName & ".control")) & " " &
     quoteShell(containerSrcDir / (projectName & ".sql")) & " " &
-    quoteShell(containerSrcDir / (projectName & "--0.0.1.sql")) & " " &
     quoteShell(containerSrcDir / "install.sh") & " " &
+    quoteShell(containerSrcDir) & "/" & quoteShell(projectName) & "--*.sql " &
     quoteShell(containerSrcDir) & "/tmp_*"
 
   var buildCmd = "pgxtool build-extension " & quoteShell(projectName) & " --force"
@@ -186,6 +193,17 @@ proc injectExtensionFiles*(ctx: PgContainerContext, projectDir: string, projectN
   if not ctx.docker.copyIntoContainer(ctx.containerName, soFile, destSo):
     return false
 
+  # Copy migrations SQL first (preserves upgrade scripts), then .control and generated .sql
+  let migDir = projectDir / "migrations"
+  if dirExists(migDir):
+    for kind, path in walkDir(migDir):
+      if kind == pcFile:
+        let fn = extractFilename(path)
+        if fn.endsWith(".sql"):
+          let dest = ctx.extensiondir / fn
+          if not ctx.docker.copyIntoContainer(ctx.containerName, path, dest):
+            return false
+
   # Copy .control and .sql files to extensiondir
   for kind, path in walkDir(srcDir):
     if kind == pcFile:
@@ -235,6 +253,9 @@ proc createCleanDatabase*(ctx: PgContainerContext, dbName: string, extensionName
     let (extOut, extCode) = ctx.docker.execInContainer(ctx.containerName, "psql -U postgres -d " & quoteShell(dbName) & " -c \"CREATE EXTENSION \\\"" & extensionName & "\\\" CASCADE;\"")
     if extCode != 0:
       echo "❌ Failed to run 'CREATE EXTENSION ", extensionName, "' in test database '", dbName, "': ", extOut
+      let (logsOut, _) = ctx.docker.execCmdRaw("logs --tail 30 " & quoteShell(ctx.containerName))
+      if logsOut.strip.len > 0:
+        echo "Recent container logs:\n", logsOut
       return false
 
   return true
@@ -244,7 +265,8 @@ proc executeSqlInContainer*(ctx: PgContainerContext, dbName: string, localSqlPat
   if not ctx.docker.copyIntoContainer(ctx.containerName, localSqlPath, containerSqlPath):
     return ("Failed to copy test script into container", 1)
 
-  let psqlCmd = "psql -U postgres -d " & quoteShell(dbName) & " -X -a -P pager=off -v ON_ERROR_STOP=0 -f " & quoteShell(containerSqlPath)
+  let innerPsql = "stdbuf -o0 -e0 psql -U postgres -d " & quoteShell(dbName) & " -X -a -P pager=off -v ON_ERROR_STOP=0 -f " & quoteShell(containerSqlPath) & " 2>&1"
+  let psqlCmd = "bash -lc " & quoteShell(innerPsql)
   let (output, exitCode) = ctx.docker.execInContainer(ctx.containerName, psqlCmd)
   return (output, exitCode)
 

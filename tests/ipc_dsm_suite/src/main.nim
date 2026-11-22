@@ -89,6 +89,25 @@ proc ipc_rpc_worker*() {.pgxWorker.} =
     discard setSocketNonBlocking(fds[1])
     var pingByte: uint8 = 0x50'u8
     discard posix.write(fds[1], addr pingByte, 1)
+    # Wait on the socket WaitEventSet without MyLatch first so a concurrent
+    # SetLatch from the parent backend cannot short-circuit the socket readiness check.
+    withWaitEventSet(sockWes, 2):
+      discard sockWes.addPostmasterDeathEvent(exitOnDeath = true)
+      discard sockWes.addSocketEvent(fds[0], WL_SOCKET_READABLE or wlSocketClosed())
+      var sockEvs: array[2, WaitEvent]
+      let nSockEv = sockWes.waitEventSet(1000, sockEvs)
+      for i in 0 ..< nSockEv:
+        let ev = sockEvs[i]
+        if (ev.events and uint32(WL_POSTMASTER_DEATH)) != 0:
+          workerExit(1)
+        if ev.fd == fds[0] and (ev.events and WL_SOCKET_READABLE) != 0:
+          var buf: array[16, uint8]
+          while true:
+            let nRead = posix.read(fds[0], addr buf[0], buf.len)
+            if nRead > 0:
+              discard (addr st.socketPings).addFetch(1)
+            else:
+              break
 
   withWaitEventSet(wes, 3):
     discard wes.addLatchEvent(MyLatch)
