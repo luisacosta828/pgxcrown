@@ -228,6 +228,9 @@ proc MemoryContextRegisterResetCallback*(context: pointer, cb: ptr MemoryContext
 template SRF_RETURN_NEXT*(funcctx: typed, resultDatum: typed) =
   {.emit: ["SRF_RETURN_NEXT(", funcctx, ", ", resultDatum, ");"].}
 
+template SRF_RETURN_NEXT_NULL*(funcctx: typed) =
+  {.emit: ["SRF_RETURN_NEXT_NULL(", funcctx, ");"].}
+
 template SRF_RETURN_DONE*(funcctx: typed) =
   {.emit: ["SRF_RETURN_DONE(", funcctx, ");"].}
 

@@ -39,6 +39,13 @@ template pgxReceive*(customType: typed) {.pragma.}
 template pgxSend*() {.pragma.}
 template pgxSend*(customType: typed) {.pragma.}
 
+# Function Volatility, Security & Extension Metadata Pragmas
+template securityDefiner*() {.pragma.}
+template securityInvoker*() {.pragma.}
+template leakproof*() {.pragma.}
+template searchPath*(path: string) {.pragma.}
+macro pgxExtension*(args: varargs[untyped]): untyped = newStmtList()
+
 # Background Worker & Hook Pragmas
 template pgxWorker*() {.pragma.}
 template pgxWorker*(name: string) {.pragma.}
@@ -49,7 +56,7 @@ template pgxPreload*() {.pragma.}
 
 const pgTargetVersion* {.intdefine.}: int = 0
 
-template PG_MODULE_MAGIC*() =
+template PGX_SUBMODULE_HEADERS*() =
   const DLL* = "PGDLLEXPORT $# $#$#"
   const V1_DEF* = "PGDLLEXPORT $# $#(PG_FUNCTION_ARGS)"
   {.pragma: pgdllexport, codegenDecl: DLL, exportc.}
@@ -60,6 +67,9 @@ template PG_MODULE_MAGIC*() =
 #include "fmgr.h"
 #include "funcapi.h"
 """.}
+
+template PG_MODULE_MAGIC*() =
+  PGX_SUBMODULE_HEADERS()
   {.emit: """PG_MODULE_MAGIC;""".}
 
 

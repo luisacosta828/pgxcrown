@@ -8,6 +8,7 @@ export errcodes
 {.emit: """/*INCLUDESECTION*/
 #include "postgres.h"
 #include "fmgr.h"
+#include "miscadmin.h"
 #include "utils/elog.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
@@ -17,9 +18,14 @@ __attribute__((weak)) MemoryContext CurrentMemoryContext = (MemoryContext)0;
 __attribute__((weak)) MemoryContext TopMemoryContext = (MemoryContext)0;
 __attribute__((weak)) Oid pgx_active_fn_nsp = (Oid)0;
 __attribute__((weak)) Oid get_func_namespace(Oid funcid) { (void)funcid; return (Oid)0; }
+__attribute__((weak)) void check_stack_depth(void) {}
 #else
 Oid pgx_active_fn_nsp = (Oid)0;
 #endif
+
+void pgx_check_stack_depth(void) {
+  check_stack_depth();
+}
 
 void pgx_ereport_full(int elevel, int sqlerrcode, const char *msg, const char *detail, const char *hint) {
   ereport(elevel, (
@@ -172,6 +178,11 @@ proc pgxCallGuardedRethrowRaw*(fn: PgxGuardedFn, data: pointer, onCatch: PgxGuar
 proc pgxCallV1RethrowRaw*(fn: pointer, fcinfo: pointer, outDatum: pointer, onCatch: PgxGuardedFn, catchCtx: pointer) {.importc: "pgx_call_v1_rethrow".}
 proc pgxEnterTopMemoryContextRaw*(): pointer {.importc: "pgx_enter_top_memory_context".}
 proc pgxLeaveMemoryContextRaw*(oldCtx: pointer) {.importc: "pgx_leave_memory_context".}
+proc pgxCheckStackDepthRaw() {.importc: "pgx_check_stack_depth", nodecl, cdecl, noSideEffect.}
+
+proc checkStackDepth*() {.noSideEffect, gcsafe, raises: [], tags: [].} =
+  ## Enforces PostgreSQL `max_stack_depth` guard (raises SQLSTATE 54001 on overflow).
+  pgxCheckStackDepthRaw()
 
 type PgxFrameState* = typeof(getFrameState())
 

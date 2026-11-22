@@ -183,6 +183,14 @@ proc installProjectLocally(projectDir: string, project: string): bool =
     return false
   copyFile(soFile, pkglibdir / (project & ".so"))
 
+  let migDir = projectDir / "migrations"
+  if dirExists(migDir):
+    for kind, path in walkDir(migDir):
+      if kind == pcFile:
+        let fn = extractFilename(path)
+        if fn.endsWith(".sql"):
+          copyFile(path, extdir / fn)
+
   for kind, path in walkDir(srcDir):
     if kind == pcFile:
       let fn = extractFilename(path)

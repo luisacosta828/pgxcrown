@@ -2,6 +2,7 @@ import std/[macros, strutils, macrocache]
 
 const 
   pgxFunctions = CacheTable"pgxfn"
+  pgxOverloadedNames = CacheTable"pgxoverloaded"
   pgxVarDecl   = CacheTable"pgxvar"
   pgxEnums     = CacheTable"pgxenum"
   pgxDistinct  = CacheTable"pgxDistinct"
@@ -16,6 +17,10 @@ var
 
 proc stripStars(s: string): string {.compileTime.} =
   s.strip(chars = {'*'}).strip()
+
+proc cachePutIfAbsent(tbl: CacheTable, key: string, val: NimNode) {.compileTime.} =
+  if key notin tbl:
+    tbl[key] = val
 
 proc checkPgxTypeDef(dt: string): string =
   var idx: string = $cacheIteration & "type"
@@ -425,149 +430,190 @@ template enum_visited(idx): bool = idx in currentPGXCustomType and currentPGXCus
 template tuplec_visited(idx): bool = idx in currentPGXCustomType and currentPGXCustomType[idx].repr == "tupleConstr"
 template object_visited(idx): bool = idx in currentPGXCustomType and currentPGXCustomType[idx].repr == "object"
 
-template move_nim_params_as_locals =
-  var pvar: string
-  var ptype: string
+proc wrapCtxCloneExpr(expr: NimNode, dtNorm: string, cloneInCtx: bool): NimNode {.compileTime.} =
+  if not cloneInCtx:
+    return expr
+  case dtNorm
+  of "PgText":
+    newCall(ident("clonePgTextInCtx"), expr)
+  of "PgBytea":
+    newCall(ident("toPgBytea"), newCall(ident("toBytes"), expr))
+  of "PgNumeric":
+    newCall(ident("clonePgNumericInCtx"), expr)
+  of "seq[PgBytea]":
+    let rawSeq = genSym(nskLet, "rawByteaSeq")
+    let resSeq = genSym(nskVar, "clonedByteaSeq")
+    let loopIdx = genSym(nskForVar, "idx")
+    quote do:
+      block:
+        let `rawSeq` = `expr`
+        var `resSeq` = newSeq[PgBytea](`rawSeq`.len)
+        for `loopIdx` in 0 ..< `rawSeq`.len:
+          `resSeq`[`loopIdx`] = toPgBytea(toBytes(`rawSeq`[`loopIdx`]))
+        `resSeq`
+  of "seq[PgNumeric]":
+    let rawSeq = genSym(nskLet, "rawNumSeq")
+    let resSeq = genSym(nskVar, "clonedNumSeq")
+    let loopIdx = genSym(nskForVar, "idx")
+    quote do:
+      block:
+        let `rawSeq` = `expr`
+        var `resSeq` = newSeq[PgNumeric](`rawSeq`.len)
+        for `loopIdx` in 0 ..< `rawSeq`.len:
+          `resSeq`[`loopIdx`] = clonePgNumericInCtx(`rawSeq`[`loopIdx`])
+        `resSeq`
+  else:
+    if dtNorm.startsWith("PgVector["):
+      newCall(ident("clonePgVectorInCtx"), expr)
+    else:
+      expr
 
-  for i in 1..fnparams_len:
+proc buildParamDecls(fn: NimNode, varSection: NimNode, cloneInCtx: bool, addUserResult: bool) {.compileTime.} =
+  var argPos = 0
+  for i in 1 ..< fn.params.len:
     let identDef = fn.params[i]
-    pvar = identDef[0].repr
-    var typeNode = identDef[^2]
+    if identDef.kind != nnkIdentDefs or identDef.len < 3:
+      continue
+    let origTypeNode = identDef[^2]
     let defaultNode = identDef[^1]
+    for nameIdx in 0 ..< identDef.len - 2:
+      let pvar = stripStars(identDef[nameIdx].repr)
+      var typeNode = origTypeNode
+      var isOptionParam = false
+      var innerTypeStr = ""
+      var innerTypeNode: NimNode
 
-    var isOptionParam = false
-    var innerTypeStr = ""
-    var innerTypeNode: NimNode
-
-    if typeNode.kind == nnkBracketExpr and typeNode[0].repr == "Option":
-      isOptionParam = true
-      innerTypeStr = typeNode[1].repr
-      innerTypeNode = typeNode[1]
-    else:
-      innerTypeStr = typeNode.repr
-      innerTypeNode = typeNode
-
-    ptype = innerTypeStr
-
-    let isNumericSeq = case ptype:
-      of "seq[float64]": true
-      of "seq[float32]", "seq[float]": true
-      of "seq[int32]", "seq[int]": true
-      of "seq[int64]": true
-      of "seq[int16]": true
-      of "seq[bool]": true
-      else: false
-
-    if isNumericSeq:
-      case ptype:
-      of "seq[float64]":
-        ptype = "PgVector[float64]"
-        innerTypeNode = newTree(nnkBracketExpr, ident("PgVector"), ident("float64"))
-      of "seq[float32]", "seq[float]":
-        ptype = "PgVector[float32]"
-        innerTypeNode = newTree(nnkBracketExpr, ident("PgVector"), ident("float32"))
-      of "seq[int32]", "seq[int]":
-        ptype = "PgVector[int32]"
-        innerTypeNode = newTree(nnkBracketExpr, ident("PgVector"), ident("int32"))
-      of "seq[int64]":
-        ptype = "PgVector[int64]"
-        innerTypeNode = newTree(nnkBracketExpr, ident("PgVector"), ident("int64"))
-      of "seq[int16]":
-        ptype = "PgVector[int16]"
-        innerTypeNode = newTree(nnkBracketExpr, ident("PgVector"), ident("int16"))
-      of "seq[bool]":
-        ptype = "PgVector[bool]"
-        innerTypeNode = newTree(nnkBracketExpr, ident("PgVector"), ident("bool"))
-      else: discard
-      if isOptionParam:
-        typeNode = newTree(nnkBracketExpr, ident("Option"), innerTypeNode)
+      if typeNode.kind == nnkBracketExpr and typeNode[0].repr == "Option":
+        isOptionParam = true
+        innerTypeStr = typeNode[1].repr
+        innerTypeNode = typeNode[1]
       else:
-        typeNode = innerTypeNode
+        innerTypeStr = typeNode.repr
+        innerTypeNode = typeNode
 
-    let isStringType = (ptype == "string" or ptype == "PgText")
-    if isStringType:
-      ptype = "PgText"
-      innerTypeNode = ident("PgText")
+      var ptype = stripStars(innerTypeStr)
+
+      let isNumericSeq = case ptype:
+        of "seq[float64]", "seq[float32]", "seq[float]", "seq[int32]", "seq[int]", "seq[int64]", "seq[int16]", "seq[bool]": true
+        else: false
+
+      if isNumericSeq:
+        case ptype:
+        of "seq[float64]":
+          ptype = "PgVector[float64]"
+          innerTypeNode = newTree(nnkBracketExpr, ident("PgVector"), ident("float64"))
+        of "seq[float32]", "seq[float]":
+          ptype = "PgVector[float32]"
+          innerTypeNode = newTree(nnkBracketExpr, ident("PgVector"), ident("float32"))
+        of "seq[int32]", "seq[int]":
+          ptype = "PgVector[int32]"
+          innerTypeNode = newTree(nnkBracketExpr, ident("PgVector"), ident("int32"))
+        of "seq[int64]":
+          ptype = "PgVector[int64]"
+          innerTypeNode = newTree(nnkBracketExpr, ident("PgVector"), ident("int64"))
+        of "seq[int16]":
+          ptype = "PgVector[int16]"
+          innerTypeNode = newTree(nnkBracketExpr, ident("PgVector"), ident("int16"))
+        of "seq[bool]":
+          ptype = "PgVector[bool]"
+          innerTypeNode = newTree(nnkBracketExpr, ident("PgVector"), ident("bool"))
+        else: discard
+        typeNode = if isOptionParam: newTree(nnkBracketExpr, ident("Option"), innerTypeNode) else: innerTypeNode
+
+      let isStringType = (ptype == "string" or ptype == "PgText")
+      if isStringType:
+        ptype = "PgText"
+        innerTypeNode = ident("PgText")
+        typeNode = if isOptionParam: newTree(nnkBracketExpr, ident("Option"), innerTypeNode) else: innerTypeNode
+
+      let ptypeNorm = stripStars(ptype)
+      let argIdxVal = cuint(argPos)
+      let argIdxNode = newIntLitNode(argPos)
+      inc argPos
+
+      let isEnumParam = ptypeNorm in pgxEnums
+      let isDistinctParam = ptypeNorm in pgxDistinct
+      let elemSeqStr = if ptypeNorm.startsWith("seq["): stripStars(ptypeNorm[4 .. ^2]) else: ""
+      let isEnumOrDistinctSeq = elemSeqStr.len > 0 and (elemSeqStr in pgxEnums or elemSeqStr in pgxDistinct)
+      let isKnownScalar = isBuiltinParamOrSeq(ptypeNorm) or isEnumParam or isDistinctParam or isEnumOrDistinctSeq
+
+      let rawFetch = wrapCtxCloneExpr(
+        buildRawParamFetch(ptypeNorm, innerTypeNode, argIdxNode, forOption = isOptionParam),
+        ptypeNorm,
+        cloneInCtx
+      )
+
+      var getValue: NimNode
       if isOptionParam:
-        typeNode = newTree(nnkBracketExpr, ident("Option"), innerTypeNode)
-      else:
-        typeNode = innerTypeNode
-
-    var ptypeNorm = stripStars(ptype)
-    let argIdxVal = cuint(i - 1)
-    var argIdxNode = newIntLitNode(i - 1)
-    let isEnumParam = ptypeNorm in pgxEnums
-    let isDistinctParam = ptypeNorm in pgxDistinct
-    let elemSeqStr = if ptypeNorm.startsWith("seq["): stripStars(ptypeNorm[4 .. ^2]) else: ""
-    let isEnumOrDistinctSeq = elemSeqStr.len > 0 and (elemSeqStr in pgxEnums or elemSeqStr in pgxDistinct)
-    let isKnownScalar = isBuiltinParamOrSeq(ptypeNorm) or isEnumParam or isDistinctParam or isEnumOrDistinctSeq
-
-    var rawFetch = buildRawParamFetch(ptypeNorm, innerTypeNode, argIdxNode, forOption = isOptionParam)
-
-    var getValue: NimNode
-    if isOptionParam:
-      getValue = newTree(nnkIfExpr,
-        newTree(nnkElifBranch,
-          newCall(ident("isArgNull"), newLit(argIdxVal)),
-          newCall(ident("none"), innerTypeNode)
-        ),
-        newTree(nnkElse,
-          newCall(ident("some"), rawFetch)
-        )
-      )
-    elif defaultNode.kind != nnkEmpty:
-      let defVal = if isStringType: newCall(ident("toPgText"), defaultNode) else: defaultNode
-      getValue = newTree(nnkIfExpr,
-        newTree(nnkElifBranch,
-          newCall(ident("isArgNull"), newLit(argIdxVal)),
-          defVal
-        ),
-        newTree(nnkElse,
-          rawFetch
-        )
-      )
-    else:
-      let zeroVal = zeroExprForType(ptypeNorm, typeNode)
-      if zeroVal.kind != nnkEmpty:
         getValue = newTree(nnkIfExpr,
           newTree(nnkElifBranch,
             newCall(ident("isArgNull"), newLit(argIdxVal)),
-            zeroVal
+            newCall(ident("none"), innerTypeNode)
+          ),
+          newTree(nnkElse,
+            newCall(ident("some"), rawFetch)
+          )
+        )
+      elif defaultNode.kind != nnkEmpty:
+        let defVal =
+          if isStringType:
+            wrapCtxCloneExpr(newCall(ident("toPgText"), defaultNode), "PgText", cloneInCtx)
+          else:
+            defaultNode
+        getValue = newTree(nnkIfExpr,
+          newTree(nnkElifBranch,
+            newCall(ident("isArgNull"), newLit(argIdxVal)),
+            defVal
           ),
           newTree(nnkElse,
             rawFetch
           )
         )
       else:
-        getValue = rawFetch
-
-    if isOptionParam:
-      if isKnownScalar:
-        varSection.add(newIdentDefs(ident(pvar), typeNode, getValue))
-      else:
-        let rawOptFetch = newTree(nnkIfExpr,
-          newTree(nnkElifBranch,
-            newCall(ident("isArgNull"), newLit(argIdxVal)),
-            newCall(ident("none"), innerTypeNode)
-          ),
-          newTree(nnkElse,
-            newCall(ident("some"), newCall(newTree(nnkBracketExpr, ident("tupleHeaderToObject"), innerTypeNode), rawFetch))
+        let zeroVal = zeroExprForType(ptypeNorm, typeNode)
+        if zeroVal.kind != nnkEmpty:
+          getValue = newTree(nnkIfExpr,
+            newTree(nnkElifBranch,
+              newCall(ident("isArgNull"), newLit(argIdxVal)),
+              zeroVal
+            ),
+            newTree(nnkElse,
+              rawFetch
+            )
           )
-        )
-        varSection.add(newIdentDefs(ident(pvar), typeNode, rawOptFetch))
-    elif isKnownScalar:
-      varSection.add(newIdentDefs(ident(pvar), typeNode, getValue))
-    elif ptypeNorm.startsWith("seq["):
-      let innerElemTypeNode = typeNode[1]
-      let callObjSeq = newCall(newTree(nnkBracketExpr, ident("seqTupleHeaderToObjects"), innerElemTypeNode), newCall(ident("getDatum"), argIdxNode))
-      varSection.add(newIdentDefs(ident(pvar), typeNode, callObjSeq))
-    else:
-      let callObj = newCall(newTree(nnkBracketExpr, ident("tupleHeaderToObject"), typeNode), getValue)
-      varSection.add(newIdentDefs(ident(pvar), typeNode, callObj))
-    cacheIteration += 1
+        else:
+          getValue = rawFetch
 
-  if fn.params[0].kind != nnkEmpty:
+      if isOptionParam:
+        if isKnownScalar:
+          varSection.add(newIdentDefs(ident(pvar), typeNode, getValue))
+        else:
+          let rawOptFetch = newTree(nnkIfExpr,
+            newTree(nnkElifBranch,
+              newCall(ident("isArgNull"), newLit(argIdxVal)),
+              newCall(ident("none"), innerTypeNode)
+            ),
+            newTree(nnkElse,
+              newCall(ident("some"), newCall(newTree(nnkBracketExpr, ident("tupleHeaderToObject"), innerTypeNode), rawFetch))
+            )
+          )
+          varSection.add(newIdentDefs(ident(pvar), typeNode, rawOptFetch))
+      elif isKnownScalar:
+        varSection.add(newIdentDefs(ident(pvar), typeNode, getValue))
+      elif ptypeNorm.startsWith("seq["):
+        let innerElemTypeNode = typeNode[1]
+        let callObjSeq = newCall(newTree(nnkBracketExpr, ident("seqTupleHeaderToObjects"), innerElemTypeNode), newCall(ident("getDatum"), argIdxNode))
+        varSection.add(newIdentDefs(ident(pvar), typeNode, callObjSeq))
+      else:
+        let callObj = newCall(newTree(nnkBracketExpr, ident("tupleHeaderToObject"), typeNode), getValue)
+        varSection.add(newIdentDefs(ident(pvar), typeNode, callObj))
+      cacheIteration += 1
+
+  if addUserResult and fn.params[0].kind != nnkEmpty:
     varSection.add(newIdentDefs(nnkPragmaExpr.newTree(ident("userResult"), newTree(nnkPragma, ident("used"))), fn.params[0], newEmptyNode()))
+
+template move_nim_params_as_locals =
+  buildParamDecls(fn, varSection, cloneInCtx = false, addUserResult = true)
 
 template copy_fn_body =
   let body_lines = fn.body.len - 2
@@ -578,105 +624,133 @@ template copy_fn_body =
 template call_return_macro(fn_call: string, code: NimNode): NimNode =
   newCall(return_macro, [code])
 
-proc check_infix_section(code: NimNode): NimNode
-proc check_literal_values(code: NimNode): NimNode
-proc check_return_section(code: NimNode): NimNode
-proc check_call_section(code: NimNode): NimNode
-proc check_var_section(code: NimNode): NimNode
-proc check_if_section(code: NimNode): NimNode 
-proc check_case_section(code: NimNode): NimNode 
-proc check_asgn_section(code: NimNode): NimNode
-proc check_block_section(code: NimNode): NimNode
-proc check_discard_section(code: NimNode): NimNode
-proc check_while_section(code: NimNode): NimNode
-proc check_for_section(code: NimNode): NimNode
-proc check_proc_def(code: NimNode): NimNode
-proc analyze_node(code: NimNode): NimNode
+proc analyzeNode*(code: NimNode, rewriteResult: bool = true): NimNode
 
-proc check_infix_section(code: NimNode): NimNode =
+proc check_infix_section(code: NimNode, rewriteResult: bool): NimNode =
   result = code
-  result[1] = analyze_node(code[1])
-  result[2] = analyze_node(code[2])
-    
-proc check_literal_values(code: NimNode): NimNode =
-  var return_macro = "return" & ReplyLiteralsWithPgxTypes(code)
-  call_return_macro(return_macro, code)
+  result[1] = analyzeNode(code[1], rewriteResult)
+  result[2] = analyzeNode(code[2], rewriteResult)
 
-proc check_return_section(code: NimNode): NimNode =
-  #result = newNimNode(code.kind)
+proc check_call_section_impl(code: NimNode, rewriteResult: bool): NimNode
+
+proc check_return_section_impl(code: NimNode, rewriteResult: bool): NimNode =
   result = newTree(nnkStmtList)
-  
   for key, value in anonTuplConstr:
     if "fn" & $fnIdx in key:
-      #call tupdesc destructor
       let tuple_destructor = anonTuplConstr[key]
       result.add tuple_destructor
-      
-
-  code[0] = analyze_node(code[0])
+  code[0] = analyzeNode(code[0], rewriteResult)
   result.add code
 
-proc check_discard_section(code: NimNode): NimNode =
-  result = check_return_section(code)
-
-proc check_block_section(code: NimNode): NimNode = analyze_node(code)
-
 proc check_proc_def(code: NimNode): NimNode =
+  if code.len >= 7 and code[^1].kind != nnkEmpty:
+    var isImp = false
+    if code.pragma.kind != nnkEmpty:
+      for p in code.pragma:
+        let pName = (if p.kind == nnkExprColonExpr: p[0].repr else: p.repr).toLowerAscii
+        if pName == "importc":
+          isImp = true
+          break
+    if not isImp:
+      var res = copyNimTree(code)
+      res[^1] = newStmtList(
+        newCall(ident("checkStackDepth")),
+        analyzeNode(code[^1], rewriteResult = false)
+      )
+      return res
   result = code
 
-proc analyze_node(code: NimNode): NimNode =
+proc analyzeNode*(code: NimNode, rewriteResult: bool = true): NimNode =
   result = newNimNode(code.kind)
   case code.kind:
   of nnkVarSection:
-    result = check_var_section(code)
+    result = newNimNode(code.kind)
+    for identdef in code:
+      result.add newIdentDefs(identdef[0], identdef[1], analyzeNode(identdef[2], rewriteResult))
   of nnkAsgn:
-    result = check_asgn_section(code)
-  of nnkCall: 
+    result = code
+    result[0] = analyzeNode(code[0], rewriteResult)
+    result[1] = analyzeNode(code[1], rewriteResult)
+  of nnkCall:
     if code[0].repr == "echo":
-      result = newCall(ident("report"), [ident("notice"), code[1]]) 
-    else:    
-      result = check_call_section(code)
+      result = newCall(ident("report"), [ident("notice"), analyzeNode(code[1], rewriteResult)])
+    else:
+      result = check_call_section_impl(code, rewriteResult)
   of nnkCommand:
     if code[0].repr == "echo":
-      result = newCall(ident("report"), [ident("notice"), analyze_node(code[1])])
-    elif code[0].repr in pgxFunctions:
-      result = check_call_section(code)
+      result = newCall(ident("report"), [ident("notice"), analyzeNode(code[1], rewriteResult)])
+    elif code[0].kind == nnkIdent and (stripStars(code[0].repr) in pgxFunctions or stripStars(code[0].repr) in pgxOverloadedNames):
+      let fn_name = stripStars(code[0].repr)
+      error("❌ Cannot call exported SQL UDF '" & fn_name & "' directly from Nim. Move shared pure-Nim logic into the 'private/' directory, an unexported helper proc, or mark it with {.noSql.}.", code)
     else:
       result.add code[0]
       for i in 1 ..< code.len:
-        result.add analyze_node(code[i])
-    
+        result.add analyzeNode(code[i], rewriteResult)
   of nnkBlockStmt:
     result.add code[0]
-    result.add check_block_section(code[1])
+    result.add analyzeNode(code[1], rewriteResult)
   of nnkLiterals:
     result = code
   of nnkIdent:
-    if code.repr == "result":
+    if rewriteResult and code.repr == "result":
       result = ident("userResult")
     else:
       result = code
   of nnkBracketExpr:
     result = newNimNode(nnkBracketExpr)
     for child in code:
-      result.add analyze_node(child)
+      result.add analyzeNode(child, rewriteResult)
   of nnkForStmt:
-    result = check_for_section(code)
+    result = newNimNode(code.kind)
+    result.add code[0]
+    for stmt in code[1 .. ^1]:
+      result.add analyzeNode(stmt, rewriteResult)
   of nnkInfix:
-    result = check_infix_section(code)
+    result = check_infix_section(code, rewriteResult)
   of nnkStmtList:
     for instruction in code:
-      result.add analyze_node(instruction)
+      result.add analyzeNode(instruction, rewriteResult)
   of nnkIfExpr, nnkIfStmt:
-    result = check_if_section(code)
+    var branchSection = newNimNode(code.kind)
+    for stmt in code:
+      var new_node = newNimNode(stmt.kind)
+      if stmt.kind == nnkElifBranch:
+        new_node.add analyzeNode(stmt[0], rewriteResult)
+        new_node.add analyzeNode(stmt[1], rewriteResult)
+      elif stmt.kind == nnkElse:
+        new_node.add analyzeNode(stmt[0], rewriteResult)
+      else:
+        for child in stmt:
+          new_node.add analyzeNode(child, rewriteResult)
+      branchSection.add new_node
+    result = branchSection
   of nnkCaseStmt:
-    result = check_case_section(code)
+    var caseSection = newNimNode(code.kind)
+    caseSection.add analyzeNode(code[0], rewriteResult)
+    for stmt in code[1 .. ^1]:
+      var new_node = newNimNode(stmt.kind)
+      for child in stmt:
+        new_node.add analyzeNode(child, rewriteResult)
+      caseSection.add new_node
+    result = caseSection
   of nnkReturnStmt:
-    result = check_return_section(code)
+    if rewriteResult:
+      result = check_return_section_impl(code, rewriteResult)
+    else:
+      result = newNimNode(code.kind)
+      for child in code:
+        result.add analyzeNode(child, rewriteResult)
   of nnkDiscardStmt:
-    result = check_discard_section(code)
+    if rewriteResult:
+      result = check_return_section_impl(code, rewriteResult)
+    else:
+      result = newNimNode(code.kind)
+      for child in code:
+        result.add analyzeNode(child, rewriteResult)
   of nnkWhileStmt:
-    result = check_while_section(code)
+    result = newNimNode(code.kind)
+    for stmt in code:
+      result.add analyzeNode(stmt, rewriteResult)
   of nnkProcDef, nnkFuncDef:
     result = check_proc_def(code)
   of nnkPrefix, nnkDotExpr, nnkEmpty, nnkCommentStmt, nnkTypeSection, nnkTypeDef, nnkObjectTy, nnkRecList, nnkEnumTy, nnkEnumFieldDef, nnkRefTy, nnkPtrTy, nnkDistinctTy, nnkTupleTy, nnkBracket, nnkCurly, nnkPar, nnkSym, nnkLambda, nnkDo, nnkAccQuoted, nnkFormalParams, nnkTableConstr, nnkTupleConstr, nnkObjConstr, nnkConv, nnkHiddenStdConv, nnkHiddenSubConv, nnkStmtListExpr, nnkElifBranch, nnkElse, nnkElifExpr, nnkElseExpr, nnkOfBranch, nnkPragma, nnkExprColonExpr, nnkPragmaExpr, nnkExprEqExpr, nnkWhenStmt, nnkBreakStmt, nnkContinueStmt, nnkRaiseStmt, nnkFinally, nnkDefer, nnkYieldStmt, nnkTemplateDef, nnkIteratorDef:
@@ -685,87 +759,23 @@ proc analyze_node(code: NimNode): NimNode =
     else:
       result = newNimNode(code.kind)
       for child in code:
-        result.add analyze_node(child)
+        result.add analyzeNode(child, rewriteResult)
   of nnkTryStmt, nnkExceptBranch, nnkConstSection, nnkLetSection, nnkConstDef, nnkIdentDefs, nnkCast, nnkVarTuple:
     for child in code:
-      result.add analyze_node(child)
+      result.add analyzeNode(child, rewriteResult)
   else:
     raise newException(Exception, "Unsupported instruction: " & $code.treerepr)
 
-proc check_call_section(code: NimNode):NimNode =
-  var 
-    fn_name:string = code[0].repr
-    pgx_args:seq[NimNode]
-    is_pgx_fn:bool = fn_name in pgxFunctions
+proc check_call_section_impl(code: NimNode, rewriteResult: bool): NimNode =
+  let fn_name = stripStars(code[0].repr)
+  if code[0].kind == nnkIdent and (fn_name in pgxFunctions or fn_name in pgxOverloadedNames):
+    error("❌ Cannot call exported SQL UDF '" & fn_name & "' directly from Nim. Move shared pure-Nim logic into the 'private/' directory, an unexported helper proc, or mark it with {.noSql.}.", code)
 
-  template check_args(code) = 
-    for props in code[1 .. ^1]:
-      pgx_args.add analyze_node(props)
+  var pgx_args: seq[NimNode] = @[]
+  for props in code[1 .. ^1]:
+    pgx_args.add analyzeNode(props, rewriteResult)
 
-  if is_pgx_fn:
-    pgx_args.add ident("pgx_" & fn_name)
-
-  check_args(code)
-
-  result = 
-    if is_pgx_fn:
-      newCall(ident("DirectFunctionCall" & $(pgx_args.len - 1)), pgx_args)
-    else:
-      newCall(code[0], pgx_args)
-
-
-proc check_var_section(code: NimNode): NimNode =
-  result = newNimNode(code.kind)
-  for identdef in code:
-    result.add newIdentDefs(
-      identdef[0],
-      identdef[1],
-      analyze_node(identdef[2])
-    )
-
-proc check_if_section(code: NimNode): NimNode = 
-  var branchSection = newNimNode(code.kind)
-  for stmt in code:
-    var new_node = newNimNode(stmt.kind)
-    if stmt.kind == nnkElifBranch:
-      new_node.add analyze_node(stmt[0])
-      new_node.add analyze_node(stmt[1])
-    elif stmt.kind == nnkElse:
-      new_node.add analyze_node(stmt[0])
-    else:
-      for child in stmt:
-        new_node.add analyze_node(child)
-    branchSection.add new_node
-  return branchSection
-
-proc check_case_section(code: NimNode): NimNode =
-  var caseSection = newNimNode(code.kind)
-  caseSection.add analyze_node(code[0])
-  for stmt in code[1 .. ^1]:
-    var new_node = newNimNode(stmt.kind)
-    for child in stmt:
-      new_node.add analyze_node(child)
-    caseSection.add new_node
-  return caseSection
-
-proc check_while_section(code: NimNode): NimNode =
-  var whileSection = newNimNode(code.kind)
-  for stmt in code:
-    whileSection.add analyze_node(stmt)
-  return whileSection
-
-proc check_for_section(code: NimNode): NimNode =
-  var forSection = newNimNode(code.kind)
-  forSection.add code[0]
-  for stmt in code[1 .. ^1]:
-    forSection.add analyze_node(stmt)
-  return forSection
-
-
-proc check_asgn_section(code: NimNode): NimNode =
-  result = code
-  result[0] = analyze_node(code[0])
-  result[1] = analyze_node(code[1])
+  newCall(code[0], pgx_args)
 
 proc analyze_fn_body(fn: NimNode): NimNode =
   result = newTree(nnkStmtList)
@@ -773,7 +783,7 @@ proc analyze_fn_body(fn: NimNode): NimNode =
   var asgnSection = newNimNode(nnkAsgn)
   var asgnMultiple = newNimNode(nnkStmtList)
 
-  var fnparams_len = fn.params.len - 1
+  var fnparams_len {.used.} = fn.params.len - 1
   move_nim_params_as_locals
 
   result.add varSection
@@ -783,7 +793,7 @@ proc analyze_fn_body(fn: NimNode): NimNode =
     result.add asgnMultiple
 
   for item in fn.body: 
-    result.add analyze_node(item)
+    result.add analyzeNode(item)
 
 template clean_tuple_desc = 
   if not hasReturn(rbody):
@@ -1004,14 +1014,195 @@ proc wrapSeqReturn(code: NimNode, retTypeStr: string): NimNode =
     let `maxCallsIdent` = `funcctxIdent`.max_calls
     let `stateObjIdent` = cast[ptr `srfStateIdent`](`funcctxIdent`.user_fctx)
     if `callCntrIdent` < `maxCallsIdent` and `stateObjIdent` != nil:
-      let `itemValIdent` = `stateObjIdent`.items[`callCntrIdent`]
+      var `itemValIdent` = `stateObjIdent`.items[`callCntrIdent`]
       let `itemDatumIdent` = `datumConvCall`
+      reset(`itemValIdent`)
       SRF_RETURN_NEXT(`funcctxIdent`, `itemDatumIdent`)
     else:
       if `stateObjIdent` != nil and not `stateObjIdent`.cleanedUp:
         `stateObjIdent`.cleanedUp = true
         reset(`stateObjIdent`.items)
       SRF_RETURN_DONE(`funcctxIdent`)
+
+proc wrapIteratorReturn(iterBody: NimNode, fn: NimNode, forbidsExpr: NimNode, isImmutable: bool): NimNode =
+  if fn.params.len == 0 or fn.params[0].kind == nnkEmpty:
+    error("Exported PG iterator SRF must specify a yield return type", fn)
+
+  let yieldRetType = fn.params[0]
+  let isOptYield = yieldRetType.kind == nnkBracketExpr and yieldRetType[0].repr == "Option"
+  let elemTypeStr = stripStars((if isOptYield: yieldRetType[1] else: yieldRetType).repr)
+
+  var iterPragmas = newNimNode(nnkPragma)
+  iterPragmas.add(ident("closure"))
+  iterPragmas.add(forbidsExpr.copyNimTree())
+  if isImmutable:
+    iterPragmas.add(ident("noSideEffect"))
+
+  let iterTyNode = newTree(
+    nnkIteratorTy,
+    newTree(nnkFormalParams, yieldRetType.copyNimTree()),
+    iterPragmas
+  )
+  let iterTypeIdent = ident("SrfIterFn_" & $fnIdx)
+  let srfStateIdent = ident("SrfIterState_" & $fnIdx)
+  let srfCleanupCbIdent = ident("srfIterCleanupCb_" & $fnIdx)
+  let srfMakeIterIdent = ident("srfMakeIter_" & $fnIdx)
+  let funcctxIdent = ident("funcctx")
+  let oldcontextIdent = ident("oldcontext")
+  let stateObjIdent = ident("stateObj")
+  let resetCbIdent = ident("resetCb")
+  let userIterIdent = ident("userIter")
+  let stepValIdent = ident("stepVal")
+  let isDoneIdent = ident("isDone")
+  let stepOldCtxIdent = ident("stepOldCtx")
+  let stepErrIdent = ident("stepErr")
+  let stepDefIdent = ident("stepDef")
+  let itemDatumIdent = ident("itemDatum")
+
+  var firstCallParams = newNimNode(nnkVarSection)
+  buildParamDecls(fn, firstCallParams, cloneInCtx = true, addUserResult = false)
+
+  let iterBodyWithGuard = newStmtList(
+    newCall(ident("checkStackDepth")),
+    iterBody
+  )
+  let anonIterExpr = newTree(
+    nnkIteratorDef,
+    newEmptyNode(), newEmptyNode(), newEmptyNode(),
+    newTree(nnkFormalParams, yieldRetType.copyNimTree()),
+    iterPragmas.copyNimTree(),
+    newEmptyNode(),
+    iterBodyWithGuard
+  )
+
+  # Build a non-capturing factory proc so any closure-env allocation happens inside
+  # `funcctx.multi_call_memory_ctx` rather than on entry to `pgxImpl_*`.
+  var makeIterFormalParams = newNimNode(nnkFormalParams)
+  makeIterFormalParams.add(iterTypeIdent)
+  var makeIterArgs: seq[NimNode] = @[]
+  for vd in firstCallParams:
+    if vd.kind == nnkIdentDefs and vd.len >= 3:
+      let pIdent = vd[0].copyNimTree()
+      let pTy = vd[1].copyNimTree()
+      makeIterFormalParams.add(newIdentDefs(pIdent, pTy, newEmptyNode()))
+      makeIterArgs.add(newCall(ident("move"), pIdent.copyNimTree()))
+
+  var makeIterPragmas = newNimNode(nnkPragma)
+  makeIterPragmas.add(ident("nimcall"))
+  makeIterPragmas.add(forbidsExpr.copyNimTree())
+  if isImmutable:
+    makeIterPragmas.add(ident("noSideEffect"))
+
+  let makeIterDef = newTree(
+    nnkProcDef,
+    srfMakeIterIdent,
+    newEmptyNode(), newEmptyNode(),
+    makeIterFormalParams,
+    makeIterPragmas,
+    newEmptyNode(),
+    newStmtList(newTree(nnkReturnStmt, anonIterExpr))
+  )
+  let makeIterCall = newCall(srfMakeIterIdent, makeIterArgs)
+
+  var firstCallSetup = newStmtList()
+  if firstCallParams.len > 0:
+    firstCallSetup.add(firstCallParams)
+  firstCallSetup.add quote do:
+    var `userIterIdent`: `iterTypeIdent` = `makeIterCall`
+    let `stateObjIdent` = cast[ptr `srfStateIdent`](palloc0(csize_t(sizeof(`srfStateIdent`))))
+    `stateObjIdent`.iter = move(`userIterIdent`)
+    `stateObjIdent`.cleanedUp = false
+    `stateObjIdent`.inStep = false
+    let `resetCbIdent` = cast[ptr MemoryContextCallback](palloc0(csize_t(sizeof(MemoryContextCallback))))
+    `resetCbIdent`.cbFunc = `srfCleanupCbIdent`
+    `resetCbIdent`.arg = `stateObjIdent`
+    MemoryContextRegisterResetCallback(`funcctxIdent`.multi_call_memory_ctx, `resetCbIdent`)
+    `funcctxIdent`.user_fctx = `stateObjIdent`
+
+  let datumEmitBranch =
+    if isOptYield:
+      let optDatum = buildDatumConvExpr(elemTypeStr, newDotExpr(stepValIdent, ident("get")))
+      quote do:
+        if `stepValIdent`.isNone:
+          reset(`stepValIdent`)
+          SRF_RETURN_NEXT_NULL(`funcctxIdent`)
+        else:
+          let `itemDatumIdent` = `optDatum`
+          reset(`stepValIdent`)
+          SRF_RETURN_NEXT(`funcctxIdent`, `itemDatumIdent`)
+    else:
+      let scalarDatum = buildDatumConvExpr(elemTypeStr, stepValIdent)
+      quote do:
+        let `itemDatumIdent` = `scalarDatum`
+        reset(`stepValIdent`)
+        SRF_RETURN_NEXT(`funcctxIdent`, `itemDatumIdent`)
+
+  result = quote do:
+    type
+      `iterTypeIdent` = `iterTyNode`
+      `srfStateIdent` = object
+        iter: `iterTypeIdent`
+        cleanedUp: bool
+        inStep: bool
+
+    proc `srfCleanupCbIdent`(arg: pointer) {.cdecl.} =
+      let st = cast[ptr `srfStateIdent`](arg)
+      if st != nil and not st.cleanedUp:
+        st.cleanedUp = true
+        if not st.inStep:
+          reset(st.iter)
+
+    `makeIterDef`
+
+    var `funcctxIdent` {.importc: "funcctx", nodecl.}: FuncCallContextPtr
+    if SRF_IS_FIRSTCALL():
+      var `oldcontextIdent` {.importc: "oldcontext", nodecl.}: pointer
+      `funcctxIdent` = SRF_FIRSTCALL_INIT()
+      `oldcontextIdent` = MemoryContextSwitchTo(`funcctxIdent`.multi_call_memory_ctx)
+      try:
+        `firstCallSetup`
+      finally:
+        discard MemoryContextSwitchTo(`oldcontextIdent`)
+
+    `funcctxIdent` = SRF_PERCALL_SETUP()
+    let `stateObjIdent` = cast[ptr `srfStateIdent`](`funcctxIdent`.user_fctx)
+    if `stateObjIdent` == nil or `stateObjIdent`.cleanedUp or `stateObjIdent`.iter == nil:
+      SRF_RETURN_DONE(`funcctxIdent`)
+
+    var `stepValIdent`: `yieldRetType`
+    var `isDoneIdent` = false
+    let `stepOldCtxIdent` = MemoryContextSwitchTo(`funcctxIdent`.multi_call_memory_ctx)
+    `stateObjIdent`.inStep = true
+    try:
+      `stepValIdent` = `stateObjIdent`.iter()
+      `isDoneIdent` = finished(`stateObjIdent`.iter)
+    except CatchableError as `stepErrIdent`:
+      `stateObjIdent`.inStep = false
+      discard MemoryContextSwitchTo(`stepOldCtxIdent`)
+      if not `stateObjIdent`.cleanedUp:
+        `stateObjIdent`.cleanedUp = true
+        reset(`stateObjIdent`.iter)
+      reset(`stepValIdent`)
+      raise `stepErrIdent`
+    except Defect as `stepDefIdent`:
+      `stateObjIdent`.inStep = false
+      discard MemoryContextSwitchTo(`stepOldCtxIdent`)
+      if not `stateObjIdent`.cleanedUp:
+        `stateObjIdent`.cleanedUp = true
+        reset(`stateObjIdent`.iter)
+      reset(`stepValIdent`)
+      raise `stepDefIdent`
+    `stateObjIdent`.inStep = false
+    discard MemoryContextSwitchTo(`stepOldCtxIdent`)
+
+    if `isDoneIdent`:
+      if not `stateObjIdent`.cleanedUp:
+        `stateObjIdent`.cleanedUp = true
+        reset(`stateObjIdent`.iter)
+      reset(`stepValIdent`)
+      SRF_RETURN_DONE(`funcctxIdent`)
+    else:
+      `datumEmitBranch`
 
 proc wrapScalarReturn(code: NimNode, retTypeStr: string, isOutputFn: bool = false): NimNode =
   let isVoid = retTypeStr == "" or retTypeStr == "void"
@@ -1108,10 +1299,19 @@ proc checkSecurityPragmas(node: NimNode) =
   for child in node:
     checkSecurityPragmas(child)
 
-proc explainWrapper(fn: NimNode): NimNode =
+proc explainWrapper(fn: NimNode, customCSym: string = "", isOverloadedHint: bool = false): NimNode =
   checkSecurityPragmas(fn)
-  let pgx_proc = newProc(ident("pgx_" & $fn.name), proc_type = nnkProcDef)
-  pgxFunctions[fn.name.repr] = fn.params
+  let fnBaseName = stripStars(fn.name.repr)
+  let cSym = if customCSym.len > 0: customCSym else: "pgx_" & fnBaseName
+  let isOverloadedSym = isOverloadedHint or (fn.kind != nnkIteratorDef and fnBaseName in pgxFunctions)
+  if fn.kind != nnkIteratorDef:
+    if isOverloadedSym:
+      pgxOverloadedNames.cachePutIfAbsent(fnBaseName, ident(fnBaseName))
+      pgxFunctions.cachePutIfAbsent(cSym, fn.params)
+    else:
+      pgxFunctions.cachePutIfAbsent(fnBaseName, fn.params)
+
+  let pgx_proc = newProc(ident(cSym), proc_type = nnkProcDef)
   pgx_proc.params[0] = ident("Datum")
 
   var isImmutable = false
@@ -1156,31 +1356,36 @@ proc explainWrapper(fn: NimNode): NimNode =
   pgx_proc.pragma = trustedPragma
 
   var rbody = newTree(nnkStmtList)
-
-  rbody = analyze_fn_body(fn)
-
-  let retTypeStr = if fn.params[0].kind != nnkEmpty: fn.params[0].repr else: ""
-  let isOptionReturn = fn.params[0].kind == nnkBracketExpr and fn.params[0][0].repr == "Option"
-  let isSeqReturn = retTypeStr.startsWith("seq[")
-
-  proc finalizeImplicitReturn(body: var NimNode, hasRetType: bool) =
-    if not hasReturn(body) and hasRetType and body.len > 0:
-      if isStatement(body[^1]):
-        body.add newTree(nnkReturnStmt, ident("userResult"))
-      else:
-        body[^1] = newTree(nnkReturnStmt, body[^1])
-
-  let hasRetType = fn.params[0].kind != nnkEmpty
-  if isSeqReturn:
-    finalizeImplicitReturn(rbody, hasRetType)
-    rbody = wrapSeqReturn(rbody, retTypeStr)
-  elif isOptionReturn:
-    let innerTypeStr = fn.params[0][1].repr
-    finalizeImplicitReturn(rbody, hasRetType)
-    rbody = wrapOptionReturn(rbody, innerTypeStr)
+  if fn.kind == nnkIteratorDef:
+    var iterStmts = newStmtList()
+    for item in fn.body:
+      iterStmts.add analyzeNode(item, rewriteResult = false)
+    rbody = wrapIteratorReturn(iterStmts, fn, forbidsExpr, isImmutable)
   else:
-    finalizeImplicitReturn(rbody, hasRetType)
-    rbody = wrapScalarReturn(rbody, retTypeStr, isOutputFn)
+    rbody = analyze_fn_body(fn)
+
+    let retTypeStr = if fn.params[0].kind != nnkEmpty: fn.params[0].repr else: ""
+    let isOptionReturn = fn.params[0].kind == nnkBracketExpr and fn.params[0][0].repr == "Option"
+    let isSeqReturn = retTypeStr.startsWith("seq[")
+
+    proc finalizeImplicitReturn(body: var NimNode, hasRetType: bool) =
+      if not hasReturn(body) and hasRetType and body.len > 0:
+        if isStatement(body[^1]):
+          body.add newTree(nnkReturnStmt, ident("userResult"))
+        else:
+          body[^1] = newTree(nnkReturnStmt, body[^1])
+
+    let hasRetType = fn.params[0].kind != nnkEmpty
+    if isSeqReturn:
+      finalizeImplicitReturn(rbody, hasRetType)
+      rbody = wrapSeqReturn(rbody, retTypeStr)
+    elif isOptionReturn:
+      let innerTypeStr = fn.params[0][1].repr
+      finalizeImplicitReturn(rbody, hasRetType)
+      rbody = wrapOptionReturn(rbody, innerTypeStr)
+    else:
+      finalizeImplicitReturn(rbody, hasRetType)
+      rbody = wrapScalarReturn(rbody, retTypeStr, isOutputFn)
 
   let pendingErrIdent = ident("pgxPendingErr")
   let errCodeIdent = ident("pgxErrCode")
@@ -1197,6 +1402,7 @@ proc explainWrapper(fn: NimNode): NimNode =
     var `errDetailIdent`: cstring = nil
     var `errHintIdent`: cstring = nil
     try:
+      checkStackDepth()
       `scopedBody`
     except Defect as `eIdent`:
       prepareNimDefect(`eIdent`, `errCodeIdent`, `errMsgIdent`, `errDetailIdent`, `errHintIdent`)
@@ -1208,7 +1414,7 @@ proc explainWrapper(fn: NimNode): NimNode =
       pgxEreportFull(ERROR, `errCodeIdent`, `errMsgIdent`, `errDetailIdent`, `errHintIdent`)
 
   var innerProc = copyNimTree(pgx_proc)
-  let innerProcIdent = ident("pgxImpl_" & $fn.name & "_" & $fnIdx)
+  let innerProcIdent = ident("pgxImpl_" & fnBaseName & "_" & $fnIdx)
   innerProc[0] = innerProcIdent
   innerPragma.add(newColonExpr(ident("codegenDecl"), newLit("static $# $#(PG_FUNCTION_ARGS)")))
   innerProc.pragma = innerPragma
@@ -1230,22 +1436,34 @@ proc cleanMacroTypeName(node: NimNode): string =
 
 proc registerPGXEnum(obj: NimNode) =
   let rawName = obj[0][0].repr
-  pgxEnums[rawName] = obj
-  pgxEnums[cleanMacroTypeName(obj[0])] = obj
+  pgxEnums.cachePutIfAbsent(rawName, obj)
+  pgxEnums.cachePutIfAbsent(cleanMacroTypeName(obj[0]), obj)
 
 proc registerPGXDistinct(obj: NimNode) =
   let cleanName = cleanMacroTypeName(obj[0])
-  pgxDistinct[cleanName] = obj[2][0]
+  pgxDistinct.cachePutIfAbsent(cleanName, obj[2][0])
 
 proc registerPGXTupleConstr(obj: NimNode) =
   let rawName = obj[0][0].repr
-  pgxTupleConstr[rawName] = obj
-  pgxTupleConstr[cleanMacroTypeName(obj[0])] = obj
+  pgxTupleConstr.cachePutIfAbsent(rawName, obj)
+  pgxTupleConstr.cachePutIfAbsent(cleanMacroTypeName(obj[0]), obj)
 
 proc registerPGXObjectTy(obj: NimNode) =
   let rawName = obj[0][0].repr
-  pgxObjectTy[rawName] = obj
-  pgxObjectTy[cleanMacroTypeName(obj[0])] = obj
+  pgxObjectTy.cachePutIfAbsent(rawName, obj)
+  pgxObjectTy.cachePutIfAbsent(cleanMacroTypeName(obj[0]), obj)
+
+macro pgxWithSym*(customSym: static[string], fn: untyped): untyped =
+  if fn.kind != nnkTypeDef:
+    return explainWrapper(fn, customSym, isOverloadedHint = false)
+  else:
+    result = fn
+
+macro pgxOverloadSym*(customSym: static[string], fn: untyped): untyped =
+  if fn.kind != nnkTypeDef:
+    return explainWrapper(fn, customSym, isOverloadedHint = true)
+  else:
+    result = fn
 
 macro pgx*(fn: untyped): untyped = 
   if fn.kind != nnkTypeDef:

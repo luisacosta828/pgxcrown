@@ -199,6 +199,35 @@ proc toPgVector*[T](s: seq[T]): PgVector[T] =
       nullElems: s
     )
 
+proc clonePgVectorInCtx*[T](v: PgVector[T]): PgVector[T] {.noSideEffect, tags: [].} =
+  ## Clones `v`'s buffer into PostgreSQL's `CurrentMemoryContext` (`multi_call_memory_ctx`)
+  ## so closure iterators never retain pointers into per-tuple caller contexts.
+  if v.len <= 0:
+    return PgVector[T](raw: nil, dataPtr: nil, len: 0, hasNulls: false)
+  {.cast(noSideEffect).}:
+    let totalBytes = csize_t(v.len * sizeof(T))
+    let buf = arr_palloc(totalBytes)
+    if v.hasNulls and v.nullElems.len >= v.len:
+      copyMem(buf, unsafeAddr v.nullElems[0], v.len * sizeof(T))
+      return PgVector[T](
+        raw: nil,
+        dataPtr: cast[ptr UncheckedArray[T]](buf),
+        len: v.len,
+        hasNulls: true,
+        nullElems: v.nullElems,
+        nullBitmap: v.nullBitmap
+      )
+    if v.dataPtr == nil:
+      arr_pfree(buf)
+      return PgVector[T](raw: nil, dataPtr: nil, len: 0, hasNulls: false)
+    copyMem(buf, v.dataPtr, v.len * sizeof(T))
+    return PgVector[T](
+      raw: nil,
+      dataPtr: cast[ptr UncheckedArray[T]](buf),
+      len: v.len,
+      hasNulls: false
+    )
+
 proc `$`*[T](v: PgVector[T]): string =
   result = "@["
   for i in 0 ..< v.len:

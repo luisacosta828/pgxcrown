@@ -129,6 +129,11 @@ static inline Datum pgx_numeric_get_datum(void *n) {
     return NumericGetDatum((Numeric)n);
 }
 
+static inline void *pgx_numeric_copy(void *n) {
+    if (n == NULL) return NULL;
+    return (void *)DatumGetNumericCopy(NumericGetDatum((Numeric)n));
+}
+
 static inline void *pgx_numeric_in(const char *s) {
     return (void *)DatumGetNumeric(
         DirectFunctionCall3(numeric_in,

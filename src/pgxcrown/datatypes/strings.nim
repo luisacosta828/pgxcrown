@@ -226,6 +226,16 @@ proc getPgText*(datum: Datum): PgText =
   let data = cast[ptr UncheckedArray[char]](VARDATA_ANY(p))
   PgText(raw: p, dataPtr: data, len: length)
 
+proc clonePgTextInCtx*(t: PgText): PgText {.noSideEffect, tags: [].} =
+  ## Clones `t`'s bytes into PostgreSQL's `CurrentMemoryContext` (e.g. `multi_call_memory_ctx`)
+  ## so closure iterators never retain pointers into per-tuple caller contexts.
+  if t.len <= 0 or t.dataPtr == nil:
+    return initPgText()
+  {.cast(noSideEffect).}:
+    let buf = palloc(cuint(t.len))
+    copyMem(buf, t.dataPtr, t.len)
+    return PgText(raw: nil, dataPtr: cast[ptr UncheckedArray[char]](buf), len: t.len)
+
 # Return handlers to PostgreSQL Datum
 proc returnPgText*(t: PgText): Datum =
   if t.len == 0:

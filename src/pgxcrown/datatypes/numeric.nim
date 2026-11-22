@@ -13,6 +13,7 @@ const PgxCHeadersDir = currentSourcePath.parentDir.parentDir / "c_headers"
 {.push header: "pgx_types.h".}
 proc pgx_datum_get_numeric(d: Datum): pointer {.importc.}
 proc pgx_numeric_get_datum(n: pointer): Datum {.importc.}
+proc pgx_numeric_copy(n: pointer): pointer {.importc.}
 proc pgx_numeric_in(s: cstring): pointer {.importc.}
 proc pgx_numeric_out(n: pointer): cstring {.importc.}
 proc pgx_int64_to_numeric(v: int64): pointer {.importc.}
@@ -420,3 +421,11 @@ proc returnPgNumeric*(n: PgNumeric): Datum {.noSideEffect, raises: [ValueError],
   {.cast(noSideEffect).}:
     {.cast(tags: []).}:
       pgx_numeric_get_datum(p)
+
+proc clonePgNumericInCtx*(n: PgNumeric): PgNumeric {.noSideEffect, tags: [].} =
+  ## Clones `n`'s PostgreSQL `Numeric` varlena into `CurrentMemoryContext` (`multi_call_memory_ctx`).
+  if n.raw == nil:
+    return PgNumeric(raw: nil, lit: n.lit)
+  {.cast(noSideEffect).}:
+    {.cast(tags: []).}:
+      PgNumeric(raw: pgx_numeric_copy(n.raw), lit: n.lit)

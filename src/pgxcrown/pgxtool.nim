@@ -343,30 +343,52 @@ proc getCLibs(): string {.inline.} =
   else:
     " "
 
-proc nim_c*(module: string, targetPgVersion: int = 0, nimcacheDir: string = "", debug: bool = false): string {.inline.} =
+proc nim_c*(module: string, targetPgVersion: int = 0, nimcacheDir: string = "",
+            debug: bool = false, projectDir: string = "", realOutDir: string = "",
+            extraPaths: seq[string] = @[], entryOverride: string = ""): string {.inline.} =
   var extraDefines = ""
   if targetPgVersion > 0:
     extraDefines.add " -d:pgTargetVersion=" & $targetPgVersion
   if debug:
     extraDefines.add " -d:pgxDebug"
+  if projectDir.len > 0:
+    extraDefines.add " -d:pgxProjectDir=" & wrap(projectDir)
+  if realOutDir.len > 0:
+    extraDefines.add " -d:pgxRealOutDir=" & wrap(realOutDir)
+  var pathFlags = getPgxcrownPath()
+  for p in extraPaths:
+    if p.len > 0 and dirExists(p):
+      pathFlags.add " --path:" & wrap(p)
   var cacheFlag = ""
   if nimcacheDir.len > 0:
     cacheFlag = " --nimcache:" & wrap(nimcacheDir)
-  "nim c --noMain --compileOnly -d:release --mm:arc --cc:" & getPlatformCompiler() & getPgxcrownPath() & getCIncludes() & cacheFlag & extraDefines & " -d:entrypoint=" & wrap(module) & " " & wrap(module)
+  let ep = if entryOverride.len > 0: entryOverride else: module
+  "nim c --noMain --compileOnly -d:release --mm:arc --cc:" & getPlatformCompiler() & pathFlags & getCIncludes() & cacheFlag & extraDefines & " -d:entrypoint=" & wrap(ep) & " " & wrap(module)
 
-proc emit_pgx_c_extension*(module: string, targetPgVersion: int = 0, nimcacheDir: string = "", debug: bool = false): string {.inline.} =
-  var prj = module.splitPath.head
+proc emit_pgx_c_extension*(module: string, targetPgVersion: int = 0, nimcacheDir: string = "",
+                           debug: bool = false, projectDir: string = "", realOutDir: string = "",
+                           extraPaths: seq[string] = @[], outDir: string = "", outName: string = ""): string {.inline.} =
+  let prj = if outDir.len > 0: outDir else: module.splitPath.head
+  let outLibName = if outName.len > 0: outName else: prj.splitPath.head.splitPath.tail
   var extraDefines = ""
   if targetPgVersion > 0:
     extraDefines.add " -d:pgTargetVersion=" & $targetPgVersion
   if debug:
     extraDefines.add " -d:pgxDebug"
+  if projectDir.len > 0:
+    extraDefines.add " -d:pgxProjectDir=" & wrap(projectDir)
+  if realOutDir.len > 0:
+    extraDefines.add " -d:pgxRealOutDir=" & wrap(realOutDir)
   when defined(linux):
     extraDefines.add " -d:useMalloc --passC:\"-DPGX_WRAP_MALLOC\" --passL:\"-Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=free\""
+  var pathFlags = getPgxcrownPath()
+  for p in extraPaths:
+    if p.len > 0 and dirExists(p):
+      pathFlags.add " --path:" & wrap(p)
   var cacheFlag = ""
   if nimcacheDir.len > 0:
     cacheFlag = " --nimcache:" & wrap(nimcacheDir)
-  "nim c -d:release --mm:arc --cc:" & getPlatformCompiler() & getPgxcrownPath() & getCIncludes() & getCLibs() & cacheFlag & extraDefines & " -d:entrypoint=" & wrap(module) & " --app:lib -o:" & wrap(prj.splitPath.head.splitPath.tail) & " --outdir:" & wrap(prj) & " " & wrap(module)
+  "nim c -d:release --mm:arc --cc:" & getPlatformCompiler() & pathFlags & getCIncludes() & getCLibs() & cacheFlag & extraDefines & " -d:entrypoint=" & wrap(module) & " --app:lib -o:" & wrap(outLibName) & " --outdir:" & wrap(prj) & " " & wrap(module)
 
 template generate_tmp_file(input_file: string, kind: string = "") =
   var
@@ -476,7 +498,7 @@ proc auditBinarySymbols*(soPath: string): bool =
     return true
 
 proc cleanupGeneratedFiles*(dir: string, prjName: string, tmpFile: string) =
-  let filesToDelete = [
+  var filesToDelete = @[
     tmpFile,
     dir / "tmp_main",
     dir / prjName,
@@ -484,40 +506,99 @@ proc cleanupGeneratedFiles*(dir: string, prjName: string, tmpFile: string) =
     dir / "lib" & prjName & ".so",
     dir / prjName & ".control",
     dir / prjName & ".sql",
-    dir / prjName & "--0.0.1.sql",
     dir / "install.sh"
   ]
+  if dirExists(dir):
+    for kind, path in walkDir(dir):
+      if kind == pcFile:
+        let fn = extractFilename(path)
+        if fn.startsWith(prjName & "--") and fn.endsWith(".sql"):
+          filesToDelete.add(path)
   for f in filesToDelete:
     if fileExists(f):
       removeFile(f)
+  let stagedDir = dir.parentDir / ".pgx_build" / "staged_src"
+  if dirExists(stagedDir):
+    removeDir(stagedDir)
   let manifest = dir.parentDir / ".pgx_build" / "manifest.json"
   if fileExists(manifest):
     removeFile(manifest)
 
+proc collectSortedFilesRec(baseDir: string, onlyNim: bool, skipTmpPrefix: bool): seq[string] =
+  result = @[]
+  if not dirExists(baseDir):
+    return
+  for path in walkDirRec(baseDir):
+    let fn = extractFilename(path)
+    if skipTmpPrefix and fn.startsWith("tmp_"):
+      continue
+    if onlyNim and not path.endsWith(".nim"):
+      continue
+    if fileExists(path):
+      result.add(path)
+  result.sort()
+
+proc stageProjectSources*(projectDir: string, stagedRoot: string): tuple[stagedMain: string, stagedSrc: string, stagedPrivate: string] =
+  if dirExists(stagedRoot):
+    removeDir(stagedRoot)
+  let stagedSrc = stagedRoot / "src"
+  let stagedPrivate = stagedRoot / "private"
+  createDir(stagedSrc)
+
+  let realSrc = projectDir / "src"
+  for srcPath in collectSortedFilesRec(realSrc, onlyNim = true, skipTmpPrefix = true):
+    let relPath = srcPath.relativePath(realSrc)
+    let destPath = stagedSrc / relPath
+    createDir(destPath.parentDir)
+    copyFile(srcPath, destPath)
+
+  let realPriv = projectDir / "private"
+  if dirExists(realPriv):
+    for privPath in collectSortedFilesRec(realPriv, onlyNim = true, skipTmpPrefix = false):
+      let relPath = privPath.relativePath(realPriv)
+      let destPath = stagedPrivate / relPath
+      createDir(destPath.parentDir)
+      copyFile(privPath, destPath)
+
+  (
+    stagedMain: stagedSrc / "main.nim",
+    stagedSrc: stagedSrc,
+    stagedPrivate: (if dirExists(stagedPrivate): stagedPrivate else: "")
+  )
+
 proc computeSourceHash*(projectDir: string): string =
   var combined = ""
-  let srcDir = projectDir / "src"
-  if dirExists(srcDir):
-    var files: seq[string] = @[]
-    for kind, path in walkDir(srcDir):
-      if kind == pcFile and path.endsWith(".nim") and not path.splitPath.tail.startsWith("tmp_"):
-        files.add(path)
-    files.sort()
-    for f in files:
+  for f in collectSortedFilesRec(projectDir / "src", onlyNim = true, skipTmpPrefix = true):
+    try:
+      combined.add(f.relativePath(projectDir) & "\0" & readFile(f) & "\0")
+    except CatchableError:
+      discard
+  for f in collectSortedFilesRec(projectDir / "private", onlyNim = true, skipTmpPrefix = false):
+    try:
+      combined.add(f.relativePath(projectDir) & "\0" & readFile(f) & "\0")
+    except CatchableError:
+      discard
+  let extJson = projectDir / "pgxext.json"
+  if fileExists(extJson):
+    try:
+      combined.add("pgxext.json\0" & readFile(extJson) & "\0")
+    except CatchableError:
+      discard
+  var nimbleFiles: seq[string] = @[]
+  if dirExists(projectDir):
+    for kind, path in walkDir(projectDir):
+      if kind == pcFile and path.endsWith(".nimble"):
+        nimbleFiles.add(path)
+  nimbleFiles.sort()
+  for nf in nimbleFiles:
+    try:
+      combined.add(nf.relativePath(projectDir) & "\0" & readFile(nf) & "\0")
+    except CatchableError:
+      discard
+  for mf in collectSortedFilesRec(projectDir / "migrations", onlyNim = false, skipTmpPrefix = false):
+    if mf.endsWith(".sql"):
       try:
-        combined.add(readFile(f))
-      except CatchableError:
-        discard
-  let privateDir = projectDir / "private"
-  if dirExists(privateDir):
-    var files: seq[string] = @[]
-    for kind, path in walkDir(privateDir):
-      if kind == pcFile and path.endsWith(".nim"):
-        files.add(path)
-    files.sort()
-    for f in files:
-      try:
-        combined.add(readFile(f))
+        combined.add(mf.relativePath(projectDir) & "\0" & readFile(mf) & "\0")
       except CatchableError:
         discard
   result = toHex(hash(combined))
@@ -538,14 +619,28 @@ proc ensureProjectGitignore*(projectDir: string) =
     except CatchableError:
       discard
 
+proc resolveExtProject(pgxtoolInitDir: string, req: string): tuple[name: string, projectDir: string] =
+  if req.len == 0:
+    let cwd = getCurrentDir().strip(leading = false, trailing = true, chars = {'/', '\\'})
+    if fileExists(cwd / "src" / "main.nim"):
+      return (cwd.lastPathPart, cwd)
+    return ("", "")
+  let initCand = pgxtoolInitDir / req
+  if dirExists(initCand) and fileExists(initCand / "src" / "main.nim"):
+    return (req.strip(leading = false, trailing = true, chars = {'/', '\\'}).lastPathPart, initCand)
+  let absCand = absolutePath(req).strip(leading = false, trailing = true, chars = {'/', '\\'})
+  if dirExists(absCand) and fileExists(absCand / "src" / "main.nim"):
+    return (absCand.lastPathPart, absCand)
+  (req.strip(leading = false, trailing = true, chars = {'/', '\\'}).lastPathPart, initCand)
+
 proc clean_extension*(req: string) =
-  let prjDir = pgxtool_init_dir / req
+  let (prjName, prjDir) = resolveExtProject(pgxtool_init_dir, req)
   let srcDir = prjDir / "src"
   let buildDir = prjDir / ".pgx_build"
-  cleanupGeneratedFiles(srcDir, req, srcDir / "tmp_main.nim")
+  cleanupGeneratedFiles(srcDir, prjName, srcDir / "tmp_main.nim")
   if dirExists(buildDir):
     removeDir(buildDir)
-  echo "🧹 Cleaned build artifacts and cache for extension '", req, "'."
+  echo "🧹 Cleaned build artifacts and cache for extension '", prjName, "'."
 
 proc ensureHostCompileToolchain() =
   if findExe("nim").len == 0:
@@ -555,7 +650,7 @@ proc ensureHostCompileToolchain() =
 
 proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = false, verbose: bool = false, cleanBefore: bool = false, debug: bool = false) =
   ensureHostCompileToolchain()
-  var (dir, file, _) = splitFile(input_file)
+  let (dir, _, _) = splitFile(input_file)
   let projectDir = dir.parentDir()
   let prjName = projectDir.splitFile().name
 
@@ -563,6 +658,8 @@ proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = fa
   let cacheSubdir = if targetPgVersion > 0: "nimcache_pg" & $targetPgVersion else: "nimcache"
   let nimcacheDir = buildDir / cacheSubdir
   let manifestFile = buildDir / "manifest.json"
+  let stagedRoot = buildDir / "staged_src"
+  let pass1File = stagedRoot / "pgx_pass1.nim"
 
   let soFile = dir / prjName & ".so"
   let plainFile = dir / prjName
@@ -596,24 +693,35 @@ proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = fa
     except CatchableError:
       discard
 
-  generate_tmp_file input_file
-  # Only rewrite tmp_file if content changed to preserve mtime
-  if not fileExists(tmp_file) or readFile(tmp_file) != tmp_content:
-    writeFile(tmp_file, tmp_content)
+  for kind, path in walkDir(dir):
+    if kind == pcFile:
+      let fn = extractFilename(path)
+      if fn.startsWith(prjName & "--") and fn.endsWith(".sql"):
+        removeFile(path)
 
-  let cmd1 = nim_c(tmp_file, targetPgVersion, nimcacheDir, debug = debug)
+  let (stagedMain, stagedSrc, stagedPrivate) = stageProjectSources(projectDir, stagedRoot)
+  writeFile(pass1File, "{.warning[UnusedImport]: off.}\nimport pgxcrown/pgx\n")
+  var modulePaths: seq[string] = @[stagedSrc]
+  if stagedPrivate.len > 0:
+    modulePaths.add(stagedPrivate)
+
+  let cmd1 = nim_c(pass1File, targetPgVersion, nimcacheDir, debug = debug,
+                   projectDir = projectDir, realOutDir = dir,
+                   extraPaths = modulePaths, entryOverride = stagedMain)
   if verbose or debug:
     echo "  [pgxtool:pass1] ", cmd1
   if execShellCmd(cmd1) != 0:
-    cleanupGeneratedFiles(dir, prjName, tmp_file)
+    cleanupGeneratedFiles(dir, prjName, pass1File)
     if fileExists(manifestFile): removeFile(manifestFile)
     quit "Error executing: nim_c (Pass 1 - DDL & AST generation)"
 
-  let cmd2 = emit_pgx_c_extension(tmp_file, targetPgVersion, nimcacheDir, debug = debug)
+  let cmd2 = emit_pgx_c_extension(stagedMain, targetPgVersion, nimcacheDir, debug = debug,
+                                  projectDir = projectDir, realOutDir = dir,
+                                  extraPaths = modulePaths, outDir = dir, outName = prjName)
   if verbose or debug:
     echo "  [pgxtool:pass2] ", cmd2
   if execShellCmd(cmd2) != 0:
-    cleanupGeneratedFiles(dir, prjName, tmp_file)
+    cleanupGeneratedFiles(dir, prjName, pass1File)
     if fileExists(manifestFile): removeFile(manifestFile)
     quit "Error executing: emit_pgx_c_extension (Pass 2 - C compilation & linking)"
 
@@ -621,16 +729,13 @@ proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = fa
 
   if targetLib.len > 0:
     if not auditBinarySymbols(targetLib):
-      cleanupGeneratedFiles(dir, prjName, tmp_file)
+      cleanupGeneratedFiles(dir, prjName, pass1File)
       if fileExists(manifestFile): removeFile(manifestFile)
       quit("❌ [SECURITY VIOLATION] Compilation aborted for extension '" & prjName & "' due to restricted C system calls.")
 
-  # Clean up temporary wrapper file from src/ to keep src/ clean
-  if fileExists(tmp_file):
-    removeFile(tmp_file)
-  var exe = tmp_file.splitFile()
-  if fileExists(exe.dir / exe.name):
-    removeFile(exe.dir / exe.name)
+  # Clean up temporary staged source files to leave only built outputs and incremental cache
+  if dirExists(stagedRoot):
+    removeDir(stagedRoot)
 
   # Write build manifest for smart incremental caching
   var manifestObj = %*{
@@ -650,7 +755,9 @@ proc compile2hook*(input_file: string, targetPgVersion: int = 0, verbose: bool =
   let prjName = projectDir.splitFile().name
   let nimcacheDir = projectDir / ".pgx_build" / (if targetPgVersion > 0: "nimcache_pg" & $targetPgVersion else: "nimcache")
   createDir(nimcacheDir)
-  let cmd = emit_pgx_c_extension(input_file, targetPgVersion, nimcacheDir, debug = debug)
+  let cmd = emit_pgx_c_extension(input_file, targetPgVersion, nimcacheDir, debug = debug,
+                                 projectDir = projectDir, realOutDir = dir,
+                                 outDir = dir, outName = prjName)
   if verbose or debug:
     echo "  [pgxtool:hook] ", cmd
   run cmd
@@ -662,40 +769,46 @@ proc compile2hook*(input_file: string, targetPgVersion: int = 0, verbose: bool =
     removeFile(targetLib)
     quit("❌ [SECURITY VIOLATION] Compilation aborted for hook '" & prjName & "' due to restricted C system calls.")
 
-proc generate_install_script*(req: string): string =
-  var prj_dir = pgxtool_init_dir / req / "src"
+proc generate_install_script*(req: string, projectDirOverride: string = ""): string =
+  let prjName = if projectDirOverride.len > 0: projectDirOverride.splitPath.tail else: req
+  let prjDir = if projectDirOverride.len > 0: projectDirOverride / "src" else: pgxtool_init_dir / req / "src"
   var pkglibdir = pgLibFinder()
   var extdir = pgExtensionDirFinder()
-  var script_path = prj_dir / "install.sh"
+  var script_path = prjDir / "install.sh"
 
   var script_content = "#!/bin/bash\nset -e\n\n"
-  script_content.add "# Auto-generated install script by pgxtool for extension '" & req & "'\n"
+  script_content.add "# Auto-generated install script by pgxtool for extension '" & prjName & "'\n"
   script_content.add "PKGLIBDIR=\"" & pkglibdir & "\"\n"
   script_content.add "EXTDIR=\"" & extdir & "\"\n"
   script_content.add "PRJ_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n\n"
-  script_content.add "echo \"Installing extension '" & req & "' into PostgreSQL...\"\n"
+  script_content.add "echo \"Installing extension '" & prjName & "' into PostgreSQL...\"\n"
   script_content.add "cd \"$PRJ_DIR\"\n\n"
   script_content.add "echo \"  Copying library to $PKGLIBDIR...\"\n"
-  script_content.add "if [ -f \"" & req & ".so\" ]; then\n"
-  script_content.add "  cp -f \"" & req & ".so\" \"$PKGLIBDIR/\"\n"
-  script_content.add "elif [ -f \"" & req & "\" ]; then\n"
-  script_content.add "  cp -f \"" & req & "\" \"$PKGLIBDIR/" & req & ".so\"\n"
-  script_content.add "elif [ -f \"lib" & req & ".so\" ]; then\n"
-  script_content.add "  cp -f \"lib" & req & ".so\" \"$PKGLIBDIR/" & req & ".so\"\n"
+  script_content.add "if [ -f \"" & prjName & ".so\" ]; then\n"
+  script_content.add "  cp -f \"" & prjName & ".so\" \"$PKGLIBDIR/\"\n"
+  script_content.add "elif [ -f \"" & prjName & "\" ]; then\n"
+  script_content.add "  cp -f \"" & prjName & "\" \"$PKGLIBDIR/" & prjName & ".so\"\n"
+  script_content.add "elif [ -f \"lib" & prjName & ".so\" ]; then\n"
+  script_content.add "  cp -f \"lib" & prjName & ".so\" \"$PKGLIBDIR/" & prjName & ".so\"\n"
   script_content.add "fi\n\n"
-  script_content.add "echo \"  Copying control and SQL files to $EXTDIR...\"\n"
-  script_content.add "if [ -f \"" & req & ".control\" ]; then\n"
-  script_content.add "  cp -f \"" & req & ".control\" \"$EXTDIR/\"\n"
+  script_content.add "echo \"  Copying control, schema, and migration SQL files to $EXTDIR...\"\n"
+  script_content.add "if [ -d \"../migrations\" ]; then\n"
+  script_content.add "  for f in ../migrations/" & prjName & "--*.sql; do\n"
+  script_content.add "    [ -f \"$f\" ] && cp -f \"$f\" \"$EXTDIR/\"\n"
+  script_content.add "  done\n"
   script_content.add "fi\n"
-  script_content.add "if [ -f \"" & req & "--0.0.1.sql\" ]; then\n"
-  script_content.add "  cp -f \"" & req & "--0.0.1.sql\" \"$EXTDIR/\"\n"
+  script_content.add "if [ -f \"" & prjName & ".control\" ]; then\n"
+  script_content.add "  cp -f \"" & prjName & ".control\" \"$EXTDIR/\"\n"
   script_content.add "fi\n"
-  script_content.add "if [ -f \"" & req & ".sql\" ]; then\n"
-  script_content.add "  cp -f \"" & req & ".sql\" \"$EXTDIR/\"\n"
+  script_content.add "for f in " & prjName & "--*.sql; do\n"
+  script_content.add "  [ -f \"$f\" ] && cp -f \"$f\" \"$EXTDIR/\"\n"
+  script_content.add "done\n"
+  script_content.add "if [ -f \"" & prjName & ".sql\" ]; then\n"
+  script_content.add "  cp -f \"" & prjName & ".sql\" \"$EXTDIR/\"\n"
   script_content.add "fi\n\n"
-  script_content.add "echo \"Extension '" & req & "' installed successfully!\"\n"
+  script_content.add "echo \"Extension '" & prjName & "' installed successfully!\"\n"
   script_content.add "echo \"To enable it in PostgreSQL, run:\"\n"
-  script_content.add "echo \"  psql -c \\\"CREATE EXTENSION " & req & ";\\\"\"\n"
+  script_content.add "echo \"  psql -c \\\"CREATE EXTENSION " & prjName & ";\\\"\"\n"
 
   writeFile(script_path, script_content)
   when not defined(windows):
@@ -703,17 +816,18 @@ proc generate_install_script*(req: string): string =
   result = script_path
 
 proc install_extension(req: string) =
-  var prj_dir = pgxtool_init_dir / req / "src"
-  var entry_point = prj_dir / "main.nim"
-  if not fileExists(prj_dir / (req & ".control")):
-    echo "Extension files for '", req, "' not found in ", prj_dir
+  let (prjName, prjDirRoot) = resolveExtProject(pgxtool_init_dir, req)
+  let prj_dir = prjDirRoot / "src"
+  let entry_point = prj_dir / "main.nim"
+  if not fileExists(prj_dir / (prjName & ".control")):
+    echo "Extension files for '", prjName, "' not found in ", prj_dir
     echo "Building extension first..."
     if fileExists(entry_point):
       compile2pgx(entry_point)
     else:
       quit("Error: Main file not found at " & entry_point)
 
-  var script_path = generate_install_script(req)
+  var script_path = generate_install_script(prjName, prjDirRoot)
   echo "Generated install script: ", script_path
   echo "To install into PostgreSQL with privileges, run:"
   echo "  sudo ", script_path
@@ -854,15 +968,16 @@ proc check_command(pc: int) =
         echo "⚠️  Unknown option: ", flag
         idx += 1
 
-    var entry_point = pgxtool_init_dir / req / "src" / "main.nim"
+    let (resolvedName, resolvedDir) = resolveExtProject(pgxtool_init_dir, req)
+    var entry_point = resolvedDir / "src" / "main.nim"
     if fileExists(entry_point):
       let detectedTargetVer = detectHostPgVersion()
-      if req in available_hooks:
+      if resolvedName in available_hooks:
         compile2hook(entry_point, targetPgVersion = detectedTargetVer, verbose = verboseBuild, debug = debugBuild)
       else:
         compile2pgx(entry_point, targetPgVersion = detectedTargetVer, force = forceBuild, verbose = verboseBuild, cleanBefore = cleanBuild, debug = debugBuild)
-        var script_path = generate_install_script(req)
-        echo "Build completed for extension: ", req
+        var script_path = generate_install_script(resolvedName, resolvedDir)
+        echo "Build completed for extension: ", resolvedName
         echo "Install script generated at: ", script_path
         echo "To install into PostgreSQL, run:"
         echo "  sudo ", script_path

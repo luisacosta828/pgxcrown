@@ -103,6 +103,12 @@ const
   ERRCODE_DISK_FULL* = makeSqlState("53100")
   ERRCODE_OUT_OF_MEMORY* = makeSqlState("53200")
 
+  # Class 54 — Program Limit Exceeded
+  ERRCODE_PROGRAM_LIMIT_EXCEEDED* = makeSqlState("54000")
+  ERRCODE_STATEMENT_TOO_COMPLEX* = makeSqlState("54001")
+  ERRCODE_TOO_MANY_COLUMNS* = makeSqlState("54011")
+  ERRCODE_TOO_MANY_ARGUMENTS* = makeSqlState("54023")
+
   # Class 55 — Object Not In Prerequisite State
   ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE* = makeSqlState("55000")
   ERRCODE_OBJECT_IN_USE* = makeSqlState("55006")
