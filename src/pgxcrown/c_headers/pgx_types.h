@@ -279,4 +279,76 @@ static inline char *pgx_enum_oid_to_label(Oid enum_oid) {
     return DatumGetCString(DirectFunctionCall1(enum_out, ObjectIdGetDatum(enum_oid)));
 }
 
+/* Direct Function Call helpers for 0-arg, NULL-aware (Option[T]), and >9-arg UDFs */
+static inline Datum pgx_direct_call0(void *fn_ptr, bool *ret_isnull) {
+    PGFunction func = (PGFunction)fn_ptr;
+    FmgrInfo flinfo;
+    LOCAL_FCINFO(fcinfo, 0);
+    MemSet(&flinfo, 0, sizeof(flinfo));
+    flinfo.fn_addr = func;
+    flinfo.fn_nargs = 0;
+    flinfo.fn_mcxt = CurrentMemoryContext;
+    InitFunctionCallInfoData(*fcinfo, &flinfo, 0, InvalidOid, NULL, NULL);
+    {
+        Datum result = (*func)(fcinfo);
+        if (ret_isnull != NULL) {
+            *ret_isnull = fcinfo->isnull;
+        } else if (fcinfo->isnull) {
+            elog(ERROR, "function %p returned NULL", fn_ptr);
+        }
+        return result;
+    }
+}
+
+static inline Datum pgx_direct_call_n(void *fn_ptr, int nargs, const Datum *args, const bool *nulls, bool *ret_isnull) {
+    PGFunction func = (PGFunction)fn_ptr;
+    FmgrInfo flinfo;
+    int i;
+    if (nargs < 0 || nargs > FUNC_MAX_ARGS) {
+        ereport(ERROR,
+                (errcode(ERRCODE_TOO_MANY_ARGUMENTS),
+                 errmsg("cannot pass more than %d arguments to a function", FUNC_MAX_ARGS)));
+    }
+    MemSet(&flinfo, 0, sizeof(flinfo));
+    flinfo.fn_addr = func;
+    flinfo.fn_nargs = (short)nargs;
+    flinfo.fn_mcxt = CurrentMemoryContext;
+    if (nargs <= 16) {
+        LOCAL_FCINFO(fcinfo, 16);
+        InitFunctionCallInfoData(*fcinfo, &flinfo, (short)nargs, InvalidOid, NULL, NULL);
+        for (i = 0; i < nargs; i++) {
+            fcinfo->args[i].value = args != NULL ? args[i] : (Datum)0;
+            fcinfo->args[i].isnull = nulls != NULL ? nulls[i] : false;
+        }
+        {
+            Datum result = (*func)(fcinfo);
+            if (ret_isnull != NULL) {
+                *ret_isnull = fcinfo->isnull;
+            } else if (fcinfo->isnull) {
+                elog(ERROR, "function %p returned NULL", fn_ptr);
+            }
+            return result;
+        }
+    } else {
+        LOCAL_FCINFO(fcinfo, FUNC_MAX_ARGS);
+        InitFunctionCallInfoData(*fcinfo, &flinfo, (short)nargs, InvalidOid, NULL, NULL);
+        for (i = 0; i < nargs; i++) {
+            fcinfo->args[i].value = args != NULL ? args[i] : (Datum)0;
+            fcinfo->args[i].isnull = nulls != NULL ? nulls[i] : false;
+        }
+        {
+            Datum result = (*func)(fcinfo);
+            if (ret_isnull != NULL) {
+                *ret_isnull = fcinfo->isnull;
+            } else if (fcinfo->isnull) {
+                elog(ERROR, "function %p returned NULL", fn_ptr);
+            }
+            return result;
+        }
+    }
+}
+
+/* Zero-cost compile-time effect marker for Nim volatility tracking */
+static inline void pgx_noop_effect(void) {}
+
 #endif /* PGXCROWN_PGX_TYPES_H */

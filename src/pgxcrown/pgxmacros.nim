@@ -3,6 +3,8 @@ import std/[macros, strutils, macrocache]
 const 
   pgxFunctions = CacheTable"pgxfn"
   pgxOverloadedNames = CacheTable"pgxoverloaded"
+  pgxScalarNames = CacheTable"pgxscalar"
+  pgxSrfNames = CacheTable"pgxsrf"
   pgxVarDecl   = CacheTable"pgxvar"
   pgxEnums     = CacheTable"pgxenum"
   pgxDistinct  = CacheTable"pgxDistinct"
@@ -679,9 +681,9 @@ proc analyzeNode*(code: NimNode, rewriteResult: bool = true): NimNode =
   of nnkCommand:
     if code[0].repr == "echo":
       result = newCall(ident("report"), [ident("notice"), analyzeNode(code[1], rewriteResult)])
-    elif code[0].kind == nnkIdent and (stripStars(code[0].repr) in pgxFunctions or stripStars(code[0].repr) in pgxOverloadedNames):
+    elif code[0].kind == nnkIdent and stripStars(code[0].repr) in pgxSrfNames and stripStars(code[0].repr) notin pgxScalarNames:
       let fn_name = stripStars(code[0].repr)
-      error("❌ Cannot call exported SQL UDF '" & fn_name & "' directly from Nim. Move shared pure-Nim logic into the 'private/' directory, an unexported helper proc, or mark it with {.noSql.}.", code)
+      error("❌ Cannot call SETOF/SRF routine '" & fn_name & "' via DirectFunctionCall (PostgreSQL DirectFunctionCall does not provide a ReturnSetInfo/SRF context). Move shared pure-Nim logic into 'private/', an unexported helper proc, or a {.noSql.} helper.", code)
     else:
       result.add code[0]
       for i in 1 ..< code.len:
@@ -768,14 +770,18 @@ proc analyzeNode*(code: NimNode, rewriteResult: bool = true): NimNode =
 
 proc check_call_section_impl(code: NimNode, rewriteResult: bool): NimNode =
   let fn_name = stripStars(code[0].repr)
-  if code[0].kind == nnkIdent and (fn_name in pgxFunctions or fn_name in pgxOverloadedNames):
-    error("❌ Cannot call exported SQL UDF '" & fn_name & "' directly from Nim. Move shared pure-Nim logic into the 'private/' directory, an unexported helper proc, or mark it with {.noSql.}.", code)
+  if code[0].kind == nnkIdent and fn_name in pgxSrfNames and fn_name notin pgxScalarNames:
+    error("❌ Cannot call SETOF/SRF routine '" & fn_name & "' via DirectFunctionCall (PostgreSQL DirectFunctionCall does not provide a ReturnSetInfo/SRF context). Move shared pure-Nim logic into 'private/', an unexported helper proc, or a {.noSql.} helper.", code)
+
+  let analyzedCallee =
+    if code[0].kind == nnkIdent: code[0]
+    else: analyzeNode(code[0], rewriteResult)
 
   var pgx_args: seq[NimNode] = @[]
   for props in code[1 .. ^1]:
     pgx_args.add analyzeNode(props, rewriteResult)
 
-  newCall(code[0], pgx_args)
+  newCall(analyzedCallee, pgx_args)
 
 proc analyze_fn_body(fn: NimNode): NimNode =
   result = newTree(nnkStmtList)
@@ -898,6 +904,364 @@ proc buildDatumConvExpr(typeStr: string, valExpr: NimNode, isPgxOutput: bool = f
     newCall(ident("UInt64GetDatum"), newCall(ident("uint64"), valExpr))
   else:
     newCall(ident(resolveDatumConverter(clean)), valExpr)
+
+proc buildArgDatumExpr(typeStr: string, valExpr: NimNode): NimNode {.compileTime.} =
+  ## Converts an exported UDF stub argument of type `typeStr` (including `seq[T]` arrays) into a `Datum`.
+  let clean = stripStars(typeStr)
+  if clean.startsWith("seq[") and clean.endsWith("]"):
+    let elemClean = stripStars(clean[4 .. ^2])
+    if elemClean in pgxEnums:
+      return newCall(ident("returnArrayEnum"), valExpr)
+    if elemClean in pgxDistinct:
+      let baseStr = stripStars(pgxDistinct[elemClean].repr)
+      let baseIdent = ident(baseStr)
+      let seqValSym = genSym(nskLet, "pgxDistSrc")
+      let mappedSym = genSym(nskVar, "pgxDistArr")
+      let idxSym = genSym(nskForVar, "pgxDistIdx")
+      let mappedExpr = buildArgDatumExpr("seq[" & baseStr & "]", mappedSym)
+      return quote do:
+        block:
+          let `seqValSym` = `valExpr`
+          var `mappedSym` = newSeq[`baseIdent`](`seqValSym`.len)
+          for `idxSym` in 0 ..< `seqValSym`.len:
+            `mappedSym`[`idxSym`] = `baseIdent`(`seqValSym`[`idxSym`])
+          `mappedExpr`
+    case elemClean
+    of "int32", "cint":
+      return newCall(ident("returnArrayInt32"), valExpr)
+    of "int":
+      return newCall(ident("htupPackSeq"), valExpr)
+    of "int64", "clonglong":
+      return newCall(ident("returnArrayInt64"), valExpr)
+    of "float64", "cdouble":
+      return newCall(ident("returnArrayFloat64"), valExpr)
+    of "float32", "cfloat":
+      return newCall(ident("returnArrayFloat32"), valExpr)
+    of "float":
+      let seqValSym = genSym(nskLet, "pgxFltSrc")
+      let mappedSym = genSym(nskVar, "pgxFltArr")
+      let idxSym = genSym(nskForVar, "pgxFltIdx")
+      return quote do:
+        block:
+          let `seqValSym` = `valExpr`
+          var `mappedSym` = newSeq[float32](`seqValSym`.len)
+          for `idxSym` in 0 ..< `seqValSym`.len:
+            `mappedSym`[`idxSym`] = float32(`seqValSym`[`idxSym`])
+          returnArrayFloat32(`mappedSym`)
+    of "int16", "cshort":
+      return newCall(ident("returnArrayInt16"), valExpr)
+    of "bool":
+      return newCall(ident("returnArrayBool"), valExpr)
+    of "string", "Text":
+      return newCall(ident("returnArrayString"), valExpr)
+    of "PgText":
+      let seqValSym = genSym(nskLet, "pgxTxtSrc")
+      let mappedSym = genSym(nskVar, "pgxTxtArr")
+      let idxSym = genSym(nskForVar, "pgxTxtIdx")
+      return quote do:
+        block:
+          let `seqValSym` = `valExpr`
+          var `mappedSym` = newSeq[string](`seqValSym`.len)
+          for `idxSym` in 0 ..< `seqValSym`.len:
+            `mappedSym`[`idxSym`] = $(`seqValSym`[`idxSym`])
+          returnArrayString(`mappedSym`)
+    of "PgUuid":
+      return newCall(ident("returnArrayPgUuid"), valExpr)
+    of "PgBytea":
+      return newCall(ident("returnArrayPgBytea"), valExpr)
+    of "PgDate":
+      return newCall(ident("returnArrayPgDate"), valExpr)
+    of "PgTimestamp":
+      return newCall(ident("returnArrayPgTimestamp"), valExpr)
+    of "PgTimestampTz":
+      return newCall(ident("returnArrayPgTimestampTz"), valExpr)
+    of "PgInterval":
+      return newCall(ident("returnArrayPgInterval"), valExpr)
+    of "PgNumeric":
+      return newCall(ident("returnArrayPgNumeric"), valExpr)
+    of "JsonNode", "Json", "json", "Jsonb", "jsonb":
+      return newCall(ident("returnArrayJsonNode"), valExpr)
+    else:
+      return newCall(ident("packObjectSeq"), valExpr)
+  buildDatumConvExpr(clean, valExpr, isPgxOutput = false)
+
+proc buildDatumToNimExpr(typeStr: string, typeNode: NimNode, datumExpr: NimNode, isOutputFn: bool = false): NimNode {.compileTime.} =
+  ## Unpacks a returned PostgreSQL `Datum` back into the callee's Nim return type `typeStr`.
+  let clean = stripStars(typeStr)
+  if isOutputFn and clean in ["string", "Text"]:
+    let csSym = genSym(nskLet, "pgxOutCs")
+    let resSym = genSym(nskVar, "pgxOutStr")
+    return quote do:
+      block:
+        let `csSym` = DatumGetCString(`datumExpr`)
+        var `resSym` = ""
+        if `csSym` != nil:
+          `resSym` = $`csSym`
+          pfree(`csSym`)
+        `resSym`
+  if clean in pgxDistinct:
+    let baseStr = stripStars(pgxDistinct[clean].repr)
+    return newCall(typeNode, buildDatumToNimExpr(baseStr, ident(baseStr), datumExpr, isOutputFn = false))
+  if clean in pgxEnums:
+    return newCall(newTree(nnkBracketExpr, ident("oidToEnum"), typeNode),
+                   newCall(ident("DatumGetObjectId"), datumExpr))
+
+  case clean
+  of "int":
+    newCall(ident("int"), newCall(ident("DatumGetInt32"), datumExpr))
+  of "int32":
+    newCall(ident("DatumGetInt32"), datumExpr)
+  of "cint":
+    newCall(ident("cint"), newCall(ident("DatumGetInt32"), datumExpr))
+  of "int64":
+    newCall(ident("DatumGetInt64"), datumExpr)
+  of "clonglong":
+    newCall(ident("clonglong"), newCall(ident("DatumGetInt64"), datumExpr))
+  of "int16":
+    newCall(ident("DatumGetInt16"), datumExpr)
+  of "cshort":
+    newCall(ident("cshort"), newCall(ident("DatumGetInt16"), datumExpr))
+  of "int8":
+    newTree(nnkCast, ident("int8"), newCall(ident("DatumGetChar"), datumExpr))
+  of "uint":
+    newCall(ident("uint"), newCall(ident("DatumGetUInt32"), datumExpr))
+  of "uint32":
+    newCall(ident("DatumGetUInt32"), datumExpr)
+  of "cuint":
+    newCall(ident("cuint"), newCall(ident("DatumGetUInt32"), datumExpr))
+  of "uint64":
+    newCall(ident("DatumGetUInt64"), datumExpr)
+  of "culonglong":
+    newCall(ident("culonglong"), newCall(ident("DatumGetUInt64"), datumExpr))
+  of "uint16":
+    newCall(ident("DatumGetUInt16"), datumExpr)
+  of "cushort":
+    newCall(ident("cushort"), newCall(ident("DatumGetUInt16"), datumExpr))
+  of "uint8":
+    newCall(ident("DatumGetUInt8"), datumExpr)
+  of "float":
+    newCall(ident("float"), newCall(ident("DatumGetFloat4"), datumExpr))
+  of "float32":
+    newCall(ident("float32"), newCall(ident("DatumGetFloat4"), datumExpr))
+  of "cfloat":
+    newCall(ident("cfloat"), newCall(ident("DatumGetFloat4"), datumExpr))
+  of "float64":
+    newCall(ident("DatumGetFloat8"), datumExpr)
+  of "cdouble":
+    newCall(ident("cdouble"), newCall(ident("DatumGetFloat8"), datumExpr))
+  of "bool":
+    newTree(nnkInfix, ident("!="), datumExpr, newCall(ident("Datum"), newLit(0)))
+  of "char":
+    newCall(ident("char"), newCall(ident("DatumGetChar"), datumExpr))
+  of "string", "Text":
+    newCall(ident("$"), newCall(ident("getPgText"), datumExpr))
+  of "PgText":
+    newCall(ident("getPgText"), datumExpr)
+  of "cstring":
+    newCall(ident("DatumGetCString"), datumExpr)
+  of "PgBytea":
+    newCall(ident("getPgBytea"), datumExpr)
+  of "PgUuid":
+    newCall(ident("getPgUuid"), datumExpr)
+  of "PgDate":
+    newCall(ident("getPgDate"), datumExpr)
+  of "PgTimestamp":
+    newCall(ident("getPgTimestamp"), datumExpr)
+  of "PgTimestampTz":
+    newCall(ident("getPgTimestampTz"), datumExpr)
+  of "PgInterval":
+    newCall(ident("getPgInterval"), datumExpr)
+  of "PgNumeric":
+    newCall(ident("getPgNumeric"), datumExpr)
+  of "JsonNode", "Json", "json", "Jsonb", "jsonb":
+    newCall(ident("getJsonNode"), datumExpr)
+  of "PgVector[float64]":
+    newCall(ident("getPgVectorFloat64"), datumExpr)
+  of "PgVector[float32]", "PgVector[float]":
+    newCall(ident("getPgVectorFloat32"), datumExpr)
+  of "PgVector[int32]", "PgVector[int]":
+    newCall(ident("getPgVectorInt32"), datumExpr)
+  of "PgVector[int64]":
+    newCall(ident("getPgVectorInt64"), datumExpr)
+  of "PgVector[int16]":
+    newCall(ident("getPgVectorInt16"), datumExpr)
+  of "PgVector[bool]":
+    newCall(ident("getPgVectorBool"), datumExpr)
+  else:
+    newCall(
+      newTree(nnkBracketExpr, ident("tupleHeaderToObject"), typeNode),
+      newCall(ident("DatumGetHeapTupleHeader"), datumExpr)
+    )
+
+proc buildDirectCallWrapper(
+  fn: NimNode,
+  fnBaseName: string,
+  cSym: string,
+  forbidsExpr: NimNode,
+  isImmutable: bool,
+  isStable: bool,
+  isOutputFn: bool
+): tuple[fwdDecl: NimNode, implDecl: NimNode] {.compileTime.} =
+  ## Builds an exported typed Nim stub + forward declaration routing calls through PostgreSQL `DirectFunctionCall*`.
+  var stubParams = newNimNode(nnkFormalParams)
+  let retTypeNode = if fn.params.len > 0: fn.params[0].copyNimTree() else: newEmptyNode()
+  stubParams.add(retTypeNode)
+
+  let retTypeStr = if retTypeNode.kind != nnkEmpty: stripStars(retTypeNode.repr) else: ""
+  let isVoid = retTypeStr.len == 0 or retTypeStr == "void"
+  let isOptionReturn = retTypeNode.kind == nnkBracketExpr and retTypeNode[0].repr == "Option"
+  let optInnerType = if isOptionReturn: retTypeNode[1].copyNimTree() else: newEmptyNode()
+  let optInnerStr = if isOptionReturn: stripStars(optInnerType.repr) else: ""
+
+  type ParamMeta = tuple[pIdent: NimNode, isOption: bool, innerTypeStr: string]
+  var flatParams: seq[ParamMeta] = @[]
+  var hasAnyOptionParam = false
+
+  for i in 1 ..< fn.params.len:
+    let identDef = fn.params[i]
+    if identDef.kind != nnkIdentDefs or identDef.len < 3:
+      stubParams.add(identDef.copyNimTree())
+      continue
+    let pTypeNode = identDef[^2].copyNimTree()
+    let pDefault = identDef[^1].copyNimTree()
+    let isOpt = pTypeNode.kind == nnkBracketExpr and pTypeNode[0].repr == "Option"
+    if isOpt:
+      hasAnyOptionParam = true
+    let innerNode = if isOpt: pTypeNode[1] else: pTypeNode
+    let innerStr = stripStars(innerNode.repr)
+
+    var newDef = newNimNode(nnkIdentDefs)
+    for nameIdx in 0 ..< identDef.len - 2:
+      let cleanIdent = ident(stripStars(identDef[nameIdx].repr))
+      newDef.add(cleanIdent)
+      flatParams.add((pIdent: cleanIdent, isOption: isOpt, innerTypeStr: innerStr))
+    newDef.add(pTypeNode)
+    newDef.add(pDefault)
+    stubParams.add(newDef)
+
+  let dbReadId = ident("DbReadEffect")
+  let dbWriteId = ident("DbWriteEffect")
+  var stubPragmas = newNimNode(nnkPragma)
+  stubPragmas.add(forbidsExpr.copyNimTree())
+  if isImmutable:
+    stubPragmas.add(ident("noSideEffect"))
+    stubPragmas.add(newColonExpr(ident("tags"), newTree(nnkBracket)))
+  elif isStable:
+    stubPragmas.add(newColonExpr(ident("tags"), newTree(nnkBracket, dbReadId)))
+  else:
+    stubPragmas.add(newColonExpr(ident("tags"), newTree(nnkBracket, dbWriteId)))
+
+  let cSymIdent = ident(cSym)
+  let retDatumSym = genSym(nskLet, "pgxRetDatum")
+  let retIsNullSym = genSym(nskVar, "pgxRetIsNull")
+  let retIsNullArg = if isOptionReturn: newCall(ident("addr"), retIsNullSym) else: newNilLit()
+
+  var coreStmts = newStmtList()
+  if isOptionReturn:
+    coreStmts.add quote do:
+      var `retIsNullSym` = false
+
+  let nargs = flatParams.len
+  if nargs == 0:
+    coreStmts.add quote do:
+      let `retDatumSym` = pgxDirectCall0(cast[pointer](`cSymIdent`), `retIsNullArg`)
+  elif nargs <= 9 and not hasAnyOptionParam and not isOptionReturn:
+    var dfcArgs: seq[NimNode] = @[newTree(nnkCast, ident("PGType"), cSymIdent)]
+    for pm in flatParams:
+      dfcArgs.add buildArgDatumExpr(pm.innerTypeStr, pm.pIdent)
+    let dfcCall = newCall(ident("DirectFunctionCall" & $nargs), dfcArgs)
+    coreStmts.add newLetStmt(retDatumSym, dfcCall)
+  else:
+    let argsArrSym = genSym(nskVar, "pgxArgs")
+    let nullsArrSym = genSym(nskVar, "pgxNulls")
+    let nLit = newLit(nargs)
+    coreStmts.add quote do:
+      var `argsArrSym`: array[`nLit`, Datum]
+      var `nullsArrSym`: array[`nLit`, bool]
+    for idx, pm in flatParams:
+      let idxLit = newLit(idx)
+      let paramId = pm.pIdent
+      if pm.isOption:
+        let convGet = buildArgDatumExpr(pm.innerTypeStr, newDotExpr(paramId, ident("get")))
+        coreStmts.add quote do:
+          if `paramId`.isNone:
+            `nullsArrSym`[`idxLit`] = true
+            `argsArrSym`[`idxLit`] = Datum(0)
+          else:
+            `nullsArrSym`[`idxLit`] = false
+            `argsArrSym`[`idxLit`] = `convGet`
+      else:
+        let convVal = buildArgDatumExpr(pm.innerTypeStr, paramId)
+        coreStmts.add quote do:
+          `nullsArrSym`[`idxLit`] = false
+          `argsArrSym`[`idxLit`] = `convVal`
+    coreStmts.add quote do:
+      let `retDatumSym` = pgxDirectCallN(
+        cast[pointer](`cSymIdent`),
+        cint(`nLit`),
+        addr `argsArrSym`[0],
+        addr `nullsArrSym`[0],
+        `retIsNullArg`
+      )
+
+  if isVoid:
+    coreStmts.add newTree(nnkDiscardStmt, retDatumSym)
+  elif isOptionReturn:
+    let unpackedSome = buildDatumToNimExpr(optInnerStr, optInnerType, retDatumSym, isOutputFn)
+    coreStmts.add quote do:
+      if `retIsNullSym`:
+        none(`optInnerType`)
+      else:
+        some(`unpackedSome`)
+  else:
+    coreStmts.add buildDatumToNimExpr(retTypeStr, retTypeNode, retDatumSym, isOutputFn)
+
+  let stubBody =
+    if isImmutable:
+      newTree(
+        nnkPragmaBlock,
+        newTree(nnkPragma, newTree(nnkCast, newEmptyNode(), ident("noSideEffect"))),
+        newStmtList(
+          newTree(
+            nnkPragmaBlock,
+            newTree(nnkPragma, newTree(nnkCast, newEmptyNode(), newColonExpr(ident("tags"), newTree(nnkBracket)))),
+            coreStmts
+          )
+        )
+      )
+    elif isStable:
+      newStmtList(
+        newCall(ident("pgxMarkDbRead")),
+        newTree(
+          nnkPragmaBlock,
+          newTree(nnkPragma, newTree(nnkCast, newEmptyNode(), newColonExpr(ident("tags"), newTree(nnkBracket, dbReadId)))),
+          coreStmts
+        )
+      )
+    else:
+      newStmtList(
+        newCall(ident("pgxMarkDbWrite")),
+        newTree(
+          nnkPragmaBlock,
+          newTree(nnkPragma, newTree(nnkCast, newEmptyNode(), newColonExpr(ident("tags"), newTree(nnkBracket, dbWriteId)))),
+          coreStmts
+        )
+      )
+
+  let exportName = nnkPostfix.newTree(ident("*"), ident(fnBaseName))
+  let fwdDecl = newTree(
+    nnkProcDef,
+    exportName,
+    newEmptyNode(),
+    newEmptyNode(),
+    stubParams,
+    stubPragmas,
+    newEmptyNode(),
+    newEmptyNode()
+  )
+  var implDecl = fwdDecl.copyNimTree()
+  implDecl[6] = stubBody
+  result = (fwdDecl: fwdDecl, implDecl: implDecl)
 
 proc wrapOptionReturn(code: NimNode, innerTypeStr: string): NimNode =
   proc transformReturn(n: NimNode): NimNode =
@@ -1024,7 +1388,7 @@ proc wrapSeqReturn(code: NimNode, retTypeStr: string): NimNode =
         reset(`stateObjIdent`.items)
       SRF_RETURN_DONE(`funcctxIdent`)
 
-proc wrapIteratorReturn(iterBody: NimNode, fn: NimNode, forbidsExpr: NimNode, isImmutable: bool): NimNode =
+proc wrapIteratorReturn(iterBody: NimNode, fn: NimNode, forbidsExpr: NimNode, isImmutable: bool, isStable: bool): NimNode =
   if fn.params.len == 0 or fn.params[0].kind == nnkEmpty:
     error("Exported PG iterator SRF must specify a yield return type", fn)
 
@@ -1037,6 +1401,9 @@ proc wrapIteratorReturn(iterBody: NimNode, fn: NimNode, forbidsExpr: NimNode, is
   iterPragmas.add(forbidsExpr.copyNimTree())
   if isImmutable:
     iterPragmas.add(ident("noSideEffect"))
+    iterPragmas.add(newColonExpr(ident("tags"), newTree(nnkBracket)))
+  elif isStable:
+    iterPragmas.add(newColonExpr(ident("tags"), newTree(nnkBracket, ident("DbReadEffect"))))
 
   let iterTyNode = newTree(
     nnkIteratorTy,
@@ -1092,6 +1459,9 @@ proc wrapIteratorReturn(iterBody: NimNode, fn: NimNode, forbidsExpr: NimNode, is
   makeIterPragmas.add(forbidsExpr.copyNimTree())
   if isImmutable:
     makeIterPragmas.add(ident("noSideEffect"))
+    makeIterPragmas.add(newColonExpr(ident("tags"), newTree(nnkBracket)))
+  elif isStable:
+    makeIterPragmas.add(newColonExpr(ident("tags"), newTree(nnkBracket, ident("DbReadEffect"))))
 
   let makeIterDef = newTree(
     nnkProcDef,
@@ -1304,7 +1674,13 @@ proc explainWrapper(fn: NimNode, customCSym: string = "", isOverloadedHint: bool
   let fnBaseName = stripStars(fn.name.repr)
   let cSym = if customCSym.len > 0: customCSym else: "pgx_" & fnBaseName
   let isOverloadedSym = isOverloadedHint or (fn.kind != nnkIteratorDef and fnBaseName in pgxFunctions)
-  if fn.kind != nnkIteratorDef:
+
+  let retTypeStrCheck = if fn.params.len > 0 and fn.params[0].kind != nnkEmpty: fn.params[0].repr else: ""
+  let isSrf = (fn.kind == nnkIteratorDef) or retTypeStrCheck.startsWith("seq[")
+  if isSrf:
+    pgxSrfNames.cachePutIfAbsent(fnBaseName, ident(fnBaseName))
+  else:
+    pgxScalarNames.cachePutIfAbsent(fnBaseName, ident(fnBaseName))
     if isOverloadedSym:
       pgxOverloadedNames.cachePutIfAbsent(fnBaseName, ident(fnBaseName))
       pgxFunctions.cachePutIfAbsent(cSym, fn.params)
@@ -1317,6 +1693,8 @@ proc explainWrapper(fn: NimNode, customCSym: string = "", isOverloadedHint: bool
   var isImmutable = false
   var isStable = false
   var isOutputFn = false
+  var isReceiveFn = false
+  var isSendFn = false
   if fn.pragma.kind != nnkEmpty:
     for p in fn.pragma:
       let pName = (if p.kind == nnkExprColonExpr: p[0].repr else: p.repr).toLowerAscii
@@ -1326,17 +1704,16 @@ proc explainWrapper(fn: NimNode, customCSym: string = "", isOverloadedHint: bool
         isStable = true
       elif pName in ["pgxoutput", "pgx_output"]:
         isOutputFn = true
+      elif pName in ["pgxreceive", "pgx_receive"]:
+        isReceiveFn = true
+      elif pName in ["pgxsend", "pgx_send"]:
+        isSendFn = true
 
   var forbidsExpr = newNimNode(nnkExprColonExpr)
   forbidsExpr.add(ident("forbids"))
   var forbidsList = newNimNode(nnkBracket)
   forbidsList.add(ident("IOEffect"))
   forbidsList.add(ident("TimeEffect"))
-  if isImmutable:
-    forbidsList.add(ident("DbReadEffect"))
-    forbidsList.add(ident("DbWriteEffect"))
-  elif isStable:
-    forbidsList.add(ident("DbWriteEffect"))
   forbidsExpr.add(forbidsList)
 
   var innerPragma = newNimNode(nnkPragma)
@@ -1344,6 +1721,9 @@ proc explainWrapper(fn: NimNode, customCSym: string = "", isOverloadedHint: bool
   innerPragma.add(forbidsExpr)
   if isImmutable:
     innerPragma.add(ident("noSideEffect"))
+    innerPragma.add(newColonExpr(ident("tags"), newTree(nnkBracket)))
+  elif isStable:
+    innerPragma.add(newColonExpr(ident("tags"), newTree(nnkBracket, ident("DbReadEffect"))))
 
   var trustedPragma = newNimNode(nnkPragma)
   trustedPragma.add(ident("pgv1"))
@@ -1360,7 +1740,7 @@ proc explainWrapper(fn: NimNode, customCSym: string = "", isOverloadedHint: bool
     var iterStmts = newStmtList()
     for item in fn.body:
       iterStmts.add analyzeNode(item, rewriteResult = false)
-    rbody = wrapIteratorReturn(iterStmts, fn, forbidsExpr, isImmutable)
+    rbody = wrapIteratorReturn(iterStmts, fn, forbidsExpr, isImmutable, isStable)
   else:
     rbody = analyze_fn_body(fn)
 
@@ -1422,11 +1802,22 @@ proc explainWrapper(fn: NimNode, customCSym: string = "", isOverloadedHint: bool
 
   pgx_proc.body = quote do:
     return pgxRunV1Guarded(Datum, `innerProcIdent`)
-  when defined(pgxDebug):
-    echo innerProc.repr
-    echo pgx_proc.repr
 
-  result = newStmtList(innerProc, pgx_proc)
+  if not isSrf and not isReceiveFn and not isSendFn:
+    let (stubFwd, stubImpl) = buildDirectCallWrapper(
+      fn, fnBaseName, cSym, forbidsExpr, isImmutable, isStable, isOutputFn
+    )
+    when defined(pgxDebug):
+      echo stubFwd.repr
+      echo innerProc.repr
+      echo pgx_proc.repr
+      echo stubImpl.repr
+    result = newStmtList(stubFwd, innerProc, pgx_proc, stubImpl)
+  else:
+    when defined(pgxDebug):
+      echo innerProc.repr
+      echo pgx_proc.repr
+    result = newStmtList(innerProc, pgx_proc)
   fnIdx += 1
 
 proc cleanMacroTypeName(node: NimNode): string =

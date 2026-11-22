@@ -187,6 +187,11 @@ template `@`*[T](v: PgVector[T]): seq[T] =
 converter toSeq*[T](v: PgVector[T]): seq[T] =
   @v
 
+converter optPgVectorToOptSeq*[T](o: Option[PgVector[T]]): Option[seq[T]] {.inline.} =
+  ## Converts `Option[PgVector[T]]` parameters into `Option[seq[T]]` for inter-UDF and return compatibility.
+  if o.isSome: some(@(o.get))
+  else: none(seq[T])
+
 proc toPgVector*[T](s: seq[T]): PgVector[T] =
   if s.len == 0:
     PgVector[T](raw: nil, dataPtr: nil, len: 0, hasNulls: false)

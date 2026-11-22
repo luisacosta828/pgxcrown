@@ -31,6 +31,8 @@ proc pgx_lookup_type_oid(typname: cstring): Oid {.importc.}
 proc pgx_get_array_type_oid(elemOid: Oid): Oid {.importc.}
 proc pgx_enum_label_to_oid(typname: cstring, label: cstring): Oid {.importc.}
 proc pgx_enum_oid_to_label(enumOid: Oid): cstring {.importc.}
+proc pgxDirectCall0*(fn: pointer, retIsNull: ptr bool = nil): Datum {.importc: "pgx_direct_call0", noSideEffect, gcsafe, tags: [].}
+proc pgxDirectCallN*(fn: pointer, nargs: cint, args: ptr Datum, nulls: ptr bool, retIsNull: ptr bool = nil): Datum {.importc: "pgx_direct_call_n", noSideEffect, gcsafe, tags: [].}
 {.pop.}
 
 {.push header: "utils/array.h".}
@@ -122,6 +124,7 @@ proc GetAttributeByNum*(tup: HeapTupleHeader, attrno: cint,
 
 {.push header: "fmgr.h".}
 proc getHeapTupleHeader*(value: cuint): HeapTupleHeader {.importc: "PG_GETARG_HEAPTUPLEHEADER".}
+proc DatumGetHeapTupleHeader*(d: Datum): HeapTupleHeader {.importc: "DatumGetHeapTupleHeader".}
 {.pop.}
 
 proc sqlTypeNameFor*[T](): string {.inline, noSideEffect, tags: [].} =
@@ -679,3 +682,21 @@ proc objectToDatum*[T: distinct](obj: T): Datum {.tags: [].} =
 
 proc objectToDatum*[T: enum](obj: T): Datum {.tags: [].} =
   enumToDatum(obj)
+
+proc packObjectSeq*[T: object | tuple](s: seq[T]): Datum {.tags: [].} =
+  ## Packs a sequence of composite objects or tuples into a PostgreSQL record/composite array Datum.
+  {.cast(noSideEffect).}:
+    {.cast(tags: []).}:
+      var elemOid = pgx_lookup_type_oid(cstring(sqlTypeNameFor[T]()))
+      if elemOid == 0.Oid:
+        elemOid = 2249.Oid # RECORDOID
+      if s.len == 0:
+        let arrPtr = htup_construct_array(nil, 0'i32, elemOid, -1'i32, false, 'd'.cchar)
+        return PointerGetDatum(cast[Pointer](arrPtr))
+      let elemsBuf = cast[ptr UncheckedArray[Datum]](basic.palloc(cuint(s.len * sizeof(Datum))))
+      for i in 0 ..< s.len:
+        elemsBuf[i] = objectToDatum(s[i])
+      let arrPtr = htup_construct_array(cast[ptr Datum](elemsBuf), s.len.cint,
+          elemOid, -1'i32, false, 'd'.cchar)
+      htup_pfree(elemsBuf)
+      return PointerGetDatum(cast[Pointer](arrPtr))

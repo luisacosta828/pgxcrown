@@ -240,6 +240,50 @@ SELECT v30_recurse_module(6) AS recovered_module_6, v30_safe_is_even(42) AS even
                   6 | t
 (1 row)
 
+-- 9. Inter-UDF DirectFunctionCall (same-file, cross-module overloads, 0-arg, text/composite/enum, Option[T], self-recursion, volatile)
+SELECT v30_udf_chain(5) AS udf_chain_4268;
+ udf_chain_4268
+----------------
+           4268
+(1 row)
+
+SELECT v30_udf_text_and_composite('crown', 'active'::"ArchStatus") AS udf_txt_comp;
+              udf_txt_comp
+-----------------------------------------
+ text:crown|7:crown:active|status=active
+(1 row)
+
+SELECT coalesce(v30_udf_opt_chain(NULL), '<NULL>') AS udf_opt_null,
+       v30_udf_opt_chain('crown') AS udf_opt_val;
+ udf_opt_null | udf_opt_val
+--------------+-------------
+ <NULL>       | opt:crown
+(1 row)
+
+SELECT v30_udf_direct_recurse(5) AS udf_direct_rec_5;
+ udf_direct_rec_5
+------------------
+                5
+(1 row)
+
+SELECT pg_temp.try_call('SELECT v30_udf_direct_recurse(50000)::text') AS udf_direct_stack_guard;
+ udf_direct_stack_guard
+------------------------
+ CAUGHT:54001
+(1 row)
+
+SELECT v30_udf_direct_recurse(4) AS udf_direct_recovered_4;
+ udf_direct_recovered_4
+------------------------
+                      4
+(1 row)
+
+SELECT v30_udf_volatile_ping('dfc') AS udf_volatile_ping;
+ udf_volatile_ping
+-------------------
+ pong|pong:dfc
+(1 row)
+
 -- 7. SECURITY DEFINER vs SECURITY INVOKER + trusted non-superuser CREATE EXTENSION
 CREATE TABLE public.arch_v30_priv_vault (id int);
 CREATE TABLE
@@ -333,6 +377,12 @@ SELECT array_agg(x ORDER BY x) AS upgraded_stream FROM v30_stream_range(3) AS x;
  upgraded_stream
 -----------------
  {1,2,3}
+(1 row)
+
+SELECT v30_udf_chain(5) AS upgraded_udf_chain;
+ upgraded_udf_chain
+--------------------
+               4268
 (1 row)
 
 DROP EXTENSION arch_v30_suite;

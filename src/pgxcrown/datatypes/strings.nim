@@ -81,6 +81,11 @@ converter toString*(t: PgText): string =
   result = newString(t.len)
   copyMem(addr result[0], t.dataPtr, t.len)
 
+converter optPgTextToOptString*(o: Option[PgText]): Option[string] {.inline.} =
+  ## Converts `Option[PgText]` parameters into `Option[string]` for inter-UDF and return compatibility.
+  if o.isSome: some(toString(o.get))
+  else: none(string)
+
 proc `$`*(t: PgText): string {.inline.} =
   toString(t)
 

@@ -93,3 +93,31 @@ language c STRICT;
 CREATE OR REPLACE FUNCTION v30_recurse_nested(int4) returns int4 as
 'arch_v30_suite', 'pgx_v30_recurse_nested_5d8a30_int4'
 language c STRICT;
+
+CREATE OR REPLACE FUNCTION v30_udf_helper(int4) returns int4 as
+'arch_v30_suite', 'pgx_v30_udf_helper_5ff12f_int4'
+language c IMMUTABLE PARALLEL SAFE STRICT;
+
+CREATE OR REPLACE FUNCTION v30_udf_chain(int4) returns int4 as
+'arch_v30_suite', 'pgx_v30_udf_chain_3d4833_int4'
+language c IMMUTABLE PARALLEL SAFE STRICT;
+
+CREATE OR REPLACE FUNCTION v30_udf_text_and_composite(Text, "ArchStatus") returns Text as
+'arch_v30_suite', 'pgx_v30_udf_text_and_composite_7edf6b_text_archstatus'
+language c IMMUTABLE PARALLEL SAFE STRICT;
+
+CREATE OR REPLACE FUNCTION v30_udf_opt_echo(Text DEFAULT NULL) returns Text as
+'arch_v30_suite', 'pgx_v30_udf_opt_echo_0c2252_text'
+language c IMMUTABLE PARALLEL SAFE;
+
+CREATE OR REPLACE FUNCTION v30_udf_opt_chain(Text DEFAULT NULL) returns Text as
+'arch_v30_suite', 'pgx_v30_udf_opt_chain_cb3b0c_text'
+language c IMMUTABLE PARALLEL SAFE;
+
+CREATE OR REPLACE FUNCTION v30_udf_direct_recurse(int4) returns int4 as
+'arch_v30_suite', 'pgx_v30_udf_direct_recurse_4315a4_int4'
+language c IMMUTABLE PARALLEL SAFE STRICT;
+
+CREATE OR REPLACE FUNCTION v30_udf_volatile_ping(Text) returns Text as
+'arch_v30_suite', 'pgx_v30_udf_volatile_ping_e6ffd7_text'
+language c STRICT;

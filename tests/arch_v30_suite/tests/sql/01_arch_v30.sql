@@ -92,6 +92,16 @@ SELECT pg_temp.try_call('SELECT v30_recurse_nested(50000)::text') AS nested_stac
 
 SELECT v30_recurse_module(6) AS recovered_module_6, v30_safe_is_even(42) AS even_42;
 
+-- 9. Inter-UDF DirectFunctionCall (same-file, cross-module overloads, 0-arg, text/composite/enum, Option[T], self-recursion, volatile)
+SELECT v30_udf_chain(5) AS udf_chain_4268;
+SELECT v30_udf_text_and_composite('crown', 'active'::"ArchStatus") AS udf_txt_comp;
+SELECT coalesce(v30_udf_opt_chain(NULL), '<NULL>') AS udf_opt_null,
+       v30_udf_opt_chain('crown') AS udf_opt_val;
+SELECT v30_udf_direct_recurse(5) AS udf_direct_rec_5;
+SELECT pg_temp.try_call('SELECT v30_udf_direct_recurse(50000)::text') AS udf_direct_stack_guard;
+SELECT v30_udf_direct_recurse(4) AS udf_direct_recovered_4;
+SELECT v30_udf_volatile_ping('dfc') AS udf_volatile_ping;
+
 -- 7. SECURITY DEFINER vs SECURITY INVOKER + trusted non-superuser CREATE EXTENSION
 CREATE TABLE public.arch_v30_priv_vault (id int);
 INSERT INTO public.arch_v30_priv_vault VALUES (101), (202);
@@ -133,5 +143,6 @@ SELECT extversion AS after_ver FROM pg_extension WHERE extname = 'arch_v30_suite
 SELECT v30_describe(ROW(99, 'upgraded', 'archived')::"ArchItem") AS upgraded_item;
 SELECT v30_echo('upgraded') AS upgraded_echo;
 SELECT array_agg(x ORDER BY x) AS upgraded_stream FROM v30_stream_range(3) AS x;
+SELECT v30_udf_chain(5) AS upgraded_udf_chain;
 
 DROP EXTENSION arch_v30_suite;

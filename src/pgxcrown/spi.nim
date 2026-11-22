@@ -41,7 +41,7 @@ static inline HeapTuple pgx_spi_get_tuple(SPITupleTable* tuptable, uint64 idx) {
 
 type
   DbReadEffect* = object of RootEffect
-  DbWriteEffect* = object of DbReadEffect
+  DbWriteEffect* = object of RootEffect
 
   const_string* {.importc: "const char*".} = cstring
 
@@ -73,6 +73,11 @@ type
     OPUNKNOWN,
     COPY,
     CONNECT
+
+{.push header: "pgx_types.h".}
+proc pgxMarkDbRead*() {.importc: "pgx_noop_effect", tags: [DbReadEffect].}
+proc pgxMarkDbWrite*() {.importc: "pgx_noop_effect", tags: [DbWriteEffect].}
+{.pop.}
 
 
 {.push header: "executor/spi.h".}
