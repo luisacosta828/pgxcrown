@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "comment": "SPI Binary v2 end-to-end test suite",
+  "relocatable": true,
+  "trusted": false
+}

@@ -1,0 +1,104 @@
+CREATE TYPE sb_color AS ENUM ('red', 'green', 'blue');
+CREATE TYPE
+CREATE TABLE sb_kept_items (
+    id int4 PRIMARY KEY,
+    tag text NOT NULL,
+    qty int4 NOT NULL
+);
+CREATE TABLE
+INSERT INTO sb_kept_items VALUES (1, 'k1', 10), (2, 'k2', 20), (3, 'k1', 30);
+INSERT 0 3
+CREATE TABLE sb_tx_log (
+    id int4 PRIMARY KEY,
+    tag text NOT NULL
+);
+CREATE TABLE
+-- 1. NULL vs empty string, TupleDesc metadata caching & dropped column skip
+SELECT sb_null_vs_empty() AS res;
+                             res
+--------------------------------------------------------------
+ SOME()|NONE|SOME(hello)|SOME($1; DROP TABLE sb_null_tbl; --)
+(1 row)
+
+-- 2. DML ... RETURNING auto read_only = false + SELECT/VALUES read_only = true
+SELECT sb_dml_returning() AS res;
+                          res
+--------------------------------------------------------
+ ins=2|sid=3|first=delta|upd=99|del=alpha|val=123|rem=3
+(1 row)
+
+-- 3. Full binary roundtrip (scalars, OID uint32, NaN/Inf, PgText, PgBytea w/ NUL, PgUuid, temporals, PgNumeric, JSON/JSONB, enum OID & text, distinct, arrays, SQLi immunity, bulk inserts, CTEs)
+SELECT sb_binary_types_roundtrip() AS res;
+                                  res
+------------------------------------------------------------------------
+ ok:oid=2147483714:bytes=6:num=987654321.1250:enum=green:bulk=66:cte=44
+(1 row)
+
+-- 4. External plugin pgxFromDatum hook (fetch, scalar, stream, Option)
+SELECT sb_custom_hook() AS res;
+             res
+------------------------------
+ ext:gold|ext:gold,ext:bronze
+(1 row)
+
+-- 5. Prepared SpiPlan executePlan, fetchPlan, idempotent free, kept plan across calls
+SELECT sb_prepared_plans() AS res;
+              res
+-------------------------------
+ ins1=p1|fetched=p2|freed=true
+(1 row)
+
+SELECT sb_init_kept_plan() AS kept_ready;
+ kept_ready
+------------
+ t
+(1 row)
+
+SELECT sb_kept_plan_fetch('k1') AS kept_k1;
+     kept_k1
+-----------------
+ 1:k1:10|3:k1:30
+(1 row)
+
+SELECT sb_kept_plan_fetch('k2') AS kept_k2;
+ kept_k2
+---------
+ 2:k2:20
+(1 row)
+
+-- 6. Streaming cursors, early break / exception cleanup, fetchBatches, manual cursor, batchSize validation
+SELECT sb_cursor_streaming() AS res;
+                                     res
+------------------------------------------------------------------------------
+ sum=313750|early=25|err=true|batches=100,100,50|manual=50|cursors=0|bad=true
+(1 row)
+
+SELECT count(*) AS open_cursors_after FROM pg_cursors;
+ open_cursors_after
+--------------------
+                  0
+(1 row)
+
+-- 7. Non-atomic PROCEDURE transaction control (spiNonAtomic, spiCommit, spiRollback, spiCommitAndChain, spiRollbackAndChain, error recovery)
+SELECT proname, prokind FROM pg_proc WHERE proname = 'sb_nonatomic_tx';
+     proname     | prokind
+-----------------+---------
+ sb_nonatomic_tx | p
+(1 row)
+
+CALL sb_nonatomic_tx(100);
+CALL
+SELECT id, tag FROM sb_tx_log ORDER BY id;
+ id  |      tag
+-----+----------------
+ 100 | commit_1
+ 102 | commit_chain
+ 104 | after_recovery
+(3 rows)
+
+-- 8. NUL byte injection defense
+SELECT sb_reject_null_byte() AS res;
+         res
+---------------------
+ sql=true|param=true
+(1 row)
