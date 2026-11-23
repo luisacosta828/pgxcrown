@@ -1,0 +1,59 @@
+-- Ejemplo 01: UDFs escalares basicas, volatilidad y paralelismo
+SELECT ex01_greet('PostgreSQL') AS greeting;
+             greeting
+----------------------------------
+ Hello, PostgreSQL from pgxcrown!
+(1 row)
+
+SELECT ex01_add(19, 23) AS sum_42;
+ sum_42
+--------
+     42
+(1 row)
+
+SELECT ex01_slugify('  Hola   Pgxcrown   2026  ') AS slug;
+        slug
+--------------------
+ hola-pgxcrown-2026
+(1 row)
+
+-- Funcion STABLE con calculo en punto flotante
+SELECT ex01_discount(120.0, 25.0) AS discounted_exact,
+       round(ex01_discount(199.90, 15.0)::numeric, 2) AS discounted_rounded;
+ discounted_exact | discounted_rounded
+------------------+--------------------
+               90 |             169.92
+(1 row)
+
+-- Funcion VOLATILE con estado por sesion (no puede plegarse como constante)
+SELECT ex01_next_seq() AS seq_1;
+ seq_1
+-------
+     1
+(1 row)
+
+SELECT ex01_next_seq() AS seq_2;
+ seq_2
+-------
+     2
+(1 row)
+
+SELECT ex01_next_seq() AS seq_3;
+ seq_3
+-------
+     3
+(1 row)
+
+-- Verificacion determinista en el catalogo pg_proc (provolatile / proparallel / proisstrict)
+SELECT proname, provolatile, proparallel, proisstrict
+FROM pg_proc
+WHERE proname IN ('ex01_greet', 'ex01_add', 'ex01_slugify', 'ex01_discount', 'ex01_next_seq')
+ORDER BY proname;
+    proname    | provolatile | proparallel | proisstrict
+---------------+-------------+-------------+-------------
+ ex01_add      | i           | s           | t
+ ex01_discount | s           | u           | t
+ ex01_greet    | i           | s           | t
+ ex01_next_seq | v           | u           | t
+ ex01_slugify  | i           | s           | t
+(5 rows)

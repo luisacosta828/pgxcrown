@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "comment": "Pgxcrown example 02: defaults, Option NULL safety, and Panic Shield errors",
+  "relocatable": true,
+  "trusted": true
+}
