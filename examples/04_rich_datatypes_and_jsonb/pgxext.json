@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "comment": "Pgxcrown example 04: JSONB, UUID, BYTEA, NUMERIC, and temporal PostgreSQL types",
+  "relocatable": true,
+  "trusted": true
+}

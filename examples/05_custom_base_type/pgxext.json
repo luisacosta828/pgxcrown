@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "comment": "Pgxcrown example 05: custom base type ex05_iban with validation and B-tree index",
+  "relocatable": true,
+  "trusted": false
+}

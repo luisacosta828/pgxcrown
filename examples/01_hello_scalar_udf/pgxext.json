@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "comment": "Pgxcrown example 01: basic scalar UDFs, volatility pragmas, and parallel safety",
+  "relocatable": true,
+  "trusted": true
+}
