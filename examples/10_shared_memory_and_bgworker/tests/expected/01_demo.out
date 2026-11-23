@@ -1,8 +1,8 @@
 \set VERBOSITY terse
 SHOW shared_preload_libraries;
-   shared_preload_libraries
--------------------------------
- 10_shared_memory_and_bgworker
+    shared_preload_libraries
+---------------------------------
+ "10_shared_memory_and_bgworker"
 (1 row)
 
 -- 1. Verify named shared memory allocations (initShmemStruct + {.pgxShared.})

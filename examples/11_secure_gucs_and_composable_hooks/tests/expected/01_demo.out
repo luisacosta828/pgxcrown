@@ -33,9 +33,9 @@ END $$;
 CREATE FUNCTION
 -- 1. Preload & Secure GUCs (pg_settings excludes superuserOnly ex11.audit_token)
 SHOW shared_preload_libraries;
-      shared_preload_libraries
--------------------------------------
- 11_secure_gucs_and_composable_hooks
+       shared_preload_libraries
+---------------------------------------
+ "11_secure_gucs_and_composable_hooks"
 (1 row)
 
 SHOW ex11.max_rows;

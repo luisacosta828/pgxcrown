@@ -73,7 +73,7 @@ SELECT ex08_lookup_sku('CPU-01') AS cpu_batches;
 SELECT ex08_stream_summary(4, 2) AS stream_summary;
                  stream_summary
 -------------------------------------------------
- cursor_rows=3|cursor_qty=18|qb_rows=3|qb_qty=18
+ cursor_rows=3|cursor_qty=22|qb_rows=3|qb_qty=22
 (1 row)
 
 SELECT count(*) AS open_cursors_after FROM pg_cursors;
