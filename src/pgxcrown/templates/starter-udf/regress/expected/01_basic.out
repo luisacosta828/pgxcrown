@@ -1,0 +1,23 @@
+SELECT {{project_snake}}_hello() LIKE 'Hello, World from %!' AS default_greeting_ok;
+ default_greeting_ok
+---------------------
+ t
+(1 row)
+
+SELECT {{project_snake}}_hello('PostgreSQL') LIKE 'Hello, PostgreSQL from %!' AS custom_greeting_ok;
+ custom_greeting_ok
+--------------------
+ t
+(1 row)
+
+SELECT {{project_snake}}_add(19, 23) AS sum_42;
+ sum_42
+--------
+     42
+(1 row)
+
+SELECT {{project_snake}}_slugify('  Hello Pgxcrown  ') AS slugified_text;
+ slugified_text
+----------------
+ hello-pgxcrown
+(1 row)

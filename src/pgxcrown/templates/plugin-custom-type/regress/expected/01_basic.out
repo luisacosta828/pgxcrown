@@ -1,0 +1,23 @@
+SELECT {{project_snake}}_plugin_ready() AS plugin_ready;
+ plugin_ready
+--------------
+ t
+(1 row)
+
+SELECT {{project_snake}}_plugin_meta('  ALPHA  '::{{type_name}}) = 'type={{type_name}}|roundtrip=alpha|param=''alpha''' AS meta_ok;
+ meta_ok
+---------
+ t
+(1 row)
+
+SELECT {{project_snake}}_audit_insert('alpha'::{{type_name}}) AS inserted_rows;
+ inserted_rows
+---------------
+             1
+(1 row)
+
+SELECT tag AS audit_tag FROM {{project_snake}}_audit ORDER BY id;
+ audit_tag
+-----------
+ alpha
+(1 row)

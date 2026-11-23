@@ -1,0 +1,19 @@
+{
+  "name": "base-type",
+  "description": "PostgreSQL custom base type extension using {.pgxType.} with INPUT/OUTPUT and typed UDFs",
+  "minPgxcrownVersion": "0.31.0",
+  "variables": [
+    {
+      "name": "type_name",
+      "default": "short_code",
+      "pattern": "^[a-z][a-z0-9_]{1,31}$"
+    }
+  ],
+  "files": [
+    "pgxext.json",
+    "src/main.nim",
+    {"src": "regress/sql/01_basic.sql", "dest": "tests/sql/01_basic.sql"},
+    {"src": "regress/expected/01_basic.out", "dest": "tests/expected/01_basic.out"},
+    "README.md"
+  ]
+}

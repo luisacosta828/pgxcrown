@@ -1,0 +1,36 @@
+SELECT start_{{project_snake}}_worker() > 0 AS worker_started;
+ worker_started
+----------------
+ t
+(1 row)
+
+DO $$
+DECLARE
+  i int;
+BEGIN
+  FOR i IN 1..40 LOOP
+    EXIT WHEN EXISTS (
+      SELECT 1 FROM pg_stat_activity
+      WHERE backend_type = '{{project_name}}'
+    );
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+END $$;
+DO
+SELECT {{project_snake}}_worker_status() AS status_running;
+ status_running
+----------------
+ running
+(1 row)
+
+SELECT stop_{{project_snake}}_worker() AS worker_stopped;
+ worker_stopped
+----------------
+ t
+(1 row)
+
+SELECT {{project_snake}}_worker_status() AS status_stopped;
+ status_stopped
+----------------
+ stopped
+(1 row)

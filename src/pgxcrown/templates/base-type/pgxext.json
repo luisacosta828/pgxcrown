@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "comment": "{{project_name}} custom PostgreSQL base type ({{type_name}})",
+  "relocatable": true,
+  "trusted": true
+}

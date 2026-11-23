@@ -1,0 +1,6 @@
+{
+  "version": "0.3.0",
+  "comment": "v0.33.0 plugin & extensibility E2E suite",
+  "relocatable": true,
+  "trusted": true
+}

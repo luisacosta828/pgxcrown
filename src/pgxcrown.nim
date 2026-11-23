@@ -19,6 +19,7 @@ import pgxcrown/memcontext
 import pgxcrown/lwlock
 import pgxcrown/shmem
 import pgxcrown/shm_mq
+import pgxcrown/plugin_api
 
 template trusted*() {.pragma: [raises: [ValueError], forbids: [IOEffect, TimeEffect], tags: []].}
 template immutable*() {.pragma: [noSideEffect, trusted, forbids: [DbReadEffect, DbWriteEffect]].}
@@ -157,4 +158,5 @@ export memcontext
 export lwlock
 export shmem
 export shm_mq
+export plugin_api
 
