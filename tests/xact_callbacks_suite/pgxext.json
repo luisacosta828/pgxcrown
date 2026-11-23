@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "comment": "PostgreSQL Xact & SubXact callbacks verification suite",
+  "relocatable": true,
+  "trusted": false
+}
