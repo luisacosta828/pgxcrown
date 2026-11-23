@@ -1,0 +1,90 @@
+\set VERBOSITY terse
+SHOW shared_preload_libraries;
+ shared_preload_libraries
+--------------------------
+ hooks_composable_suite
+(1 row)
+
+SELECT hooks_installed() AS hooks_active;
+ hooks_active
+--------------
+ t
+(1 row)
+
+SELECT hook_udf_echo('coexists') AS udf_ok;
+    udf_ok
+--------------
+ udf:coexists
+(1 row)
+
+SELECT reset_hook_counters() AS reset_status;
+ reset_status
+--------------
+ reset_ok
+(1 row)
+
+CREATE TABLE protected_audit_tbl (id int PRIMARY KEY, label text NOT NULL);
+CREATE TABLE
+CREATE TABLE temp_scratch_tbl (id int);
+CREATE TABLE
+CREATE TABLE temp_batch_tbl (id int);
+CREATE TABLE
+INSERT INTO protected_audit_tbl VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma');
+INSERT 0 3
+SELECT id, label FROM protected_audit_tbl ORDER BY id;
+ id | label
+----+-------
+  1 | alpha
+  2 | beta
+  3 | gamma
+(3 rows)
+
+UPDATE protected_audit_tbl SET label = 'beta_v2' WHERE id = 2;
+UPDATE 1
+DELETE FROM protected_audit_tbl WHERE id = 1;
+DELETE 1
+SELECT hook_stats() AS stats_after_dml;
+                                                  stats_after_dml
+--------------------------------------------------------------------------------------------------------------------
+ queries=5,second=5,rows=8,select=2,insert=1,update=1,delete=1,blocked_drops=0,allowed_drops=0,last_util=CreateStmt
+(1 row)
+
+SELECT hook_rows_processed() AS rows_including_prev_stats_select;
+ rows_including_prev_stats_select
+----------------------------------
+                                9
+(1 row)
+
+-- Normal DROP TABLE of non-protected table is allowed
+DROP TABLE temp_scratch_tbl;
+DROP TABLE
+-- Direct DROP TABLE of protected table must fail with SQLSTATE 42501
+DROP TABLE protected_audit_tbl;
+psql:/tmp/current_test.sql:23: ERROR:  DROP TABLE protected_audit_tbl is blocked by hooks_composable_suite
+DROP TABLE public.protected_audit_tbl;
+psql:/tmp/current_test.sql:24: ERROR:  DROP TABLE protected_audit_tbl is blocked by hooks_composable_suite
+DROP TABLE temp_batch_tbl, protected_audit_tbl;
+psql:/tmp/current_test.sql:25: ERROR:  DROP TABLE protected_audit_tbl is blocked by hooks_composable_suite
+-- PL/pgSQL EXCEPTION handler confirms exact SQLSTATE 42501 (insufficient_privilege)
+DO $$
+BEGIN
+  EXECUTE 'DROP TABLE protected_audit_tbl';
+EXCEPTION WHEN insufficient_privilege THEN
+  RAISE NOTICE 'ERR_42501';
+END $$;
+psql:/tmp/current_test.sql:33: NOTICE:  ERR_42501
+DO
+-- Verify protected table and temp_batch_tbl are intact and counters tracked blocked drops
+SELECT count(*) AS protected_rows_intact FROM protected_audit_tbl;
+ protected_rows_intact
+-----------------------
+                     2
+(1 row)
+
+DROP TABLE temp_batch_tbl;
+DROP TABLE
+SELECT hook_stats() AS final_stats;
+                                                    final_stats
+-------------------------------------------------------------------------------------------------------------------
+ queries=8,second=8,rows=11,select=5,insert=1,update=1,delete=1,blocked_drops=4,allowed_drops=2,last_util=DropStmt
+(1 row)
