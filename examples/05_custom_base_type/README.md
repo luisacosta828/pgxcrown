@@ -1,85 +1,85 @@
-# Ejemplo 05: Tipo SQL base propio (`{.pgxType: string.}`), operadores e índice B-tree
+# Example 05: Custom SQL Base Type (`{.pgxType: string.}`), B-tree Operators, and Index
 
-## Qué demuestra el ejemplo
+## What This Example Demonstrates
 
-Este ejemplo construye un tipo de dato nativo de PostgreSQL (`ex05_iban`) de principio a fin con validación estricta en Nim e indexación B-tree real:
+This example builds a custom PostgreSQL base data type (`ex05_iban`) end to end with strict Nim input validation and full B-tree indexing support:
 
-- **Tipo base declarativo (`{.pgxType: string.}`)**: `ex05_iban` genera el *shell type*, las funciones `INPUT`/`OUTPUT` (`parse_ex05_iban`, `format_ex05_iban`) y `CREATE TYPE "ex05_iban" (... LIKE = text)`.
-- **Validación en parser (`22023`)**: `parse_ex05_iban` normaliza espacios y mayúsculas, verifica la estructura IBAN y valida el dígito de control ISO 7064 Mod-97-10. Cualquier entrada inválida lanza `ValueError` (`SQLSTATE 22023`).
-- **Operadores e índice B-tree con `pgxSql(..., phase = "post")`**:
-  - Define los operadores `<`, `<=`, `=`, `<>`, `>=`, `>` y la función de comparación `ex05_iban_cmp`.
-  - Registra `CREATE OPERATOR CLASS ex05_iban_ops DEFAULT FOR TYPE ex05_iban USING btree`.
-  - Crea la tabla real `ex05_ledger` y el índice `idx_ex05_ledger_iban` usando B-tree, permitiendo filtros `WHERE` y ordenación `ORDER BY` nativas.
-- **Seguridad (`"trusted": false`)**: en PostgreSQL, crear operadores y clases de operadores requiere privilegios de superusuario, por eso `pgxext.json` declara `"trusted": false` y `"relocatable": true` sin asumir rutas o esquemas fijos.
+- **Declarative base type (`{.pgxType: string.}`)**: `ex05_iban` automatically emits the shell type, `INPUT`/`OUTPUT` functions (`parse_ex05_iban`, `format_ex05_iban`), and `CREATE TYPE "ex05_iban" (... LIKE = Text)`.
+- **Parser validation (`22023`)**: `parse_ex05_iban` normalizes whitespace and casing, checks IBAN length/character structure, and validates the ISO 7064 Mod-97-10 check digits. Invalid values raise `ValueError` (`SQLSTATE 22023`).
+- **B-tree operators and index via `pgxSql(..., phase = "post")`**:
+  - Defines comparison operators `<`, `<=`, `=`, `<>`, `>=`, `>` backed by Nim functions and the three-way comparator `ex05_iban_cmp`.
+  - Registers `CREATE OPERATOR CLASS ex05_iban_ops DEFAULT FOR TYPE ex05_iban USING btree`.
+  - Creates the real table `ex05_ledger` and B-tree index `idx_ex05_ledger_iban`, enabling native `WHERE` filtering and `ORDER BY` sorting.
+- **Privilege safety (`"trusted": false`)**: creating operators and operator classes requires superuser privileges in PostgreSQL, so `pgxext.json` explicitly sets `"trusted": false` and `"relocatable": true` without hardcoding schema names.
 
-## Estructura de archivos
+## File Layout
 
 ```text
 05_custom_base_type/
-├── pgxext.json                # Metadatos (.control) con trusted: false
+├── pgxext.json                # Extension metadata (.control) with trusted: false
 ├── src/
-│   └── main.nim               # Tipo ex05_iban, parser Mod-97, operadores y pgxSql B-tree
+│   └── main.nim               # ex05_iban type, Mod-97 parser, operators, and pgxSql B-tree DDL
 ├── tests/
 │   ├── sql/
-│   │   └── 01_demo.sql        # Validacion, operadores, WHERE/ORDER BY e indice B-tree
+│   │   └── 01_demo.sql        # Validation, operators, WHERE/ORDER BY, and B-tree index checks
 │   └── expected/
-│       └── 01_demo.out        # Salida esperada exacta de psql
+│       └── 01_demo.out        # Exact expected psql output
 └── README.md
 ```
 
-## Cómo crearlo desde cero
+## How to Create It from Scratch
 
-### Opción A: usando la plantilla `base-type` con `pgxtool new`
+### Option A: Using the `base-type` template via `pgxtool new`
 
 ```bash
 pgxtool new ./05_custom_base_type --template base-type --var type_name=ex05_iban
 ```
 
-Después cambia `"trusted": false` en `pgxext.json` y agrega en `src/main.nim` las funciones de comparación, la clase de operador B-tree y la tabla `ex05_ledger` mediante `pgxSql(..., phase = "post")`.
+Then set `"trusted": false` in `pgxext.json` and add the comparison functions, B-tree operator class, and `ex05_ledger` table DDL inside `pgxSql(..., phase = "post")` in `src/main.nim`.
 
-### Opción B: paso a paso manualmente
+### Option B: Step by step manually
 
 ```bash
 mkdir -p 05_custom_base_type/src 05_custom_base_type/tests/sql 05_custom_base_type/tests/expected
 ```
 
-1. Configura `pgxext.json` con `"version": "0.1.0"`, `"relocatable": true` y `"trusted": false`.
-2. Define `ex05_iban* {.pgxType: string.} = distinct string`, `parse_ex05_iban` (`{.pgxInput.}`), `format_ex05_iban` (`{.pgxOutput.}`), los comparadores y el bloque `pgxSql(..., phase = "post")`.
-3. Añade las pruebas en `tests/sql/01_demo.sql` y `tests/expected/01_demo.out`.
+1. Configure `pgxext.json` with `"version": "0.1.0"`, `"relocatable": true`, and `"trusted": false`.
+2. Define `ex05_iban* {.pgxType: string.} = distinct string`, `parse_ex05_iban` (`{.pgxInput.}`), `format_ex05_iban` (`{.pgxOutput.}`), the comparison functions, and the `pgxSql(..., phase = "post")` DDL block.
+3. Add regression tests in `tests/sql/01_demo.sql` and `tests/expected/01_demo.out`.
 
-## Cómo compilarlo
+## Building
 
 ```bash
 pgxtool build-extension examples/05_custom_base_type
 ```
 
-## Cómo verificar seguridad e integridad
+## Verifying Security and Integrity
 
 ```bash
 pgxtool verify examples/05_custom_base_type
 ```
 
-## Cómo ejecutar pruebas
+## Running Tests
 
-Para probar en PostgreSQL 18 dentro de Docker:
+Run against PostgreSQL 18 in Docker:
 
 ```bash
 pgxtool test examples/05_custom_base_type --pg 18
 ```
 
-Para validar todas las versiones soportadas (PostgreSQL 14 a 18):
+Run across the full PostgreSQL 14–18 matrix:
 
 ```bash
 pgxtool test examples/05_custom_base_type --all
 ```
 
-## Cómo instalarlo y probarlo manualmente en `psql`
+## Installing and Testing Manually in `psql`
 
 ```bash
 sudo examples/05_custom_base_type/src/install.sh
 ```
 
-Conéctate como superusuario en `psql` (requerido porque `"trusted": false`):
+Connect as a superuser in `psql` (required because `"trusted": false`):
 
 ```sql
 CREATE EXTENSION "05_custom_base_type";

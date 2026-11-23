@@ -1,96 +1,96 @@
-# Ejemplo 01: UDFs escalares básicas, volatilidad y paralelismo
+# Example 01: Basic Scalar UDFs, Volatility, and Parallel Safety
 
-## Qué demuestra el ejemplo
+## What This Example Demonstrates
 
-Este primer ejemplo muestra cómo escribir funciones escalares de PostgreSQL en Nim usando `pgxcrown`:
+This first example shows how to write PostgreSQL scalar user-defined functions (UDFs) in Nim using `pgxcrown`:
 
-- **Exportación automática a SQL**: todo `proc` exportado con `*` genera su sentencia `CREATE OR REPLACE FUNCTION` y el código C de interfaz PG V1.
-- **Atributos de volatilidad**:
-  - `{.immutable.}` (`ex01_greet`, `ex01_add`, `ex01_slugify`): garantiza ausencia de efectos secundarios (`noSideEffect`, `provolatile = 'i'`).
-  - `{.stable.}` (`ex01_discount`): permite lecturas consistentes dentro de una sentencia (`provolatile = 's'`).
-  - `{.volatile.}` (`ex01_next_seq`): mantiene estado mutable en memoria de backend (`provolatile = 'v'`).
-- **Seguridad en ejecución paralela**: `{.parallelSafe.}` marca las funciones puras con `PARALLEL SAFE` (`proparallel = 's'`) para que el planificador pueda ejecutarlas en *parallel workers*.
-- **Verificación en catálogo**: las pruebas consultan `pg_proc` para comprobar `provolatile`, `proparallel` y `proisstrict`.
+- **Automatic SQL export**: every `proc` exported with `*` generates a `CREATE OR REPLACE FUNCTION` DDL statement along with its PostgreSQL V1 C interface wrapper.
+- **Volatility attributes**:
+  - `{.immutable.}` (`ex01_greet`, `ex01_add`, `ex01_slugify`): guarantees no side effects (`noSideEffect`, `provolatile = 'i'`).
+  - `{.stable.}` (`ex01_discount`): permits consistent reads within a single statement (`provolatile = 's'`).
+  - `{.volatile.}` (`ex01_next_seq`): maintains mutable per-session backend state (`provolatile = 'v'`).
+- **Parallel query safety**: `{.parallelSafe.}` marks pure functions as `PARALLEL SAFE` (`proparallel = 's'`) so the PostgreSQL planner can execute them inside parallel workers.
+- **Catalog verification**: the regression test queries `pg_proc` to verify `provolatile`, `proparallel`, and `proisstrict`.
 
-## Estructura de archivos
+## File Layout
 
 ```text
 01_hello_scalar_udf/
-├── pgxext.json                # Metadatos de la extensión (.control)
+├── pgxext.json                # Extension metadata (.control)
 ├── src/
-│   └── main.nim               # Implementación Nim de las UDFs escalares
+│   └── main.nim               # Nim implementation of the scalar UDFs
 ├── tests/
 │   ├── sql/
-│   │   └── 01_demo.sql        # Script SQL de demostración y regresión
+│   │   └── 01_demo.sql        # Demo and regression SQL script
 │   └── expected/
-│       └── 01_demo.out        # Salida esperada exacta de psql
+│       └── 01_demo.out        # Exact expected psql output
 └── README.md
 ```
 
-## Cómo crearlo desde cero
+## How to Create It from Scratch
 
-### Opción A: usando la plantilla `starter-udf` con `pgxtool new`
+### Option A: Using the `starter-udf` template via `pgxtool new`
 
 ```bash
 pgxtool new ./01_hello_scalar_udf --template starter-udf
 ```
 
-Después sustituye el contenido de `pgxext.json`, `src/main.nim` y `tests/sql/01_demo.sql` por las funciones `ex01_*` de este ejemplo.
+Then replace the generated `pgxext.json`, `src/main.nim`, and `tests/sql/01_demo.sql` with the `ex01_*` functions from this example.
 
-### Opción B: paso a paso manualmente
+### Option B: Step by step manually
 
 ```bash
 mkdir -p 01_hello_scalar_udf/src 01_hello_scalar_udf/tests/sql 01_hello_scalar_udf/tests/expected
 ```
 
-1. Crea `pgxext.json` con `"version": "0.1.0"`, `"relocatable": true` y `"trusted": true`.
-2. Escribe `src/main.nim` importando `pgxcrown` y exportando con `*` los `proc` decorados con `{.immutable, parallelSafe.}`, `{.stable.}` y `{.volatile.}`.
-3. Agrega las consultas en `tests/sql/01_demo.sql` y su salida esperada en `tests/expected/01_demo.out`.
+1. Create `pgxext.json` with `"version": "0.1.0"`, `"relocatable": true`, and `"trusted": true`.
+2. Write `src/main.nim` importing `pgxcrown` and exporting (`*`) each `proc` decorated with `{.immutable, parallelSafe.}`, `{.stable.}`, and `{.volatile.}`.
+3. Add the SQL queries to `tests/sql/01_demo.sql` and the expected output to `tests/expected/01_demo.out`.
 
-## Cómo compilarlo
+## Building
 
 ```bash
 pgxtool build-extension examples/01_hello_scalar_udf
 ```
 
-Esto compila la librería compartida (`src/01_hello_scalar_udf.so`), genera el archivo `.control`, el script SQL de instalación y el manifiesto de integridad `.integrity.json`.
+This compiles the shared library (`src/01_hello_scalar_udf.so`), generates the `.control` file, emits the installation SQL script, and writes the `.integrity.json` manifest.
 
-## Cómo verificar seguridad e integridad
+## Verifying Security and Integrity
 
 ```bash
 pgxtool verify examples/01_hello_scalar_udf
 ```
 
-Ejecuta la auditoría de símbolos ELF prohibidos, dependencias compartidas e integridad SHA-256 del paquete compilado.
+Runs the ELF prohibited-symbol audit, shared library dependency check, and SHA-256 artifact integrity verification.
 
-## Cómo ejecutar pruebas
+## Running Tests
 
-Para probar en PostgreSQL 18 dentro de Docker:
+Run against PostgreSQL 18 in Docker:
 
 ```bash
 pgxtool test examples/01_hello_scalar_udf --pg 18
 ```
 
-Para validar la matriz completa de PostgreSQL 14 a 18:
+Run across the full PostgreSQL 14–18 matrix:
 
 ```bash
 pgxtool test examples/01_hello_scalar_udf --all
 ```
 
-## Cómo instalarlo y probarlo manualmente en `psql`
+## Installing and Testing Manually in `psql`
 
 ```bash
 sudo examples/01_hello_scalar_udf/src/install.sh
 ```
 
-Luego abre `psql` y recuerda **entrecomillar el nombre de la extensión** porque comienza con dígitos:
+Then open `psql` and **double-quote the extension name** because it starts with digits:
 
 ```sql
 CREATE EXTENSION "01_hello_scalar_udf";
 
 SELECT ex01_greet('PostgreSQL');
 SELECT ex01_add(19, 23);
-SELECT ex01_slugify('  Hola   Pgxcrown   2026  ');
+SELECT ex01_slugify('  Hello   Pgxcrown   2026  ');
 SELECT ex01_discount(120.0, 25.0);
 SELECT ex01_next_seq(), ex01_next_seq();
 

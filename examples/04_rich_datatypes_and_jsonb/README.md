@@ -1,83 +1,83 @@
-# Ejemplo 04: Tipos ricos de PostgreSQL (`JSONB`, `UUID`, `BYTEA`, `NUMERIC` y temporales)
+# Example 04: Rich PostgreSQL Data Types (`JSONB`, `UUID`, `BYTEA`, `NUMERIC`, and Temporal)
 
-## Qué demuestra el ejemplo
+## What This Example Demonstrates
 
-Este ejemplo muestra cómo operar directamente sobre los tipos nativos avanzados de PostgreSQL sin conversiones manuales propensas a errores ni pérdida de precisión:
+This example shows how to operate directly on PostgreSQL's rich native data types without lossy text conversions or precision loss:
 
-- **`JsonNode` (`jsonb`)**: lectura, mutación sobre copia (`payload.copy()`) y retorno seguro de documentos `jsonb` (`ex04_json_tag`, `ex04_json_get`).
-- **`PgUuid` (`uuid`)**: inspección de versión RFC 4122/9562 y variante sobre los 16 bytes nativos (`ex04_uuid_info`).
-- **`PgBytea` (`bytea`)**: lectura binaria *zero-copy* segura ante bytes `0x00` (`NUL`) y retorno de nuevos buffers (`ex04_bytea_stats`, `ex04_bytea_xor`).
-- **`PgNumeric` (`numeric`)**: aritmética exacta de precisión arbitraria delegada al kernel de PostgreSQL (`ex04_numeric_total`).
-- **Temporales (`PgDate`, `PgTimestamp`, `PgTimestampTz`, `PgInterval`)**: interoperabilidad directa con épocas de PostgreSQL, años bisiestos, valores `infinity` y `std/times` (`ex04_date_shift`, `ex04_ts_add_seconds`, `ex04_tstz_norm_utc`, `ex04_interval_add_us`).
+- **`JsonNode` (`jsonb`)**: reading, copying/mutating (`payload.copy()`), and returning `jsonb` documents safely (`ex04_json_tag`, `ex04_json_get`).
+- **`PgUuid` (`uuid`)**: inspecting RFC 4122/9562 version and variant bits over native 16-byte UUIDs (`ex04_uuid_info`).
+- **`PgBytea` (`bytea`)**: NUL-safe (`0x00`) zero-copy binary inspection and buffer construction (`ex04_bytea_stats`, `ex04_bytea_xor`).
+- **`PgNumeric` (`numeric`)**: arbitrary-precision decimal arithmetic delegated to PostgreSQL's native numeric kernel (`ex04_numeric_total`).
+- **Temporal types (`PgDate`, `PgTimestamp`, `PgTimestampTz`, `PgInterval`)**: seamless handling of PostgreSQL epochs, leap days, `infinity`/`-infinity`, and `std/times` conversions (`ex04_date_shift`, `ex04_ts_add_seconds`, `ex04_tstz_norm_utc`, `ex04_interval_add_us`).
 
-## Estructura de archivos
+## File Layout
 
 ```text
 04_rich_datatypes_and_jsonb/
-├── pgxext.json                # Metadatos de la extensión (.control)
+├── pgxext.json                # Extension metadata (.control)
 ├── src/
-│   └── main.nim               # UDFs con JsonNode, PgUuid, PgBytea, PgNumeric y temporales
+│   └── main.nim               # UDFs for JsonNode, PgUuid, PgBytea, PgNumeric, and temporals
 ├── tests/
 │   ├── sql/
-│   │   └── 01_demo.sql        # Pruebas deterministas fijando UTC, ISO, MDY e intervalstyle
+│   │   └── 01_demo.sql        # Deterministic tests pinning UTC, ISO/MDY, and intervalstyle
 │   └── expected/
-│       └── 01_demo.out        # Salida esperada exacta de psql
+│       └── 01_demo.out        # Exact expected psql output
 └── README.md
 ```
 
-## Cómo crearlo desde cero
+## How to Create It from Scratch
 
-### Opción A: usando la plantilla `starter-udf` con `pgxtool new`
+### Option A: Using the `starter-udf` template via `pgxtool new`
 
 ```bash
 pgxtool new ./04_rich_datatypes_and_jsonb --template starter-udf
 ```
 
-Después agrega `std/[json, options, strutils, times]` y las funciones `ex04_*` en `src/main.nim`.
+Then import `std/[json, options, strutils]` and implement the `ex04_*` functions in `src/main.nim`.
 
-### Opción B: paso a paso manualmente
+### Option B: Step by step manually
 
 ```bash
 mkdir -p 04_rich_datatypes_and_jsonb/src 04_rich_datatypes_and_jsonb/tests/sql 04_rich_datatypes_and_jsonb/tests/expected
 ```
 
-1. Configura `pgxext.json` con `"version": "0.1.0"`, `"relocatable": true` y `"trusted": true`.
-2. Implementa las UDFs en `src/main.nim` usando `JsonNode`, `PgUuid`, `PgBytea`, `PgNumeric`, `PgDate`, `PgTimestamp`, `PgTimestampTz` y `PgInterval`.
-3. Fija `SET timezone = 'UTC'; SET datestyle = 'ISO, MDY'; SET intervalstyle = 'postgres';` al principio de `tests/sql/01_demo.sql` para garantizar reproducibilidad entre PostgreSQL 14 y 18.
+1. Configure `pgxext.json` with `"version": "0.1.0"`, `"relocatable": true`, and `"trusted": true`.
+2. Implement the UDFs in `src/main.nim` using `JsonNode`, `PgUuid`, `PgBytea`, `PgNumeric`, `PgDate`, `PgTimestamp`, `PgTimestampTz`, and `PgInterval`.
+3. Pin `SET timezone = 'UTC'; SET datestyle = 'ISO, MDY'; SET intervalstyle = 'postgres';` at the top of `tests/sql/01_demo.sql` to guarantee identical formatting across PostgreSQL 14–18.
 
-## Cómo compilarlo
+## Building
 
 ```bash
 pgxtool build-extension examples/04_rich_datatypes_and_jsonb
 ```
 
-## Cómo verificar seguridad e integridad
+## Verifying Security and Integrity
 
 ```bash
 pgxtool verify examples/04_rich_datatypes_and_jsonb
 ```
 
-## Cómo ejecutar pruebas
+## Running Tests
 
-Para probar en PostgreSQL 18 dentro de Docker:
+Run against PostgreSQL 18 in Docker:
 
 ```bash
 pgxtool test examples/04_rich_datatypes_and_jsonb --pg 18
 ```
 
-Para validar todas las versiones soportadas (PostgreSQL 14 a 18):
+Run across the full PostgreSQL 14–18 matrix:
 
 ```bash
 pgxtool test examples/04_rich_datatypes_and_jsonb --all
 ```
 
-## Cómo instalarlo y probarlo manualmente en `psql`
+## Installing and Testing Manually in `psql`
 
 ```bash
 sudo examples/04_rich_datatypes_and_jsonb/src/install.sh
 ```
 
-En `psql`:
+In `psql`:
 
 ```sql
 CREATE EXTENSION "04_rich_datatypes_and_jsonb";

@@ -1,85 +1,85 @@
-# Ejemplo 02: Parámetros DEFAULT, manejo seguro de NULL y Panic Shield
+# Example 02: Default Parameters, NULL Safety, and Panic Shield
 
-## Qué demuestra el ejemplo
+## What This Example Demonstrates
 
-Este ejemplo muestra cómo diseñar UDFs robustas frente a valores omitidos, `NULL` y fallos en tiempo de ejecución sin poner en riesgo el proceso de PostgreSQL:
+This example shows how to build resilient PostgreSQL UDFs that handle omitted arguments, `NULL` inputs/outputs, validation errors, and runtime defects without crashing the PostgreSQL backend process:
 
-- **Parámetros `DEFAULT`**: `ex02_greet_default` y `ex02_safe_divide` traducen valores por defecto de Nim directamente a cláusulas `DEFAULT` en el DDL SQL.
-- **`Option[T]` bidireccional**: `ex02_safe_divide` acepta `Option[int32]` y devuelve `Option[int32]`; al retornar `none(int32)` emite SQL `NULL` de forma segura.
-- **`{.calledOnNullInput.}`**: `ex02_coalesce_label` desactiva `STRICT` (`proisstrict = f`) para ejecutar la lógica Nim incluso cuando se pasa `NULL`.
-- **Errores controlados (`SQLSTATE`)**:
-  - `raise newException(ValueError, ...)` en `ex02_validate_port` se traduce a SQLSTATE `22023` (`invalid_parameter_value`).
-  - `raisePgError("22023", ...)` y `raisePgError("22012", ...)` emiten errores nativos de PostgreSQL con `hint` y `SQLSTATE` exacto.
-- **Panic Shield (`Defect` -> `ereport(ERROR)`)**: `ex02_checked_add` (`OverflowDefect` -> `22003`) y `ex02_pick_item` (`IndexDefect` -> `2202E`) demuestran que Nim intercepta los *defects* antes de hacer *abort* y permite que el backend continúe operando normalmente.
+- **`DEFAULT` parameters**: `ex02_greet_default` and `ex02_safe_divide` translate Nim default parameter values directly into SQL `DEFAULT` clauses.
+- **Bidirectional `Option[T]`**: `ex02_safe_divide` accepts `Option[int32]` and returns `Option[int32]`; returning `none(int32)` produces a real SQL `NULL` cleanly.
+- **`{.calledOnNullInput.}`**: `ex02_coalesce_label` disables `STRICT` (`proisstrict = f`) so the Nim procedure still executes when SQL `NULL` is passed.
+- **Controlled errors (`SQLSTATE`)**:
+  - `raise newException(ValueError, ...)` in `ex02_validate_port` maps to SQLSTATE `22023` (`invalid_parameter_value`).
+  - `raisePgError("22023", ...)` and `raisePgError("22012", ...)` raise native PostgreSQL errors with custom `hint` metadata and exact `SQLSTATE` codes.
+- **Panic Shield (`Defect` -> `ereport(ERROR)`)**: `ex02_checked_add` (`OverflowDefect` -> `22003`) and `ex02_pick_item` (`IndexDefect` -> `2202E`) demonstrate that `pgxcrown` intercepts Nim defects before process abort and keeps the PostgreSQL session healthy.
 
-## Estructura de archivos
+## File Layout
 
 ```text
 02_defaults_nulls_and_errors/
-├── pgxext.json                # Metadatos de la extensión (.control)
+├── pgxext.json                # Extension metadata (.control)
 ├── src/
-│   └── main.nim               # UDFs con defaults, Option[T], calledOnNullInput y errores
+│   └── main.nim               # UDFs using defaults, Option[T], calledOnNullInput, and errors
 ├── tests/
 │   ├── sql/
-│   │   └── 01_demo.sql        # Pruebas deterministas con wrappers pg_temp y VERBOSITY terse
+│   │   └── 01_demo.sql        # Deterministic tests using pg_temp wrappers and VERBOSITY terse
 │   └── expected/
-│       └── 01_demo.out        # Salida esperada exacta de psql
+│       └── 01_demo.out        # Exact expected psql output
 └── README.md
 ```
 
-## Cómo crearlo desde cero
+## How to Create It from Scratch
 
-### Opción A: usando la plantilla `starter-udf` con `pgxtool new`
+### Option A: Using the `starter-udf` template via `pgxtool new`
 
 ```bash
 pgxtool new ./02_defaults_nulls_and_errors --template starter-udf
 ```
 
-Luego importa `std/options` en `src/main.nim` y define las funciones `ex02_*` con `Option[T]`, `{.calledOnNullInput.}` y `raisePgError`.
+Then import `std/options` in `src/main.nim` and define the `ex02_*` functions using `Option[T]`, `{.calledOnNullInput.}`, and `raisePgError`.
 
-### Opción B: paso a paso manualmente
+### Option B: Step by step manually
 
 ```bash
 mkdir -p 02_defaults_nulls_and_errors/src 02_defaults_nulls_and_errors/tests/sql 02_defaults_nulls_and_errors/tests/expected
 ```
 
-1. Configura `pgxext.json` con `"version": "0.1.0"`, `"relocatable": true` y `"trusted": true`.
-2. Implementa `src/main.nim` usando `std/options`, `{.calledOnNullInput.}`, `raise newException(ValueError, ...)` y `raisePgError`.
-3. Añade `tests/sql/01_demo.sql` con `\set VERBOSITY terse` y wrappers `pg_temp.` para verificar cada `SQLSTATE` de forma determinista.
+1. Configure `pgxext.json` with `"version": "0.1.0"`, `"relocatable": true`, and `"trusted": true`.
+2. Implement `src/main.nim` with `std/options`, `{.calledOnNullInput.}`, `raise newException(ValueError, ...)`, and `raisePgError`.
+3. Add `tests/sql/01_demo.sql` using `\set VERBOSITY terse` and `pg_temp.` exception-catching wrappers to verify each `SQLSTATE` deterministically.
 
-## Cómo compilarlo
+## Building
 
 ```bash
 pgxtool build-extension examples/02_defaults_nulls_and_errors
 ```
 
-## Cómo verificar seguridad e integridad
+## Verifying Security and Integrity
 
 ```bash
 pgxtool verify examples/02_defaults_nulls_and_errors
 ```
 
-## Cómo ejecutar pruebas
+## Running Tests
 
-Para probar en PostgreSQL 18 dentro de Docker:
+Run against PostgreSQL 18 in Docker:
 
 ```bash
 pgxtool test examples/02_defaults_nulls_and_errors --pg 18
 ```
 
-Para validar todas las versiones soportadas (PostgreSQL 14 a 18):
+Run across the full PostgreSQL 14–18 matrix:
 
 ```bash
 pgxtool test examples/02_defaults_nulls_and_errors --all
 ```
 
-## Cómo instalarlo y probarlo manualmente en `psql`
+## Installing and Testing Manually in `psql`
 
 ```bash
 sudo examples/02_defaults_nulls_and_errors/src/install.sh
 ```
 
-En `psql` (entrecomillando el nombre porque comienza con dígitos):
+In `psql` (double-quoting the extension name because it begins with digits):
 
 ```sql
 CREATE EXTENSION "02_defaults_nulls_and_errors";
@@ -87,10 +87,10 @@ CREATE EXTENSION "02_defaults_nulls_and_errors";
 SELECT ex02_greet_default();
 SELECT ex02_safe_divide(42, NULL) IS NULL;
 SELECT ex02_safe_divide(42, 6);
-SELECT ex02_coalesce_label(NULL, 'invitado');
+SELECT ex02_coalesce_label(NULL, 'guest');
 SELECT ex02_validate_port(5432);
 
--- Provocar un error controlado o OverflowDefect (no tumba la sesion):
+-- Trigger a controlled error or OverflowDefect (does not crash the session):
 -- SELECT ex02_validate_port(70000);
 -- SELECT ex02_checked_add(2147483647, 1);
 

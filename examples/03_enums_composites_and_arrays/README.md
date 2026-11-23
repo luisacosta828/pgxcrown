@@ -1,83 +1,83 @@
-# Ejemplo 03: Enums `{.pure.}`, tipos compuestos y arrays (`seq[T]` y `PgVector[T]`)
+# Example 03: `{.pure.}` Enums, Composite Types, and Arrays (`seq[T]` & `PgVector[T]`)
 
-## Qué demuestra el ejemplo
+## What This Example Demonstrates
 
-Este ejemplo muestra cómo modelar tipos ricos estructurados entre Nim y PostgreSQL sin escribir SQL manual:
+This example shows how to model structured domain types between Nim and PostgreSQL without writing manual SQL DDL:
 
-- **Enums `{.pure.}`**: `ex03_order_state` con etiquetas explícitas (`'pending'`, `'confirmed'`, `'shipped'`) genera `CREATE TYPE "ex03_order_state" AS ENUM (...)`.
-- **Tipos compuestos (`object`)**: `ex03_line_item` genera `CREATE TYPE "ex03_line_item" AS (...)` reutilizando el enum `ex03_order_state`, y puede enviarse y devolverse tanto en escalares (`ex03_make_item`, `ex03_item_total_cents`) como en arreglos (`seq[ex03_line_item]` -> `ex03_line_item[]`) y conjuntos (`SETOF ex03_line_item` en `ex03_build_order`).
-- **Arrays nativos y zero-copy**:
-  - `seq[int32]` y `seq[string]` como parámetros (`int4[]`, `text[]`).
-  - `PgVector[int32]` (`ex03_scale_vector`) para lectura *zero-copy* sobre arreglos de PostgreSQL y retorno directo como `int4[]`.
+- **`{.pure.}` enums**: `ex03_order_state` with explicit string labels (`'pending'`, `'confirmed'`, `'shipped'`) generates `CREATE TYPE "ex03_order_state" AS ENUM (...)`.
+- **Composite types (`object`)**: `ex03_line_item` generates `CREATE TYPE "ex03_line_item" AS (...)` embedding the `ex03_order_state` enum, and passes cleanly as scalar arguments/results (`ex03_make_item`, `ex03_item_total_cents`), composite arrays (`seq[ex03_line_item]` -> `ex03_line_item[]`), and set-returning functions (`SETOF ex03_line_item` in `ex03_build_order`).
+- **Native and zero-copy arrays**:
+  - `seq[int32]` and `seq[string]` parameters (`int4[]`, `text[]`).
+  - `PgVector[int32]` (`ex03_scale_vector`) for zero-copy read access over PostgreSQL arrays and direct `int4[]` return values.
 
-## Estructura de archivos
+## File Layout
 
 ```text
 03_enums_composites_and_arrays/
-├── pgxext.json                # Metadatos de la extensión (.control)
+├── pgxext.json                # Extension metadata (.control)
 ├── src/
-│   └── main.nim               # Enum, composite object y UDFs con seq[T]/PgVector[T]
+│   └── main.nim               # Enum, composite object, and seq[T]/PgVector[T] UDFs
 ├── tests/
 │   ├── sql/
-│   │   └── 01_demo.sql        # Pruebas SQL de enum, composite, composite[] y arrays
+│   │   └── 01_demo.sql        # SQL tests for enum, composite, composite[], and arrays
 │   └── expected/
-│       └── 01_demo.out        # Salida esperada exacta de psql
+│       └── 01_demo.out        # Exact expected psql output
 └── README.md
 ```
 
-## Cómo crearlo desde cero
+## How to Create It from Scratch
 
-### Opción A: usando la plantilla `starter-udf` con `pgxtool new`
+### Option A: Using the `starter-udf` template via `pgxtool new`
 
 ```bash
 pgxtool new ./03_enums_composites_and_arrays --template starter-udf
 ```
 
-Luego define el `enum` `{.pure.}`, el `object` compuesto y las funciones `ex03_*` en `src/main.nim`.
+Then define the `{.pure.}` `enum`, composite `object`, and `ex03_*` procedures in `src/main.nim`.
 
-### Opción B: paso a paso manualmente
+### Option B: Step by step manually
 
 ```bash
 mkdir -p 03_enums_composites_and_arrays/src 03_enums_composites_and_arrays/tests/sql 03_enums_composites_and_arrays/tests/expected
 ```
 
-1. Configura `pgxext.json` con `"version": "0.1.0"`, `"relocatable": true` y `"trusted": true`.
-2. Exporta `ex03_order_state* {.pure.}` y `ex03_line_item* = object` en `src/main.nim` junto con sus procs `*`.
-3. Escribe `tests/sql/01_demo.sql` y `tests/expected/01_demo.out`.
+1. Configure `pgxext.json` with `"version": "0.1.0"`, `"relocatable": true`, and `"trusted": true`.
+2. Export `ex03_order_state* {.pure.}` and `ex03_line_item* = object` in `src/main.nim` together with their `*`-exported procedures.
+3. Write `tests/sql/01_demo.sql` and `tests/expected/01_demo.out`.
 
-## Cómo compilarlo
+## Building
 
 ```bash
 pgxtool build-extension examples/03_enums_composites_and_arrays
 ```
 
-## Cómo verificar seguridad e integridad
+## Verifying Security and Integrity
 
 ```bash
 pgxtool verify examples/03_enums_composites_and_arrays
 ```
 
-## Cómo ejecutar pruebas
+## Running Tests
 
-Para probar en PostgreSQL 18 dentro de Docker:
+Run against PostgreSQL 18 in Docker:
 
 ```bash
 pgxtool test examples/03_enums_composites_and_arrays --pg 18
 ```
 
-Para validar todas las versiones soportadas (PostgreSQL 14 a 18):
+Run across the full PostgreSQL 14–18 matrix:
 
 ```bash
 pgxtool test examples/03_enums_composites_and_arrays --all
 ```
 
-## Cómo instalarlo y probarlo manualmente en `psql`
+## Installing and Testing Manually in `psql`
 
 ```bash
 sudo examples/03_enums_composites_and_arrays/src/install.sh
 ```
 
-En `psql`:
+In `psql`:
 
 ```sql
 CREATE EXTENSION "03_enums_composites_and_arrays";

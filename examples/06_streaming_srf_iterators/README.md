@@ -1,83 +1,83 @@
-# Ejemplo 06: Iteradores SRF en streaming `O(1)`
+# Example 06: `O(1)` Streaming SRF Iterators
 
-## Qué demuestra el ejemplo
+## What This Example Demonstrates
 
-Este ejemplo muestra cómo implementar *Set-Returning Functions* (`RETURNS SETOF ...`) mediante `iterator` de Nim en memoria constante `O(1)` por fila:
+This example shows how to implement PostgreSQL Set-Returning Functions (`RETURNS SETOF ...`) using Nim `iterator` definitions with constant `O(1)` per-row memory usage:
 
-- **Sobrecarga de iteradores (`SETOF int64`)**: `ex06_stream_range(n)` y `ex06_stream_range(startVal, endVal)` comparten nombre SQL con símbolos C mangling distintos.
-- **Streaming `O(1)` y corte temprano (`LIMIT`)**: `ex06_stream_range(50000)` y `ex06_stream_range(1000000) LIMIT 3` generan valores fila a fila sin materializar listas de millones de elementos en memoria.
-- **Emisión de `SQL NULL` (`Option[string]`)**: `ex06_stream_nullable` produce `NULL` reales en SQL cada vez que emite `none(string)`.
-- **Registros compuestos en streaming (`SETOF ex06_event_row`)**: `ex06_stream_events` retorna columnas tipadas directamente desde un `object` de Nim.
-- **Limpieza garantizada con ARC (`=destroy`) y Panic Shield**: `ex06_stream_guarded` usa un guardia RAII con `=destroy` conectado al callback de reset de `multi_call_memory_ctx`, asegurando la liberación determinista tanto al completar el stream como al abortar con `LIMIT` o tras un error a mitad del flujo.
+- **Overloaded iterators (`SETOF int64`)**: `ex06_stream_range(n)` and `ex06_stream_range(startVal, endVal)` share a single SQL name backed by distinct mangled C symbols.
+- **`O(1)` streaming and early `LIMIT` termination**: `ex06_stream_range(50000)` and `ex06_stream_range(1000000) LIMIT 3` yield rows lazily without materializing large sequences in memory.
+- **SQL `NULL` emission (`Option[string]`)**: `ex06_stream_nullable` yields real SQL `NULL` values whenever the iterator yields `none(string)`.
+- **Streaming composite records (`SETOF ex06_event_row`)**: `ex06_stream_events` emits typed multi-column rows directly from a Nim `object`.
+- **Deterministic ARC cleanup (`=destroy`) and Panic Shield**: `ex06_stream_guarded` holds an RAII guard with `=destroy` wired to PostgreSQL's `multi_call_memory_ctx` reset callback, ensuring cleanup runs on normal completion, early `LIMIT` termination, and mid-stream exceptions.
 
-## Estructura de archivos
+## File Layout
 
 ```text
 06_streaming_srf_iterators/
-├── pgxext.json                # Metadatos de la extensión (.control)
+├── pgxext.json                # Extension metadata (.control)
 ├── src/
-│   └── main.nim               # Iteradores sobrecargados, Option[string], composite y RAII
+│   └── main.nim               # Overloaded iterators, Option[string], composite rows, and RAII
 ├── tests/
 │   ├── sql/
-│   │   └── 01_demo.sql        # Pruebas de streaming 50k, LIMIT, NULL, composite y error
+│   │   └── 01_demo.sql        # Tests for 50k streaming, LIMIT, NULL, composites, and errors
 │   └── expected/
-│       └── 01_demo.out        # Salida esperada exacta de psql
+│       └── 01_demo.out        # Exact expected psql output
 └── README.md
 ```
 
-## Cómo crearlo desde cero
+## How to Create It from Scratch
 
-### Opción A: usando la plantilla `starter-udf` con `pgxtool new`
+### Option A: Using the `starter-udf` template via `pgxtool new`
 
 ```bash
 pgxtool new ./06_streaming_srf_iterators --template starter-udf
 ```
 
-Luego sustituye el contenido de `src/main.nim` por los `iterator` exportados con `*` y el tipo `ex06_event_row*`.
+Then replace `src/main.nim` with the `*`-exported `iterator` definitions and the `ex06_event_row*` composite type.
 
-### Opción B: paso a paso manualmente
+### Option B: Step by step manually
 
 ```bash
 mkdir -p 06_streaming_srf_iterators/src 06_streaming_srf_iterators/tests/sql 06_streaming_srf_iterators/tests/expected
 ```
 
-1. Configura `pgxext.json` con `"version": "0.1.0"`, `"relocatable": true` y `"trusted": true`.
-2. Implementa los `iterator` exportados con `*` en `src/main.nim` (para `int64`, `Option[string]`, `ex06_event_row` y limpieza con RAII).
-3. Añade `tests/sql/01_demo.sql` y `tests/expected/01_demo.out`.
+1. Configure `pgxext.json` with `"version": "0.1.0"`, `"relocatable": true`, and `"trusted": true`.
+2. Implement the `*`-exported iterators in `src/main.nim` (for `int64`, `Option[string]`, `ex06_event_row`, and RAII cleanup).
+3. Add `tests/sql/01_demo.sql` and `tests/expected/01_demo.out`.
 
-## Cómo compilarlo
+## Building
 
 ```bash
 pgxtool build-extension examples/06_streaming_srf_iterators
 ```
 
-## Cómo verificar seguridad e integridad
+## Verifying Security and Integrity
 
 ```bash
 pgxtool verify examples/06_streaming_srf_iterators
 ```
 
-## Cómo ejecutar pruebas
+## Running Tests
 
-Para probar en PostgreSQL 18 dentro de Docker:
+Run against PostgreSQL 18 in Docker:
 
 ```bash
 pgxtool test examples/06_streaming_srf_iterators --pg 18
 ```
 
-Para validar todas las versiones soportadas (PostgreSQL 14 a 18):
+Run across the full PostgreSQL 14–18 matrix:
 
 ```bash
 pgxtool test examples/06_streaming_srf_iterators --all
 ```
 
-## Cómo instalarlo y probarlo manualmente en `psql`
+## Installing and Testing Manually in `psql`
 
 ```bash
 sudo examples/06_streaming_srf_iterators/src/install.sh
 ```
 
-En `psql`:
+In `psql`:
 
 ```sql
 CREATE EXTENSION "06_streaming_srf_iterators";
