@@ -1,21 +1,21 @@
-# Ejemplo 08 — `QueryBuilder` Fluent y SPI Binario v2
+# Example 08: Fluent `QueryBuilder` and Binary SPI v2
 
-Este ejemplo muestra la capa **SPI Binario v2** junto al **`QueryBuilder` tipado** de `pgxcrown`: ejecución parametrizada (`$1`, `$2`, ...), deserialización binaria directa hacia `object` de Nim (`fetch[Row]`), distinción estricta entre SQL `NULL` y cadena vacía `""` mediante `Option[string]`, planes preparados persistentes (`spiPrepare(..., keep = true)`) y lectura en streaming mediante cursores (`spiCursorOpen` / `spiCursorFetch` / `spiCursorClose` y `stream[Row]`).
+This example demonstrates `pgxcrown`'s **Binary SPI v2** layer alongside the typed **`QueryBuilder`**: parameterized execution (`$1`, `$2`, ...), direct binary deserialization into Nim `object` types (`fetch[Row]`), strict distinction between SQL `NULL` and empty string `""` via `Option[string]`, persistent prepared plans (`spiPrepare(..., keep = true)`), and streaming cursors (`spiCursorOpen` / `spiCursorFetch` / `spiCursorClose` and `stream[Row]`).
 
-## Qué demuestra
+## What This Example Demonstrates
 
-1. **`QueryBuilder` parametrizado e inmune a SQLi**:
-   - `InsertInto(...).Values(...).Returning("id").scalar(int32)` y `Update(...).Set(...).Where(...).Returning(...)` pasan parámetros binarios tipados (`$1`, `$2`, ...), protegiendo contra payloads como `'; DROP TABLE ...; --`.
-2. **Deserialización binaria tipada (`fetch[Row]`)**:
-   - Decodifica directamente los `Datum` de PostgreSQL hacia `Ex08OrderRow` / `Ex08ItemRow` sin conversiones de texto intermedias.
-3. **`Option[string]`: SQL `NULL` vs string vacío `""`**:
-   - `none(string)` representa SQL `NULL`, mientras `some("")` preserva la cadena vacía `""` sin colapsarlos.
-4. **Planes preparados persistentes (`SpiPlan`)**:
-   - `spiPrepare(..., [TEXTOID], keep = true)` mantiene el plan compilado en memoria de PostgreSQL (`SPI_keepplan`) entre llamadas y lo ejecuta con `fetchPlan[Row](plan, [toBoundParam(sku)])`.
-5. **Cursores streaming (`SpiCursor` y `stream[Row]`)**:
-   - `spiCursorOpen` / `spiCursorFetch` / `spiCursorClose` y el iterador `stream[Row](q, batchSize)` procesan lotes acotados en memoria `O(batchSize)` y cierran los portales limpiamente (`pg_cursors = 0`).
+1. **Parameterized, SQLi-safe `QueryBuilder`**:
+   - `InsertInto(...).Values(...).Returning("id").scalar(int32)` and `Update(...).Set(...).Where(...).Returning(...)` pass typed binary parameters (`$1`, `$2`, ...), neutralizing injection payloads such as `'; DROP TABLE ...; --`.
+2. **Typed binary deserialization (`fetch[Row]`)**:
+   - Decodes PostgreSQL `Datum` values directly into `Ex08OrderRow` / `Ex08ItemRow` without intermediate text conversions.
+3. **`Option[string]`: SQL `NULL` vs empty string `""`**:
+   - `none(string)` represents SQL `NULL`, while `some("")` preserves the empty string `""` without conflating the two.
+4. **Persistent prepared plans (`SpiPlan`)**:
+   - `spiPrepare(..., [TEXTOID], keep = true)` keeps the compiled plan pinned in PostgreSQL memory (`SPI_keepplan`) across calls and executes it with `fetchPlan[Row](plan, [toBoundParam(sku)])`.
+5. **Streaming cursors (`SpiCursor` and `stream[Row]`)**:
+   - `spiCursorOpen` / `spiCursorFetch` / `spiCursorClose` and the `stream[Row](q, batchSize)` iterator process bounded batches using `O(batchSize)` memory and close portals cleanly (`pg_cursors = 0`).
 
-## Estructura de archivos
+## File Layout
 
 ```text
 08_query_builder_and_binary_spi/
@@ -28,7 +28,7 @@ Este ejemplo muestra la capa **SPI Binario v2** junto al **`QueryBuilder` tipado
     └── expected/01_demo.out
 ```
 
-## Cómo compilar, verificar y probar
+## Building, Verifying, and Testing
 
 ```bash
 pgxtool build-extension examples/08_query_builder_and_binary_spi
@@ -37,7 +37,7 @@ pgxtool test examples/08_query_builder_and_binary_spi --pg 18
 pgxtool test examples/08_query_builder_and_binary_spi --all
 ```
 
-## Instalación y prueba manual en `psql`
+## Installing and Testing Manually in `psql`
 
 ```bash
 pgxtool build-extension examples/08_query_builder_and_binary_spi

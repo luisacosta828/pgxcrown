@@ -1,22 +1,22 @@
-# Ejemplo 09 — Callbacks Transaccionales, Savepoints y Anti-PANIC Shield
+# Example 09: Transaction Callbacks, Savepoints, and Anti-PANIC Shield
 
-Este ejemplo demuestra la API de callbacks transaccionales de `pgxcrown` (`v0.32`): `registerXactCallback` (`onPreCommit`, `onCommit`, `onAbort`), `registerSubXactCallback` para subtransacciones (`SAVEPOINT` / `ROLLBACK TO SAVEPOINT` / `RELEASE SAVEPOINT`), aislamiento de memoria con `pgxWithLibcAlloc` y el **Anti-PANIC Shield** durante `xeAbort`.
+This example demonstrates `pgxcrown`'s transaction callback API (`v0.32`): `registerXactCallback` (`onPreCommit`, `onCommit`, `onAbort`), `registerSubXactCallback` for subtransactions (`SAVEPOINT` / `ROLLBACK TO SAVEPOINT` / `RELEASE SAVEPOINT`), memory lifetime isolation with `pgxWithLibcAlloc`, and the **Anti-PANIC Shield** during `xeAbort`.
 
-## Qué demuestra
+## What This Example Demonstrates
 
-1. **Callbacks de transacción (`registerXactCallback`, `onCommit`, `onAbort`, `onPreCommit`)**:
-   - Ejecución determinista en `COMMIT`, `ROLLBACK` y validación previa en `xePreCommit` (donde sí es válido abortar con `raisePgError`).
-   - Registro one-shot (`once = true`) con limpieza automática tras dispararse o abortar.
-2. **Subtransacciones (`registerSubXactCallback`)**:
-   - Observa `sxeStartSub`, `sxePreCommitSub`, `sxeCommitSub` y `sxeAbortSub` ante `SAVEPOINT`, `ROLLBACK TO SAVEPOINT` y `RELEASE SAVEPOINT`.
-3. **Seguridad de memoria con `pgxWithLibcAlloc`**:
-   - Cuando una extensión se compila con `--wrap=malloc` bajo PostgreSQL, las asignaciones dentro de un UDF viven por defecto en el `MemoryContext` activo de la transacción/sentencia.
-   - `pgxWithLibcAlloc:` fuerza temporalmente `libc malloc` para los closures y logs (`gAuditLog`) que deben sobrevivir más allá del reset del `TopTransactionContext`.
-4. **Anti-PANIC Shield en `xeAbort` / `xeCommit`**:
-   - En PostgreSQL, lanzar un `ERROR` (`ereport(ERROR)` / `longjmp`) durante `XACT_EVENT_ABORT` o `XACT_EVENT_COMMIT` provoca un `PANIC` y tumba todo el clúster.
-   - El Anti-PANIC Shield de `pgxcrown` intercepta excepciones Nim y errores PostgreSQL en fases no abortables, emite un `WARNING` controlado y permite que continúen los callbacks restantes sin caída del servidor.
+1. **Transaction callbacks (`registerXactCallback`, `onCommit`, `onAbort`, `onPreCommit`)**:
+   - Deterministic execution on `COMMIT`, `ROLLBACK`, and pre-commit validation in `xePreCommit` (where aborting with `raisePgError` is permitted).
+   - One-shot registration (`once = true`) with automatic cleanup once triggered or aborted.
+2. **Subtransactions (`registerSubXactCallback`)**:
+   - Observes `sxeStartSub`, `sxePreCommitSub`, `sxeCommitSub`, and `sxeAbortSub` across `SAVEPOINT`, `ROLLBACK TO SAVEPOINT`, and `RELEASE SAVEPOINT`.
+3. **Memory safety with `pgxWithLibcAlloc`**:
+   - When an extension is compiled with `--wrap=malloc` under PostgreSQL, allocations inside a UDF default to the active statement/transaction `MemoryContext`.
+   - `pgxWithLibcAlloc:` temporarily switches allocations to `libc malloc` for closures and log state (`gAuditLog`) that must outlive `TopTransactionContext` resets.
+4. **Anti-PANIC Shield in `xeAbort` / `xeCommit`**:
+   - In PostgreSQL, raising an `ERROR` (`ereport(ERROR)` / `longjmp`) during `XACT_EVENT_ABORT` or `XACT_EVENT_COMMIT` escalates to a `PANIC` and crashes the entire cluster.
+   - `pgxcrown`'s Anti-PANIC Shield intercepts Nim exceptions and PostgreSQL errors in non-abortable phases, emits a controlled `WARNING`, and allows remaining callbacks to run without taking down the server.
 
-## Estructura de archivos
+## File Layout
 
 ```text
 09_xact_callbacks_and_savepoints/
@@ -29,7 +29,7 @@ Este ejemplo demuestra la API de callbacks transaccionales de `pgxcrown` (`v0.32
     └── expected/01_demo.out
 ```
 
-## Cómo compilar, verificar y probar
+## Building, Verifying, and Testing
 
 ```bash
 pgxtool build-extension examples/09_xact_callbacks_and_savepoints
@@ -38,7 +38,7 @@ pgxtool test examples/09_xact_callbacks_and_savepoints --pg 18
 pgxtool test examples/09_xact_callbacks_and_savepoints --all
 ```
 
-## Instalación y prueba manual en `psql`
+## Installing and Testing Manually in `psql`
 
 ```bash
 pgxtool build-extension examples/09_xact_callbacks_and_savepoints
@@ -56,6 +56,6 @@ SELECT ex09_take_log(false);
 
 BEGIN;
 SELECT ex09_arm_abort_shield();
-ROLLBACK; -- Emite WARNING en lugar de PANIC
+ROLLBACK; -- Emits WARNING instead of PANIC
 SELECT ex09_take_log(true);
 ```

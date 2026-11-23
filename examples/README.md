@@ -1,92 +1,119 @@
-# Ejemplos Progresivos de Pgxcrown (01 → 12)
+# Pgxcrown Progressive Examples (01 → 12)
 
-Guía de aprendizaje progresivo para construir, auditar y probar extensiones de **PostgreSQL 14–18** con **Pgxcrown (Nim + C)**, desde UDFs escalares básicos hasta servicios seguros con GUCs RBAC, hooks componibles, memoria compartida, Background Workers y extensibilidad mediante plugins y plantillas.
-
----
-
-## Ruta de Aprendizaje Progresiva (01 → 12)
-
-| # | Ejemplo | Nivel | Features principales que cubre | ¿Requiere `shared_preload_libraries`? |
-|:-:|:--------|:-----:|:-------------------------------|:-------------------------------------:|
-| **01** | Serie 01 (`examples/01_*`) | Básico | Primeros pasos: UDFs escalares tipados, pragmas `immutable` / `parallelSafe`, `pgxext.json` y pruebas `pg_regress` | No |
-| **02** | Serie 02 (`examples/02_*`) | Básico | Manejo de `NULL`, valores `DEFAULT`, `Option[T]` (`CALLED ON NULL INPUT` vs `STRICT`) y validación con `raisePgError` | No |
-| **03** | Serie 03 (`examples/03_*`) | Intermedio | Tipos compuestos (`CREATE TYPE ... AS`), `enum` de PostgreSQL, arreglos `seq[T]` y sobrecarga de funciones SQL | No |
-| **04** | Serie 04 (`examples/04_*`) | Intermedio | Tipos binarios y complejos: `PgBytea`, `PgUuid`, `JsonNode` (`json`/`jsonb`), temporales y `PgNumeric` | No |
-| **05** | Serie 05 (`examples/05_*`) | Intermedio | Funciones SRF (`SETOF`) e iteradores streaming `O(1)` en memoria y manejo limpio de errores | No |
-| **06** | Serie 06 (`examples/06_*`) | Intermedio | Tipos base personalizados (`{.pgxType.}`), `pgxInput` / `pgxOutput` / `pgxReceive` / `pgxSend` y manejo de memoria ARC | No |
-| **07** | [`07_multimodule_and_procedures/`](07_multimodule_and_procedures/) | Avanzado | Arquitectura multi-módulo (`main.nim` + `billing_ops.nim`), `{.pgxInit.}` en submódulos, `{.noSql.}`, metadata `pgxext.json` + `pgxExtension:`, `PROCEDURE` SQL (`CALL`), `{.securityDefiner, searchPath.}`, `{.leakproof.}` y migraciones `0.1.0 → 0.2.0` | No |
-| **08** | [`08_query_builder_and_binary_spi/`](08_query_builder_and_binary_spi/) | Avanzado | `QueryBuilder` fluent + **SPI Binario v2**: parámetros `$1`/`$2`, `fetch[Row]`, `Option[string]` (`NULL` vs `""`), planes preparados (`spiPrepare keep = true`) y cursores streaming (`spiCursorOpen`/`Fetch`/`Close` y `stream[Row]`) | No |
-| **09** | [`09_xact_callbacks_and_savepoints/`](09_xact_callbacks_and_savepoints/) | Avanzado | Callbacks transaccionales (`registerXactCallback`, `onCommit`, `onAbort`, `onPreCommit`), subtransacciones (`registerSubXactCallback`, `SAVEPOINT`), `pgxWithLibcAlloc` y **Anti-PANIC Shield** | No |
-| **10** | [`10_shared_memory_and_bgworker/`](10_shared_memory_and_bgworker/) | Producción / Arquitectura | Memoria compartida (`{.pgxShared.}`, `initShmemStruct`), atómicos y `LWLock` (`getNamedTranche` + `withLock`), y `BgWorker` dinámico (`bgWorker`, `runWorkerLoop`, ciclo start/stop/estado) | **Sí (`tests/preload`)** |
-| **11** | [`11_secure_gucs_and_composable_hooks/`](11_secure_gucs_and_composable_hooks/) | Producción / Arquitectura | GUCs seguros con RBAC (`gcUserset`, `gcSuset`, `superuserOnly`, `reserveGucPrefix`, `SET LOCAL`), hooks componibles (`hooks/registry`: `ExecutorEnd` + `ProcessUtility`), auditoría Security v2 (3 capas) y atestación en vivo (`verifyCatalogIntegrity`, `loadedSoSha256`) | **Sí (`tests/preload`)** |
-| **12** | [`12_plugins_and_custom_templates/`](12_plugins_and_custom_templates/) | Producción / Arquitectura | Extensibilidad dual v0.33: **Plugin en Nim** (`plugin_api.nim`: `pgxSql` `pre`/`post`, traits `mixin`, `registerPgxPluginInit` + Binary SPI v2) y **Template propio** (`custom_template/` para `pgxtool new --template`) | No |
+A progressive learning guide for building, auditing, and testing **PostgreSQL 14–18** extensions with **Pgxcrown (Nim + C)**—from basic scalar UDFs to production-grade services featuring RBAC-hardened GUCs, composable hooks, shared memory, Background Workers, Nim plugins, and custom scaffolding templates.
 
 ---
 
-## Guía Rápida Universal
+## Progressive Learning Path (01 → 12)
 
-Todos los ejemplos siguen la misma estructura estándar (`pgxext.json`, `src/main.nim`, `tests/sql/*.sql`, `tests/expected/*.out` y `README.md`) y se operan con `pgxtool`:
+| # | Example | Level | Key Features Covered | Requires `shared_preload_libraries`? |
+|:-:|:--------|:-----:|:---------------------|:------------------------------------:|
+| **01** | [`01_hello_scalar_udf/`](01_hello_scalar_udf/) | Beginner | Typed scalar UDFs, `immutable` / `stable` / `volatile` / `parallelSafe` pragmas, `pgxext.json`, and `pg_regress` catalog checks | No |
+| **02** | [`02_defaults_nulls_and_errors/`](02_defaults_nulls_and_errors/) | Beginner | `DEFAULT` parameters, bidirectional `Option[T]`, `{.calledOnNullInput.}` vs `STRICT`, `raisePgError` (`SQLSTATE`), and Panic Shield (`Defect` → `ERROR`) | No |
+| **03** | [`03_enums_composites_and_arrays/`](03_enums_composites_and_arrays/) | Intermediate | `{.pure.}` PostgreSQL `ENUM`s, composite `object` types, `seq[T]` / composite arrays, and zero-copy `PgVector[T]` | No |
+| **04** | [`04_rich_datatypes_and_jsonb/`](04_rich_datatypes_and_jsonb/) | Intermediate | Native binary and rich types: `JsonNode` (`jsonb`), `PgUuid` (`uuid`), NUL-safe `PgBytea` (`bytea`), `PgNumeric` (`numeric`), and temporal types (`PgDate`, `PgTimestamp`, `PgTimestampTz`, `PgInterval`) | No |
+| **05** | [`05_custom_base_type/`](05_custom_base_type/) | Intermediate | Custom SQL base type (`{.pgxType: string.}`), `{.pgxInput.}` / `{.pgxOutput.}`, Mod-97 IBAN validation, comparison operators, and B-tree `OPERATOR CLASS` + index via `pgxSql(..., phase = "post")` | No |
+| **06** | [`06_streaming_srf_iterators/`](06_streaming_srf_iterators/) | Intermediate | Overloaded `SETOF` `iterator` SRFs, `O(1)` streaming with early `LIMIT` termination, `Option[string]` SQL `NULL` emission, composite `SETOF` rows, and deterministic `=destroy` ARC cleanup | No |
+| **07** | [`07_multimodule_and_procedures/`](07_multimodule_and_procedures/) | Advanced | Multi-module layout (`main.nim` + `billing_ops.nim`), deterministic `{.pgxInit.}`, `{.noSql.}`, `pgxext.json` + `pgxExtension:`, SQL `PROCEDURE` (`CALL`), `{.securityDefiner, searchPath.}`, `{.leakproof.}`, and `0.1.0 → 0.2.0` schema snapshots/migrations | No |
+| **08** | [`08_query_builder_and_binary_spi/`](08_query_builder_and_binary_spi/) | Advanced | Fluent parameterized `QueryBuilder` + **Binary SPI v2**: `$1`/`$2` bound params, `fetch[Row]`, `Option[string]` (`NULL` vs `""`), persistent prepared plans (`spiPrepare(..., keep = true)`), and streaming cursors (`spiCursorOpen`/`Fetch`/`Close` & `stream[Row]`) | No |
+| **09** | [`09_xact_callbacks_and_savepoints/`](09_xact_callbacks_and_savepoints/) | Advanced | Transaction callbacks (`onPreCommit`, `onCommit`, `onAbort`), subtransaction callbacks (`registerSubXactCallback` for `SAVEPOINT`), `pgxWithLibcAlloc` lifetime isolation, and **Anti-PANIC Shield** | No |
+| **10** | [`10_shared_memory_and_bgworker/`](10_shared_memory_and_bgworker/) | Production / Architecture | Shared memory (`{.pgxShared.}`, `initShmemStruct` + `{.pgxShmem.}`), atomics & `LWLock` tranches (`getNamedTranche` + `withLock`), and dynamic `BgWorker` lifecycle (`bgWorker`, `runWorkerLoop`, start/status/stop) | **Yes (`tests/preload`)** |
+| **11** | [`11_secure_gucs_and_composable_hooks/`](11_secure_gucs_and_composable_hooks/) | Production / Architecture | RBAC-hardened GUCs (`gcUserset`, `gcSuset`, `superuserOnly`, `reserveGucPrefix`, `SET LOCAL`), composable hooks (`ExecutorEnd` + `ProcessUtility`), 3-layer Security v2 audit (`--require-signature`), and live catalog/ELF SHA-256 attestation (`verifyCatalogIntegrity`, `loadedSoSha256`) | **Yes (`tests/preload`)** |
+| **12** | [`12_plugins_and_custom_templates/`](12_plugins_and_custom_templates/) | Production / Architecture | Dual v0.33 extensibility: reusable Nim plugin (`plugin_api`: `pgxSql` `pre`/`post`, `mixin` traits, `registerPgxPluginInit` + Binary SPI v2) and external project scaffolding template (`custom_template/` for `pgxtool new --template`) | No |
 
-### 1. Compilar una extensión
+---
+
+## Prerequisites
+
+- **Pgxcrown toolchain (`pgxtool`)** and **Nim 2.0+**
+- **PostgreSQL server development headers** (when compiling locally with `pgxtool build-extension`)
+- **Docker** (for running isolated regression test suites across PostgreSQL 14–18 via `pgxtool test`)
+
+---
+
+## Standard Workflows
+
+Every progressive example follows the same standard layout (`pgxext.json`, `src/main.nim`, `tests/sql/*.sql`, `tests/expected/*.out`, and `README.md`) and can be operated either from inside an example directory (`.`) or by passing its path to `pgxtool`:
+
+### 1. Build an Extension
+
+```bash
+cd examples/<dir>
+pgxtool build-extension .
+```
+
+Or from the repository root:
 
 ```bash
 pgxtool build-extension examples/<dir>
 ```
 
-Genera la librería compartida (`.so`), `<ext>.control`, `<ext>--<ver>.sql`, `<ext>.functions.json`, el manifiesto de integridad `<ext>.integrity.json` y el script `src/install.sh`.
+This compiles the shared library (`.so`), generates `<ext>.control`, `<ext>--<ver>.sql`, `<ext>.functions.json`, the `<ext>.integrity.json` manifest, and the installation script `src/install.sh`.
 
-### 2. Verificar seguridad e integridad (Security v2)
-
-```bash
-pgxtool verify examples/<dir>
-```
-
-Audita el binario ELF (símbolos OS prohibidos, `RPATH/RUNPATH`, `DT_NEEDED`), las hashes SHA-256 de `.so`/`.sql`/`.control` y, si defines `PGX_INTEGRITY_KEY`, la firma HMAC-SHA256 (`--require-signature`).
-
-### 3. Probar en PostgreSQL 14–18 mediante Docker
+### 2. Verify Security & Integrity (Security v2)
 
 ```bash
-# Probar contra una versión específica (ej. PostgreSQL 18)
-pgxtool test examples/<dir> --pg 18
-
-# Probar la matriz completa de versiones soportadas (PG 14, 15, 16, 17 y 18)
-pgxtool test examples/<dir> --all
+pgxtool verify .
 ```
 
-> Si el ejemplo incluye `tests/preload` (como **10** y **11**), `pgxtool test` configura `shared_preload_libraries` y reinicia PostgreSQL dentro del contenedor automáticamente.
+Audits the compiled ELF binary (prohibited OS symbols, `RPATH`/`RUNPATH`, `DT_NEEDED`), validates the SHA-256 hashes of `.so`/`.sql`/`.control`, and—when `PGX_INTEGRITY_KEY` is set—verifies the HMAC-SHA256 signature (`--require-signature`).
 
-### 4. Instalar y probar manualmente en `psql`
+### 3. Run Regression Tests on PostgreSQL 14–18 (Docker)
+
+```bash
+# Test against a specific PostgreSQL version (e.g., PostgreSQL 18)
+pgxtool test . --pg 18
+
+# Test across the full supported matrix (PostgreSQL 14, 15, 16, 17, and 18)
+pgxtool test . --all
+```
+
+> **Note on `shared_preload_libraries`:** Examples **10** and **11** require preloading into PostgreSQL shared memory at server startup. Their `tests/preload` file instructs `pgxtool test` to configure `shared_preload_libraries` and restart PostgreSQL inside the container automatically before running SQL tests.
+
+### 4. Install and Test Manually in `psql`
 
 ```bash
 sudo ./examples/<dir>/src/install.sh
 ```
 
-Si el ejemplo requiere `shared_preload_libraries`, agrégalo y reinicia PostgreSQL antes de crear la extensión. Al ejecutar `CREATE EXTENSION` en `psql`, **comilla siempre el nombre del directorio** porque empieza con dígitos:
+If the extension requires `shared_preload_libraries`, configure it in `postgresql.conf` (or via `ALTER SYSTEM SET shared_preload_libraries = '<dir>';`) and restart PostgreSQL before running `CREATE EXTENSION`. Because these example directory names start with digits, **always double-quote the extension name in SQL**:
 
 ```sql
 CREATE EXTENSION "<dir>";
 ```
 
-### 5. Arrancar un nuevo proyecto con plantillas (`pgxtool new`)
+### 5. Scaffold a New Project from Templates (`pgxtool new`)
 
 ```bash
-# Listar plantillas integradas y externas disponibles
+# List available built-in and external templates
 pgxtool list-templates
 
-# Crear un servicio listo para producción basado en la plantilla secure-service
-pgxtool new ./mi_ext --template secure-service --var guc_prefix=mi_svc
+# Create a production-ready service from the built-in secure-service template
+pgxtool new ./my_ext --template secure-service --var guc_prefix=my_svc
 
-# Compilar, verificar y probar el proyecto recién creado
-pgxtool build-extension ./mi_ext
-pgxtool verify ./mi_ext
-pgxtool test ./mi_ext --all
+# Build, verify, and test the newly scaffolded project
+pgxtool build-extension ./my_ext
+pgxtool verify ./my_ext
+pgxtool test ./my_ext --all
 ```
 
 ---
 
-## Benchmarks y Pruebas de Estrés Existentes
+## Legacy Examples
 
-Además de la serie progresiva `01`–`12`, el directorio conserva las siguientes utilidades y escenarios de referencia:
+In addition to the progressive `01`–`12` series, this directory preserves the following benchmark and stress-test workloads:
 
-- **[`payment_benchmark.sql`](payment_benchmark.sql)**: Genera las tablas transaccionales `payments` (10,000 filas) y `payments_history` para realizar benchmarks de archivado por lotes con Background Workers (`pgxWorker` / `bgWorker`).
-- **[`memory_chaos_test/`](memory_chaos_test/)**: Escenario de estrés (`memory_chaos_test.nim` + `test_chaos.sql`) que ejercita el colector `--mm:arc` de Nim, la limpieza de `MemoryContext` de PostgreSQL frente a errores y los guards de SPI bajo carga.
+### [`payment_benchmark.sql`](payment_benchmark.sql)
+Generates a realistic 10,000-row transactional `payments` table and `payments_history` archive table for benchmarking Pgxcrown **Background Workers (`pgxWorker` / `bgWorker`)** doing batch archival.
+
+Run directly inside a prebuilt GHCR container:
+```bash
+docker run -d --name pgxcrown-bench -e POSTGRES_PASSWORD=postgres \
+  -v "$PWD/examples":/workspace/examples -w /workspace \
+  ghcr.io/luisacosta828/pgxcrown:17
+
+docker exec -i pgxcrown-bench psql -U postgres -f /workspace/examples/payment_benchmark.sql
+```
+
+### [`memory_chaos_test/`](memory_chaos_test)
+Stress scenario exercising Nim `--mm:arc` memory allocations, PostgreSQL `MemoryContext` cleanup across errors, and SPI guards (`memory_chaos_test.nim` + `test_chaos.sql`).

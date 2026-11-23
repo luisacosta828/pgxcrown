@@ -1,54 +1,54 @@
-# Ejemplo 07 — Extensión Multi-Módulo, Procedimientos SQL y Snapshots/Migraciones
+# Example 07: Multi-Module Extension, SQL Procedures, and Schema Snapshots/Migrations
 
-Este ejemplo demuestra cómo estructurar una extensión real de PostgreSQL en **múltiples módulos Nim**, exponer procedimientos SQL (`CALL`), aplicar hardening de privilegios (`SECURITY DEFINER`, `search_path`, `LEAKPROOF`) y gestionar el ciclo de vida de versiones (`0.1.0` → `0.2.0`) mediante snapshots automáticos y migraciones incrementales.
+This example demonstrates how to structure a production PostgreSQL extension across **multiple Nim modules**, expose SQL procedures (`CALL`), apply privilege hardening (`SECURITY DEFINER`, `search_path`, `LEAKPROOF`), and manage version lifecycles (`0.1.0` → `0.2.0`) using automatic schema snapshots and incremental migrations.
 
-## Qué demuestra
+## What This Example Demonstrates
 
-1. **Arquitectura multi-módulo** (`src/main.nim` + `src/billing_ops.nim`):
-   - `pgxcrown` recorre topológicamente los módulos locales importados y genera un único `.so` y un único script SQL unificado.
-   - Ambos módulos definen `{.pgxInit.}`, ejecutándose en orden determinista dentro de `_PG_init` (submódulos primero, `main.nim` después).
-   - Las funciones auxiliares internas marcadas con `{.noSql.}` (`computeCentsInternal`) no se exportan al catálogo `pg_proc`.
-2. **Metadata declarativa (`pgxext.json` + `pgxExtension:`)**:
-   - `pgxext.json` provee la configuración base (`"version": "0.1.0"`, `"relocatable"`, `"trusted"`).
-   - El bloque `pgxExtension:` en `src/main.nim` tiene prioridad y sobrescribe los campos en el archivo `.control` generado (por ejemplo `trusted = true`).
-3. **Procedimientos SQL (`PROCEDURE`)**:
-   - Todo `proc` exportado en Nim sin tipo de retorno (o con `: void`) se compila como `CREATE OR REPLACE PROCEDURE ... LANGUAGE c`, invocable mediante `CALL ex07_post_charge(1500);`.
-4. **Hardening de funciones**:
-   - `{.securityDefiner, searchPath: "public, pg_catalog".}` fija `SECURITY DEFINER` y `SET search_path = public, pg_catalog` para prevenir ataques de shadowing de esquema.
-   - `{.securityInvoker.}` mantiene los permisos del invocador.
-   - `{.leakproof.}` marca funciones puras (`ex07_is_valid_amount`) como seguras para pushdown en vistas `security_barrier` y políticas RLS.
+1. **Multi-module architecture** (`src/main.nim` + `src/billing_ops.nim`):
+   - `pgxcrown` topologically walks imported local modules and generates a single `.so` shared library and a single unified SQL installation script.
+   - Both modules define `{.pgxInit.}`, executing deterministically inside `_PG_init` (imported submodules first, `main.nim` afterward).
+   - Internal helper functions marked with `{.noSql.}` (`computeCentsInternal`) are excluded from the PostgreSQL `pg_proc` catalog.
+2. **Declarative metadata (`pgxext.json` + `pgxExtension:`)**:
+   - `pgxext.json` supplies base configuration (`"version": "0.1.0"`, `"relocatable"`, `"trusted"`).
+   - The `pgxExtension:` block in `src/main.nim` takes precedence and overrides fields in the generated `.control` file (for example, `trusted = true`).
+3. **SQL Procedures (`PROCEDURE`)**:
+   - Any exported Nim `proc` without a return type (or returning `: void`) compiles to `CREATE OR REPLACE PROCEDURE ... LANGUAGE c`, invocable via `CALL ex07_post_charge(1500);`.
+4. **Function privilege hardening**:
+   - `{.securityDefiner, searchPath: "public, pg_catalog".}` sets `SECURITY DEFINER` and `SET search_path = public, pg_catalog` to prevent schema-shadowing attacks.
+   - `{.securityInvoker.}` preserves the caller's privileges.
+   - `{.leakproof.}` marks pure predicates (`ex07_is_valid_amount`) as safe for pushdown into `security_barrier` views and RLS policies.
 
-## Estructura de archivos
+## File Layout
 
 ```text
 07_multimodule_and_procedures/
-├── pgxext.json                 # Metadata base (version, relocatable, trusted)
+├── pgxext.json                 # Base metadata (version, relocatable, trusted)
 ├── README.md
 ├── src/
-│   ├── main.nim                # Punto de entrada, pgxExtension:, pgxInit, ex07_reset_ledger
-│   └── billing_ops.nim         # Submódulo con pgxInit, PROCEDURE, securityDefiner y leakproof
+│   ├── main.nim                # Entry point, pgxExtension:, pgxInit, ex07_reset_ledger
+│   └── billing_ops.nim         # Submodule with pgxInit, PROCEDURE, securityDefiner, and leakproof
 └── tests/
-    ├── sql/01_demo.sql         # Suite de regresión SQL
-    └── expected/01_demo.out    # Salida dorada esperada
+    ├── sql/01_demo.sql         # SQL regression test suite
+    └── expected/01_demo.out    # Exact expected psql output
 ```
 
-## Cómo compilar, verificar y probar
+## Building, Verifying, and Testing
 
 ```bash
-# 1. Compilar la extensión (.so, .control, .sql, .integrity.json)
+# 1. Build the extension (.so, .control, .sql, .integrity.json)
 pgxtool build-extension examples/07_multimodule_and_procedures
 
-# 2. Verificar integridad y auditoría ELF/Security v2
+# 2. Verify artifact integrity and Security v2 ELF audit
 pgxtool verify examples/07_multimodule_and_procedures
 
-# 3. Ejecutar pruebas de regresión en Docker (PG 18 o todas PG 14–18)
+# 3. Run regression tests in Docker (PG 18 or full PG 14–18 matrix)
 pgxtool test examples/07_multimodule_and_procedures --pg 18
 pgxtool test examples/07_multimodule_and_procedures --all
 ```
 
-## Instalación y prueba manual en `psql`
+## Installing and Testing Manually in `psql`
 
-> Nota: Como el nombre del directorio inicia con dígitos (`07_...`), en SQL debes **comillar el nombre de la extensión** (`"07_multimodule_and_procedures"`).
+> **Note:** Because the directory name begins with digits (`07_...`), you must **double-quote the extension name in SQL** (`"07_multimodule_and_procedures"`).
 
 ```bash
 pgxtool build-extension examples/07_multimodule_and_procedures
@@ -69,25 +69,25 @@ SELECT ex07_ledger_total();
 
 ---
 
-## Snapshots de Esquema y Migraciones Incrementales (`0.1.0` → `0.2.0`)
+## Schema Snapshots and Incremental Migrations (`0.1.0` → `0.2.0`)
 
-`pgxcrown` incluye un motor automático de **snapshots estructurados** y generación de scripts de actualización para `ALTER EXTENSION ... UPDATE`:
+`pgxcrown` includes an automatic **structured snapshot** and migration generation engine for `ALTER EXTENSION ... UPDATE`:
 
-1. **Captura en la versión `0.1.0`**:
-   Al ejecutar `pgxtool build-extension` con `version = "0.1.0"`, `pgx.nim` guarda dentro de `.pgx_build/`:
-   - `.pgx_build/schema_0.1.0.json`: snapshot JSON estructurado (tipos base, enums, compuestos, firmas de funciones/procedimientos y bloques `pgxSql`).
-   - `.pgx_build/sql_snapshots/07_multimodule_and_procedures--0.1.0.sql`: script base exacto de la `0.1.0`.
-   - `.pgx_build/last_version.txt`: registra `"0.1.0"`.
+1. **Capturing version `0.1.0`**:
+   When running `pgxtool build-extension` with `version = "0.1.0"`, `pgx.nim` records the following under `.pgx_build/`:
+   - `.pgx_build/schema_0.1.0.json`: structured JSON snapshot (base types, enums, composite types, function/procedure signatures, and `pgxSql` blocks).
+   - `.pgx_build/sql_snapshots/07_multimodule_and_procedures--0.1.0.sql`: exact baseline SQL script for `0.1.0`.
+   - `.pgx_build/last_version.txt`: stores `"0.1.0"`.
 
-2. **Evolución a `0.2.0`**:
-   Cuando cambias `version = "0.2.0"` (en `pgxExtension:` / `pgxext.json`), agregas una nueva función o valor de enum, y vuelves a ejecutar `pgxtool build-extension`:
-   - `pgx.nim` detecta el cambio `0.1.0 -> 0.2.0`, compara `schema_0.1.0.json` contra el nuevo AST y genera automáticamente en `migrations/`:
-     - `migrations/07_multimodule_and_procedures--0.1.0.sql` (preservando la línea base instalable de `0.1.0`)
-     - `migrations/07_multimodule_and_procedures--0.1.0--0.2.0.sql` (conteniendo `ALTER TYPE ... ADD VALUE IF NOT EXISTS`, `ALTER TYPE ... ADD ATTRIBUTE`, `CREATE OR REPLACE FUNCTION/PROCEDURE`, etc.)
-   - Si el archivo `migrations/<ext>--0.1.0--0.2.0.sql` ya existe y lo editaste manualmente, `pgx.nim` **nunca lo sobrescribe**.
+2. **Upgrading to `0.2.0`**:
+   When you bump `version = "0.2.0"` (in `pgxExtension:` / `pgxext.json`), add a new function or enum value, and run `pgxtool build-extension` again:
+   - `pgx.nim` detects the `0.1.0 -> 0.2.0` transition, diffs `schema_0.1.0.json` against the new AST, and automatically emits under `migrations/`:
+     - `migrations/07_multimodule_and_procedures--0.1.0.sql` (preserving the installable `0.1.0` baseline)
+     - `migrations/07_multimodule_and_procedures--0.1.0--0.2.0.sql` (containing `ALTER TYPE ... ADD VALUE IF NOT EXISTS`, `ALTER TYPE ... ADD ATTRIBUTE`, `CREATE OR REPLACE FUNCTION/PROCEDURE`, etc.)
+   - If `migrations/<ext>--0.1.0--0.2.0.sql` already exists and was customized manually, `pgx.nim` **never overwrites it**.
 
-3. **Instalación y actualización en PostgreSQL**:
-   Tanto `install.sh` como `pgxtool test` copian `migrations/<ext>--*.sql` al directorio `extension/` de PostgreSQL, permitiéndote probar el upgrade real en SQL:
+3. **Installing and upgrading in PostgreSQL**:
+   Both `install.sh` and `pgxtool test` copy `migrations/<ext>--*.sql` into PostgreSQL's `extension/` directory so you can test the real upgrade path in SQL:
    ```sql
    CREATE EXTENSION "07_multimodule_and_procedures" VERSION '0.1.0';
    ALTER EXTENSION "07_multimodule_and_procedures" UPDATE TO '0.2.0';

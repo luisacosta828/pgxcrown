@@ -1,21 +1,21 @@
-# Ejemplo 10 — Memoria Compartida, LWLocks y Background Workers Dinámicos
+# Example 10: Shared Memory, LWLocks, and Dynamic Background Workers
 
-Este ejemplo demuestra cómo combinar **memoria compartida de PostgreSQL**, sincronización atómica y con **`LWLock`**, y un **Background Worker dinámico** que colabora con sesiones SQL en tiempo real usando `shared_preload_libraries`.
+This example demonstrates how to combine **PostgreSQL shared memory**, atomic and **`LWLock`** synchronization, and a **dynamic Background Worker** collaborating with live SQL sessions via `shared_preload_libraries`.
 
-## Qué demuestra
+## What This Example Demonstrates
 
-1. **Dos estilos complementarios de memoria compartida**:
-   - **Declarativo `{.pgxShared.}`**: `var gPragmaTicks {.pgxShared("ex10_pragma_ticks").}: Atomic[int64]` reserva e inicializa un slot atómico compartido entre procesos.
-   - **Estructurado `initShmemStruct` + `{.pgxShmem.}`**: `Ex10SharedState` se dimensiona con `requestShmemSpace[Ex10SharedState]` y se inicializa atómicamente bajo `AddinShmemInitLock` en `onEx10ShmemStartup`.
-2. **Sincronización con `LWLock` (`getNamedTranche` + `withLock`)**:
-   - Reserva un tranche nombrado (`requestNamedTranche("ex10_tranche", 2)`) en startup y protege lecturas/escrituras concurrentes entre el worker y las sesiones SQL (`lwExclusive` / `lwShared`).
-3. **Background Worker dinámico (`bgWorker` + `runWorkerLoop`)**:
-   - Configura un worker con `library "10_shared_memory_and_bgworker"`, `entrypoint "ex10_metrics_worker"`, `database "postgres"` y `restart 30`.
-   - Lo lanza dinámicamente desde SQL con `registerDynamicWorker`, supervisa su ciclo con `trackWorkerStarted`, `getWorkerStatusByName` y `stopWorkerByName`, y detiene el proceso limpiamente ante `SIGTERM`.
-4. **Requisito de `tests/preload`**:
-   - La presencia de `tests/preload` le indica a `pgxtool test` que configure `shared_preload_libraries = '10_shared_memory_and_bgworker'` y reinicie PostgreSQL antes de ejecutar `01_demo.sql`.
+1. **Two complementary shared-memory styles**:
+   - **Declarative `{.pgxShared.}`**: `var gPragmaTicks {.pgxShared("ex10_pragma_ticks").}: Atomic[int64]` reserves and initializes a cross-process shared atomic slot.
+   - **Structured `initShmemStruct` + `{.pgxShmem.}`**: `Ex10SharedState` is sized with `requestShmemSpace[Ex10SharedState]` and atomically initialized under `AddinShmemInitLock` in `onEx10ShmemStartup`.
+2. **`LWLock` synchronization (`getNamedTranche` + `withLock`)**:
+   - Reserves a named tranche (`requestNamedTranche("ex10_tranche", 2)`) during startup and protects concurrent reads/writes between the background worker and SQL sessions (`lwExclusive` / `lwShared`).
+3. **Dynamic Background Worker (`bgWorker` + `runWorkerLoop`)**:
+   - Configures a worker with `library "10_shared_memory_and_bgworker"`, `entrypoint "ex10_metrics_worker"`, `database "postgres"`, and `restart 30`.
+   - Launches it dynamically from SQL with `registerDynamicWorker`, tracks its lifecycle using `trackWorkerStarted`, `getWorkerStatusByName`, and `stopWorkerByName`, and shuts down cleanly on `SIGTERM`.
+4. **`tests/preload` requirement**:
+   - The `tests/preload` marker tells `pgxtool test` to configure `shared_preload_libraries = '10_shared_memory_and_bgworker'` and restart PostgreSQL before running `01_demo.sql`.
 
-## Estructura de archivos
+## File Layout
 
 ```text
 10_shared_memory_and_bgworker/
@@ -24,12 +24,12 @@ Este ejemplo demuestra cómo combinar **memoria compartida de PostgreSQL**, sinc
 ├── src/
 │   └── main.nim
 └── tests/
-    ├── preload                 # Activa shared_preload_libraries en pgxtool test
+    ├── preload                 # Enables shared_preload_libraries in pgxtool test
     ├── sql/01_demo.sql
     └── expected/01_demo.out
 ```
 
-## Cómo compilar, verificar y probar
+## Building, Verifying, and Testing
 
 ```bash
 pgxtool build-extension examples/10_shared_memory_and_bgworker
@@ -38,18 +38,18 @@ pgxtool test examples/10_shared_memory_and_bgworker --pg 18
 pgxtool test examples/10_shared_memory_and_bgworker --all
 ```
 
-## Instalación y prueba manual en `psql`
+## Installing and Testing Manually in `psql`
 
 ```bash
 pgxtool build-extension examples/10_shared_memory_and_bgworker
 sudo ./examples/10_shared_memory_and_bgworker/src/install.sh
 ```
 
-Habilita `shared_preload_libraries` en PostgreSQL y reinicia el servidor antes de crear la extensión:
+Enable `shared_preload_libraries` in PostgreSQL and restart the server before creating the extension:
 
 ```sql
 ALTER SYSTEM SET shared_preload_libraries = '10_shared_memory_and_bgworker';
--- Reiniciar PostgreSQL (p. ej. pg_ctl restart)
+-- Restart PostgreSQL (e.g., pg_ctl restart)
 ```
 
 ```sql
