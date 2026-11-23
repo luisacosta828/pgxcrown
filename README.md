@@ -7,7 +7,7 @@
 [![Build](https://github.com/luisacosta828/pgxcrown/actions/workflows/build.yml/badge.svg)](https://github.com/luisacosta828/pgxcrown/actions/workflows/build.yml)
 [![Nim Version](https://img.shields.io/badge/Nim-2.0%2B-FFE953?logo=nim&logoColor=white)](https://nim-lang.org/)
 [![PostgreSQL Support](https://img.shields.io/badge/PostgreSQL-14%20--%2018-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![Release](https://img.shields.io/badge/Release-v0.31.0-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
+[![Release](https://img.shields.io/badge/Release-v0.32.0-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
 [![GHCR Containers](https://img.shields.io/badge/GHCR-PG%2014%20--%2018-2496ED?logo=docker&logoColor=white)](https://github.com/luisacosta828/pgxcrown/pkgs/container/pgxcrown)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Memory Safety](https://img.shields.io/badge/Safety-Memory%20Safe-success)](#-fail-safe-panic-shield--sqlstate-mapping)
@@ -39,6 +39,10 @@
 - **Multi-Process Shared Memory & IPC (`PG 14–18`)**: Declarative static shared state ([`{.pgxShared.}`](#8-multi-process-concurrency--shared-memory-pg-1418)), dynamic shared memory (`dsm`, `shm_toc`), typed SPSC queues & one-line worker RPC (`ShmChannel[T]`, `callWorker`, `withWorkerChannel`), `LWLock` / `SpinLock` / atomics / `ConditionVariable` (`waitUntil`), and `WaitEventSet` latch+socket multiplexing — all compile-time POD-verified and ABI-safe across PostgreSQL 14–18.
 - **Compile-Time Effect Verification**: Static enforcement of SQL volatility (`{.immutable.}`, `{.stable.}`, `{.volatile.}`) preventing illegal database writes at compile time.
 - **Modular Extensions, Versioning, Overloading & Streaming SRFs**: Clean `src/` (PostgreSQL SQL translation surface) vs `private/` (pure-Nim libraries omitted from SQL), declarative `.control` & `migrations/` generation (`pgxExtension`, `pgxext.json`), collision-checked SQL function/iterator overloading with stable mangled C symbols, $O(1)$ streaming `iterator` SRFs, automatic `checkStackDepth()` (`54001`) overflow guards, and `{.securityDefiner.}` / `{.leakproof.}` / `{.searchPath.}` pragmas.
+- **Binary SPI v2 & Kept Prepared Plans**: Parameterized binary execution (`$1`, `$2`, ...) via `QueryBuilder` and `spiPrepare(..., keep = true)` / `fetchPlan`, streaming binary cursors (`spiCursorOpen`/`Fetch`/`Close`, `stream[Row]`), and strict distinction between SQL `NULL` and empty string `""` via `Option[string]`.
+- **Transaction & Subtransaction Callbacks (`Anti-PANIC Shield`)**: Process-lifetime `registerXactCallback` (`onPreCommit`, `onCommit`, `onAbort`) and `registerSubXactCallback` (`SAVEPOINT` lifecycle) helpers with `pgxWithLibcAlloc` memory-lifetime isolation and guarded `xeAbort` execution preventing backend `PANIC`s.
+- **3-Layer Security v2 Pipeline & Integrity Attestation**: Layered ELF & policy verification (`src/pgxcrown/security/`) blocking dynamic loaders (`.so`/`.dll`/`dlopen`/`load_file`), unconditionally blocking `RPATH`/`RUNPATH`, enforcing a strict `DT_NEEDED` allowlist, pure-Nim SHA-256 + RFC 4231 HMAC-SHA256 attestation (`pgxtool verify --require-signature`), and live catalog/ELF checks (`verifyCatalogIntegrity`, `loadedSoSha256`).
+- **Zero-Config LSP Synchronization**: `pgxtool sync-lsp` automatically maintains `nim.cfg` with PostgreSQL `pg_config --includedir-server` paths for `nimlangserver` and `nim check`.
 
 ---
 
@@ -672,6 +676,55 @@ Write natural Nim overloads (`proc format_val*(x: int32): string` and `proc form
 
 ---
 
+### 11. Binary SPI v2, Transaction Callbacks, Security v2 & Integrity Attestation
+
+#### Parameterized Binary SPI v2 & Prepared Plans
+
+Use typed binary parameter binding and deserialization without text formatting overhead or SQL injection risk:
+
+```nim
+import pgxcrown
+import std/options
+
+type OrderRow {.noSql.} = object
+  id*: int32
+  code*: string
+  note*: Option[string]
+
+proc insert_order*(code: string, note: Option[string], amount: int64): int32 {.volatile.} =
+  let t = table("orders")
+  InsertInto(t, t.code, t.note, t.amount)
+    .Values(code, note, amount)
+    .Returning("id")
+    .scalar(int32) # Preserves NULL vs "" cleanly via Option[string]
+```
+
+- **Kept Prepared Plans & Streaming Cursors**: Reuse compiled plans across calls with `spiPrepare(sql, [TEXTOID], keep = true)` + `fetchPlan`, or iterate bounded batches via `spiCursorOpen` / `spiCursorFetch` / `spiCursorClose` and `stream[T]`.
+
+#### Transaction & Savepoint Lifecycle Callbacks
+
+Register safe Nim callbacks tied to PostgreSQL commits, aborts, and `SAVEPOINT` subtransactions without allocating closures inside transient PostgreSQL `MemoryContext`s:
+
+```nim
+pgxWithLibcAlloc:
+  discard onPreCommit((proc() = discard), once = true)
+  discard onCommit((proc() = discard), once = true)
+  discard onAbort((proc() = discard), once = true)
+```
+
+Exceptions inside abort callbacks are trapped cleanly by the **Anti-PANIC Shield** (downgrading abort-time defects to warnings rather than escalating an already aborting transaction to `PANIC`).
+
+#### 3-Layer Security v2 Audit & Cryptographic Integrity Attestation
+
+Every extension binary passes a layered security pipeline (`src/pgxcrown/security/`) before loading or deployment:
+
+1. **Layer 1 (`layer_symbols.nim`)**: Default-deny scan for prohibited OS/dynamic-loader symbols (`.so`/`.dll`, `dlopen`, `dlsym`, `load_file`, `posix_spawn`, raw `syscall`) configurable via `pgxext.json` policy.
+2. **Layer 2 (`layer_elf_deps.nim`)**: Unconditional block on `RPATH`/`RUNPATH` and strict `DT_NEEDED` shared-library allowlist.
+3. **Layer 3 (`layer_integrity.nim`)**: FIPS 180-4 SHA-256 hashes over `.so`, `.sql`, and `.control` plus exported routine attestation manifests (`<ext>.integrity.json`), optionally HMAC-SHA256 signed (`PGX_INTEGRITY_KEY`) and verified via `pgxtool verify <ext> --require-signature`.
+4. **Live In-Database Attestation (`integrity_runtime.nim`)**: Verify `pg_proc` catalog metadata and `/proc/self/maps` shared-object SHA-256 integrity directly inside SQL sessions via `verifyCatalogIntegrity` and `loadedSoSha256`.
+
+---
+
 ## 💻 `pgxtool` CLI Reference
 
 `pgxtool` automates the entire PostgreSQL extension lifecycle:
@@ -688,6 +741,8 @@ Write natural Nim overloads (`proc format_val*(x: int32): string` and `proc form
 | | `--debug` (`-d`) | Enables `pgxDebug` compile-time AST and DDL debug output. |
 | **`clean`** | `pgxtool clean <name>` | Removes build cache (`.pgx_build`) and generated artifacts (`.so`, `.sql`, `.control`). |
 | **`install`** | `pgxtool install <name>` | Automatically copies `.so`, `.control`, and `.sql` to PostgreSQL directories. |
+| **`verify`** | `pgxtool verify <name> [--installed] [--require-signature]` | Runs the 3-layer Security v2 ELF audit and validates SHA-256 / HMAC-SHA256 integrity manifests. |
+| **`sync-lsp`** | `pgxtool sync-lsp [project] [--pg <v>]` | Generates or refreshes `nim.cfg` with PostgreSQL server include paths for IDE/LSP (`nim check`). |
 | **`create-type`** | `pgxtool create-type <name> --base-type <type>` | Generates a custom distinct base type with dynamic parsing for 15 scalar types. |
 | **`create-hook`** | `pgxtool create-hook <name>` | Scaffolds a Postgres kernel hook template (`emit_log`, `post_parse_analyze`). |
 | **`test`** | `pgxtool test [project\|path] [--pg <v>] [--all] [--local] [--preload] [--bless] [--keep] [--debug]` | Runs SQL regression tests (with optional `shared_preload_libraries` + restart via `--preload` or `tests/preload`) in Docker/GHCR sandboxes (PG 14–18) or locally (`--local`). |
@@ -734,15 +789,15 @@ Write natural Nim overloads (`proc format_val*(x: int32): string` and `proc form
 
 Prebuilt all-in-one container images are published to GitHub Container Registry (`ghcr.io/luisacosta828/pgxcrown`, `linux/amd64`). Each image bundles official `postgres:<ver>`, `postgresql-server-dev-<ver>`, `gcc`, **Nim 2.4.0 + Nimble**, and **`pgxcrown` (`pgxtool`)** so engineers and CI runners can compile, install, and test C/Nim PostgreSQL extensions with zero host PostgreSQL setup.
 
-### Published GHCR Image Matrix (`v0.31.0`)
+### Published GHCR Image Matrix (`v0.32.0`)
 
 | PostgreSQL Version | Rolling Major Tag | Pinned Release Tag |
 | :--- | :--- | :--- |
-| **PostgreSQL 18** | `ghcr.io/luisacosta828/pgxcrown:18` / `:latest` | `ghcr.io/luisacosta828/pgxcrown:18-0.31.0` |
-| **PostgreSQL 17** | `ghcr.io/luisacosta828/pgxcrown:17` | `ghcr.io/luisacosta828/pgxcrown:17-0.31.0` |
-| **PostgreSQL 16** | `ghcr.io/luisacosta828/pgxcrown:16` | `ghcr.io/luisacosta828/pgxcrown:16-0.31.0` |
-| **PostgreSQL 15** | `ghcr.io/luisacosta828/pgxcrown:15` | `ghcr.io/luisacosta828/pgxcrown:15-0.31.0` |
-| **PostgreSQL 14** | `ghcr.io/luisacosta828/pgxcrown:14` | `ghcr.io/luisacosta828/pgxcrown:14-0.31.0` |
+| **PostgreSQL 18** | `ghcr.io/luisacosta828/pgxcrown:18` / `:latest` | `ghcr.io/luisacosta828/pgxcrown:18-0.32.0` |
+| **PostgreSQL 17** | `ghcr.io/luisacosta828/pgxcrown:17` | `ghcr.io/luisacosta828/pgxcrown:17-0.32.0` |
+| **PostgreSQL 16** | `ghcr.io/luisacosta828/pgxcrown:16` | `ghcr.io/luisacosta828/pgxcrown:16-0.32.0` |
+| **PostgreSQL 15** | `ghcr.io/luisacosta828/pgxcrown:15` | `ghcr.io/luisacosta828/pgxcrown:15-0.32.0` |
+| **PostgreSQL 14** | `ghcr.io/luisacosta828/pgxcrown:14` | `ghcr.io/luisacosta828/pgxcrown:14-0.32.0` |
 
 ### Real-World Workflows
 

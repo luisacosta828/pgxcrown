@@ -2,24 +2,24 @@
 
 Official all-in-one container images pairing each PostgreSQL major version (`14`, `15`, `16`, `17`, `18`) with its matching `postgresql-server-dev-<ver>` headers, `gcc`, **Nim 2.4.0 + Nimble**, and **pgxcrown** (`pgxtool`) ready to compile, install, and test native extensions inside the container.
 
-## Option A: Prebuilt Images from GHCR (`v0.31.0`)
+## Option A: Prebuilt Images from GHCR (`v0.32.0`)
 
 Published images live on GitHub Container Registry (`linux/amd64`, matching upstream `nimlang/nim:2.4.0`):
 
 | PostgreSQL | Rolling Major Tag | Pinned Release Tag |
 | :--- | :--- | :--- |
-| **PostgreSQL 18** | `ghcr.io/luisacosta828/pgxcrown:18` / `:latest` | `ghcr.io/luisacosta828/pgxcrown:18-0.31.0` |
-| **PostgreSQL 17** | `ghcr.io/luisacosta828/pgxcrown:17` | `ghcr.io/luisacosta828/pgxcrown:17-0.31.0` |
-| **PostgreSQL 16** | `ghcr.io/luisacosta828/pgxcrown:16` | `ghcr.io/luisacosta828/pgxcrown:16-0.31.0` |
-| **PostgreSQL 15** | `ghcr.io/luisacosta828/pgxcrown:15` | `ghcr.io/luisacosta828/pgxcrown:15-0.31.0` |
-| **PostgreSQL 14** | `ghcr.io/luisacosta828/pgxcrown:14` | `ghcr.io/luisacosta828/pgxcrown:14-0.31.0` |
+| **PostgreSQL 18** | `ghcr.io/luisacosta828/pgxcrown:18` / `:latest` | `ghcr.io/luisacosta828/pgxcrown:18-0.32.0` |
+| **PostgreSQL 17** | `ghcr.io/luisacosta828/pgxcrown:17` | `ghcr.io/luisacosta828/pgxcrown:17-0.32.0` |
+| **PostgreSQL 16** | `ghcr.io/luisacosta828/pgxcrown:16` | `ghcr.io/luisacosta828/pgxcrown:16-0.32.0` |
+| **PostgreSQL 15** | `ghcr.io/luisacosta828/pgxcrown:15` | `ghcr.io/luisacosta828/pgxcrown:15-0.32.0` |
+| **PostgreSQL 14** | `ghcr.io/luisacosta828/pgxcrown:14` | `ghcr.io/luisacosta828/pgxcrown:14-0.32.0` |
 
 ```bash
 # Pull the PostgreSQL 17 image directly
 docker pull ghcr.io/luisacosta828/pgxcrown:17
 
-# Or pin explicitly to pgxcrown 0.31.0 on PostgreSQL 16
-docker pull ghcr.io/luisacosta828/pgxcrown:16-0.31.0
+# Or pin explicitly to pgxcrown 0.32.0 on PostgreSQL 16
+docker pull ghcr.io/luisacosta828/pgxcrown:16-0.32.0
 ```
 
 ## Option B: Build Images Locally
