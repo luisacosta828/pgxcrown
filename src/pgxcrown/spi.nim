@@ -138,7 +138,9 @@ proc parsePgArray*(val: string): seq[string] =
 
 proc parseValue*[T](val: string): T {.tags: [].} =
   ## Safely parses a string column into a strongly typed Nim value
-  when T is int:
+  when isDatumOrContainsDatum[T]():
+    {.error: "Raw PostgreSQL Datum (or container of Datum) cannot be parsed from SPI text rows; use a concrete Nim type instead.".}
+  elif T is int:
     try: parseInt(val) except CatchableError: 0
   elif T is int32:
     try: int32(parseInt(val)) except CatchableError: 0'i32

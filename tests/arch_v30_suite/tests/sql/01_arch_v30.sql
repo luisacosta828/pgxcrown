@@ -114,6 +114,13 @@ SELECT v30_proc_counter() AS proc_acc_35;
 SELECT v30_call_procs_dfc(2, 4) AS proc_dfc_77;
 SELECT v30_syscache_probe() AS syscache_probe;
 
+-- 11. Converter hardening: float32 vec/DFC/composite, float64 precision, bool/int8, Datum(0), toPgVector ARC, QueryBuilder
+SELECT v30_f32_double(1.25::float4) AS f32_double_25;
+SELECT round(v30_float32_vec_sum(ARRAY[1.5::float4, 2.25::float4, -0.75::float4])::numeric, 2) AS f32_vec_sum_600;
+SELECT v30_metrics_check(ROW(2.5::float4, true, 'K'::"char")::"ArchMetrics") AS metrics_check;
+SELECT v30_converter_roundtrip() AS converter_roundtrip;
+SELECT v30_qb_spi_live() AS qb_spi_live;
+
 -- 7. SECURITY DEFINER vs SECURITY INVOKER + trusted non-superuser CREATE EXTENSION
 CREATE TABLE public.arch_v30_priv_vault (id int);
 INSERT INTO public.arch_v30_priv_vault VALUES (101), (202);
@@ -159,5 +166,8 @@ SELECT v30_udf_chain(5) AS upgraded_udf_chain;
 CALL v30_volatile_proc(5);
 SELECT v30_proc_counter() AS upgraded_proc_82;
 SELECT v30_syscache_probe() AS upgraded_syscache_probe;
+SELECT round(v30_float32_vec_sum(ARRAY[1.5::float4, 2.25::float4, -0.75::float4])::numeric, 2) AS upgraded_f32_vec_sum;
+SELECT v30_converter_roundtrip() AS upgraded_converter_roundtrip;
+SELECT v30_qb_spi_live() AS upgraded_qb_spi_live;
 
 DROP EXTENSION arch_v30_suite;

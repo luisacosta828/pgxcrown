@@ -388,7 +388,7 @@ template map_seq_tuplec_params(pvar, elemTypeStr, param, argIdxNode) =
         of "int", "int32", "cint": newCall(ident("DatumGetInt32"), rawDatum)
         of "int64": newCall(ident("DatumGetInt64"), rawDatum)
         of "float", "float64": newCall(ident("DatumGetFloat8"), rawDatum)
-        of "bool": newTree(nnkInfix, ident("!="), rawDatum, newIntLitNode(0))
+        of "bool": newCall(ident("DatumGetBool"), rawDatum)
         of "string": newCall(ident("$"), newCall(ident("getTupleStringAttr"), itemTh, tupvar, pgIdx))
         else: rawDatum
       ifBody.add newTree(nnkAsgn, newTree(nnkBracketExpr, newTree(nnkBracketExpr, ident(pvar), loopIdx), nimIdx), typedVal)
@@ -406,7 +406,7 @@ template map_seq_tuplec_params(pvar, elemTypeStr, param, argIdxNode) =
           of "int", "int32", "cint": newCall(ident("DatumGetInt32"), rawDatum)
           of "int64": newCall(ident("DatumGetInt64"), rawDatum)
           of "float", "float64": newCall(ident("DatumGetFloat8"), rawDatum)
-          of "bool": newTree(nnkInfix, ident("!="), rawDatum, newIntLitNode(0))
+          of "bool": newCall(ident("DatumGetBool"), rawDatum)
           of "string": newCall(ident("$"), newCall(ident("getTupleStringAttr"), itemTh, tupvar, pgIdx))
           else: rawDatum
         ifBody.add newTree(nnkAsgn, newDotExpr(newTree(nnkBracketExpr, ident(pvar), loopIdx), fieldNameIdent), typedVal)
@@ -1051,7 +1051,7 @@ proc buildDatumToNimExpr(typeStr: string, typeNode: NimNode, datumExpr: NimNode,
   of "cdouble":
     newCall(ident("cdouble"), newCall(ident("DatumGetFloat8"), datumExpr))
   of "bool":
-    newTree(nnkInfix, ident("!="), datumExpr, newCall(ident("Datum"), newLit(0)))
+    newCall(ident("DatumGetBool"), datumExpr)
   of "char":
     newCall(ident("char"), newCall(ident("DatumGetChar"), datumExpr))
   of "string", "Text":

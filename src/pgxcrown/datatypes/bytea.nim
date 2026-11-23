@@ -201,7 +201,7 @@ proc getPgBytea*(datum: Datum): PgBytea {.noSideEffect, tags: [].} =
   ## Extracts a zero-copy `PgBytea` view from a PostgreSQL `bytea` `Datum`.
   {.cast(noSideEffect).}:
     {.cast(tags: []).}:
-      if datum == 0:
+      if datum == Datum(0):
         return initPgBytea()
       let p = pgx_detoast_bytea(datum)
       if p == nil:

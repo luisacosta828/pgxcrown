@@ -5,7 +5,7 @@ export options, json
 {.push header: "postgres.h".}
 
 type
-  Datum* {.importc: "Datum".} = uint64
+  Datum* {.importc: "Datum".} = distinct uint64
   
   Text* {.importc: "text".} = object
     vl_len {.importc: "vl_len_".}:   array[4, char]
@@ -34,21 +34,27 @@ type
     dim1*: cint
     lbound1*: cint
     values*: UncheckedArray[Oid]
+{.pop.}
 
+const NullDatum* = Datum(0)
+proc `==`*(a, b: Datum): bool {.borrow.}
+proc `$`*(d: Datum): string {.inline.} = $uint64(d)
+proc isZero*(d: Datum): bool {.inline.} = uint64(d) == 0'u64
+
+{.push header: "postgres.h".}
 proc cstring_to_text*(s: const_char): Text {.importc.}
 proc NameStr*(name: NameData): cstring {.importc.}
 proc DatumGetObjectId*(datum_id: Datum): Oid {.importc.}
 proc DatumGetInt64*(x: Datum): int64 {.importc.}
 proc DatumGetInt32*(x: Datum): int32 {.importc.}
 proc DatumGetInt16*(x: Datum): int16 {.importc.}
-#proc DatumGetInt8*(x: Datum): int8 {.importc.}
 proc DatumGetUInt64*(x: Datum): uint64 {.importc.}
 proc DatumGetUInt32*(x: Datum): uint32 {.importc.}
 proc DatumGetUInt16*(x: Datum): uint16 {.importc.}
 proc DatumGetUInt8*(x: Datum): uint8 {.importc.}
 proc DatumGetChar*(x: Datum): cchar {.importc.}
-proc DatumGetBool*(x: Datum): cchar | bool {.importc.}
-proc DatumGetFloat4*(x: Datum): cfloat | float32 | float {.importc.}
+proc DatumGetBool*(x: Datum): bool {.importc.}
+proc DatumGetFloat4*(x: Datum): float32 {.importc.}
 proc DatumGetFloat8*(x: Datum): float64 {.importc.}
 proc DatumGetPointer*(x: Datum): Pointer {.importc.}
 proc DatumGetCString*(x: Datum): cstring {.importc.}
@@ -56,17 +62,17 @@ proc DatumGetName*(x: Datum): Name {.importc.}
 
 proc ObjectIdGetDatum*(id: Oid): Datum {.importc.}
 proc Int64GetDatum*(x: int64): Datum {.importc.}
-proc Int32GetDatum*(x: int32 | int ): Datum {.importc.}
-proc Int16GetDatum*(x: int16 ): Datum {.importc.}
-proc Int8GetDatum*(x: int8 ): Datum {.importc.}
+proc Int32GetDatum*(x: int32): Datum {.importc.}
+proc Int16GetDatum*(x: int16): Datum {.importc.}
+proc Int8GetDatum*(x: int8): Datum {.importc.}
 proc UInt64GetDatum*(x: uint64): Datum {.importc.}
-proc UInt32GetDatum*(x: uint32 | uint): Datum {.importc.}
+proc UInt32GetDatum*(x: uint32): Datum {.importc.}
 proc UInt16GetDatum*(x: uint16): Datum {.importc.}
 proc UInt8GetDatum*(x: uint8): Datum {.importc.}
 proc CharGetDatum*(x: cchar): Datum {.importc.}
-proc BoolGetDatum*(x: cchar | bool): Datum {.importc.}
-proc Float4GetDatum*(x: cfloat | float32 | float): Datum {.importc.}
-proc Float8GetDatum*(x: cdouble | float64): Datum {.importc.}
+proc BoolGetDatum*(x: bool): Datum {.importc.}
+proc Float4GetDatum*(x: float32): Datum {.importc.}
+proc Float8GetDatum*(x: float64): Datum {.importc.}
 proc PointerGetDatum*(x: Pointer): Datum {.importc.}
 proc CStringGetDatum*(x: cstring): Datum {.importc.}
 proc pstrdup*(x: cstring): cstring {.importc.}
@@ -75,6 +81,8 @@ proc VARDATA*(x: pointer): cstring {.importc.}
 proc VARDATA_ANY*(x: pointer): cstring {.importc.}
 proc palloc*(x: cuint): pointer {.importc.}
 {.pop.}
+
+proc DatumGetInt8*(x: Datum): int8 {.inline.} = cast[int8](DatumGetChar(x))
 
 {.push header: "utils/builtins.h".}
 proc TextDatumGetCString*(x: Datum): cstring {.importc.}
@@ -250,38 +258,51 @@ proc enumOidToString*(oid: Oid): string =
   else:
     result = ""
 
-converter DatumToObjectId*(x: Datum): Oid = DatumGetObjectId(x) 
-converter DatumToInt64*(x: Datum): int64 =  DatumGetInt64(x)
-converter DatumToInt32*(x: Datum): int =  DatumGetInt32(x)
+converter DatumToObjectId*(x: Datum): Oid = DatumGetObjectId(x)
+proc DatumToUInt32*(x: Datum): uint32 {.inline.} = DatumGetUInt32(x)
+converter DatumToInt64*(x: Datum): int64 = DatumGetInt64(x)
+converter DatumToInt32*(x: Datum): int32 = DatumGetInt32(x)
+converter DatumToInt*(x: Datum): int = int(DatumGetInt64(x))
 converter DatumToInt16*(x: Datum): int16 = DatumGetInt16(x)
-converter DatumToUInt64*(x: Datum): uint64 =  DatumGetUInt64(x)
-converter DatumToUInt32*(x: Datum): uint32 | uint = DatumGetUInt32(x)
+converter DatumToInt8*(x: Datum): int8 = DatumGetInt8(x)
+converter DatumToUInt64*(x: Datum): uint64 = DatumGetUInt64(x)
+converter DatumToUInt*(x: Datum): uint = uint(DatumGetUInt64(x))
 converter DatumToUInt16*(x: Datum): uint16 = DatumGetUInt16(x)
 converter DatumToUInt8*(x: Datum): uint8 = DatumGetUInt8(x)
 converter DatumToChar*(x: Datum): cchar = DatumGetChar(x)
-converter DatumToBool*(x: Datum): cchar | bool = DatumGetBool(x)
-converter DatumToFloat4*(x: Datum): cfloat | float32 | float = DatumGetFloat4(x)
-converter DatumToPointer*(x: Datum): Pointer = DatumGetPointer(x)
+converter DatumToBool*(x: Datum): bool = DatumGetBool(x)
+converter DatumToFloat4*(x: Datum): float32 = DatumGetFloat4(x)
+converter DatumToFloat8*(x: Datum): float64 = DatumGetFloat8(x)
 converter DatumToCString*(x: Datum): cstring = DatumGetCString(x)
+proc DatumToPointer*(x: Datum): Pointer {.inline.} = DatumGetPointer(x)
 converter DatumToNimString*(x: Datum): string =
+  if x == Datum(0):
+    return ""
   let cs = TextDatumGetCString(x)
-  if cs == nil: "" else: $cs
+  if cs != nil:
+    result = $cs
+    pfree(cs)
+  else:
+    result = ""
 converter DatumToName*(x: Datum): Name = DatumGetName(x)
 
 converter ObjectIdToDatum*(value: Oid): Datum = ObjectIdGetDatum(value)
+proc UInt32ToDatum*(value: uint32): Datum {.inline.} = UInt32GetDatum(value)
 converter Int64ToDatum*(value: int64): Datum = Int64GetDatum(value)
-converter Int32ToDatum*(value: int | int32): Datum = Int32GetDatum(value)
+converter Int32ToDatum*(value: int32): Datum = Int32GetDatum(value)
+converter IntToDatum*(value: int): Datum = Int64GetDatum(int64(value))
 converter Int16ToDatum*(value: int16): Datum = Int16GetDatum(value)
+converter Int8ToDatum*(value: int8): Datum = Int8GetDatum(value)
 converter UInt64ToDatum*(value: uint64): Datum = UInt64GetDatum(value)
-converter UInt32ToDatum*(value: uint32 | uint): Datum = UInt32GetDatum(value)
+converter UIntToDatum*(value: uint): Datum = UInt64GetDatum(uint64(value))
 converter UInt16ToDatum*(value: uint16): Datum = UInt16GetDatum(value)
 converter UInt8ToDatum*(value: uint8): Datum = UInt8GetDatum(value)
-converter CharToDatum*(value: cchar): Datum =  CharGetDatum(value) 
-converter BoolToDatum*(value: cchar | bool): Datum = BoolGetDatum(value) 
-converter Float4ToDatum*(value: cfloat | float32 | float): Datum = Float4GetDatum(value)
-converter Float8ToDatum*(value: cdouble | float64): Datum = Float8GetDatum(value)
-converter PointerToDatum*(value: Pointer): Datum = PointerGetDatum(value)
+converter CharToDatum*(value: cchar): Datum = CharGetDatum(value)
+converter BoolToDatum*(value: bool): Datum = BoolGetDatum(value)
+converter Float4ToDatum*(value: float32): Datum = Float4GetDatum(value)
+converter Float8ToDatum*(value: float64): Datum = Float8GetDatum(value)
 converter CStringToDatum*(value: cstring): Datum = CStringGetDatum(value)
+proc PointerToDatum*(value: Pointer): Datum {.inline.} = PointerGetDatum(value)
 converter NameToDatum*(value: Name): Datum = NameGetDatum(value)
 converter CstringToNimString*(value: cstring): string =
   if value == nil: "" else: $value

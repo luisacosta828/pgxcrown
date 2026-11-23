@@ -122,11 +122,11 @@ type
     rawDatum*: Datum
 
 proc initJsonbView*(d: Datum): JsonbView =
-  if d == 0:
-    return JsonbView(found: false, rawDatum: 0)
+  if d == Datum(0):
+    return JsonbView(found: false, rawDatum: Datum(0))
   let jb = DatumGetJsonbP(d)
   if jb == nil:
-    return JsonbView(found: false, rawDatum: 0)
+    return JsonbView(found: false, rawDatum: Datum(0))
   result.container = addr jb.root
   result.found = true
   result.rawDatum = d
@@ -139,31 +139,31 @@ proc isNull*(j: JsonbView): bool {.inline.} =
 # Operador [] por clave (Objetos JSON)
 proc `[]`*(j: JsonbView, key: string): JsonbView =
   if not j.found or j.container == nil:
-    return JsonbView(found: false, rawDatum: 0)
+    return JsonbView(found: false, rawDatum: Datum(0))
 
   var res: JsonbValue
   let ptrRes = getKeyJsonValueFromContainer(j.container, key.cstring, key.len.cint, addr res)
   if ptrRes == nil:
-    return JsonbView(found: false, rawDatum: 0)
+    return JsonbView(found: false, rawDatum: Datum(0))
 
   result.found = true
   result.val = res
-  result.rawDatum = 0
+  result.rawDatum = Datum(0)
   if res.`type` == jbvBinary:
     result.container = res.val.binary.data
 
 # Operador [] por índice (Arrays JSON)
 proc `[]`*(j: JsonbView, idx: int): JsonbView =
   if not j.found or j.container == nil or idx < 0:
-    return JsonbView(found: false, rawDatum: 0)
+    return JsonbView(found: false, rawDatum: Datum(0))
 
   let ptrRes = getIthJsonbValueFromContainer(j.container, idx.cuint)
   if ptrRes == nil:
-    return JsonbView(found: false, rawDatum: 0)
+    return JsonbView(found: false, rawDatum: Datum(0))
 
   result.found = true
   result.val = ptrRes[]
-  result.rawDatum = 0
+  result.rawDatum = Datum(0)
   if ptrRes.`type` == jbvBinary:
     result.container = ptrRes.val.binary.data
 
@@ -172,7 +172,7 @@ proc `{}`*(j: JsonbView, keys: varargs[string]): JsonbView =
   result = j
   for k in keys:
     result = result[k]
-    if not result.found: return JsonbView(found: false, rawDatum: 0)
+    if not result.found: return JsonbView(found: false, rawDatum: Datum(0))
 
 proc hasKey*(j: JsonbView, key: string): bool {.inline.} =
   j[key].found
@@ -219,7 +219,7 @@ iterator items*(j: JsonbView): JsonbView =
           let tok = JsonbIteratorNext(addr it, addr val, true)
           if tok == WJB_END_ARRAY or tok == WJB_DONE: break
           if tok in {WJB_ELEM, WJB_BEGIN_OBJECT, WJB_BEGIN_ARRAY}:
-            var elem = JsonbView(found: true, val: val, rawDatum: 0)
+            var elem = JsonbView(found: true, val: val, rawDatum: Datum(0))
             if val.`type` == jbvBinary:
               elem.container = val.val.binary.data
             yield elem
@@ -339,28 +339,33 @@ proc `$`*(j: JsonbView): string =
 # -----------------------------------------------------------------------------
 # 4. Implicit Converters & Templates
 # -----------------------------------------------------------------------------
-converter DatumToJsonbView*(d: Datum): JsonbView {.inline.} =
-  initJsonbView(d)
+converter DatumToJsonbView*(d: Datum): JsonbView {.inline, noSideEffect, tags: [].} =
+  {.cast(noSideEffect).}:
+    {.cast(tags: []).}:
+      initJsonbView(d)
 
 converter DatumToJsonNode*(x: Datum): JsonNode {.tags: [].} =
   {.cast(noSideEffect).}:
     {.cast(tags: []).}:
-      if x == 0: return newJNull()
+      if x == Datum(0): return newJNull()
       return initJsonbView(x).toJsonNode()
 
-converter JsonNodeToDatum*(j: JsonNode): Datum {.tags: [].} =
+converter JsonNodeToDatum*(j: JsonNode): Datum {.noSideEffect, tags: [].} =
   {.cast(noSideEffect).}:
     {.cast(tags: []).}:
       if isNil(j) or j.kind == JNull:
-        let csDatum = CStringToDatum("null")
+        let csDatum = CStringGetDatum("null")
         return DirectFunctionCall1(jsonb_in, csDatum)
-      let csDatum = CStringToDatum(cstring($j))
+      let jsonStr = $j
+      let csDatum = CStringGetDatum(cstring(jsonStr))
       return DirectFunctionCall1(jsonb_in, csDatum)
 
-converter JsonbViewToDatum*(j: JsonbView): Datum =
-  if j.rawDatum != 0:
-    return j.rawDatum
-  return JsonNodeToDatum(j.toJsonNode())
+converter JsonbViewToDatum*(j: JsonbView): Datum {.noSideEffect, tags: [].} =
+  {.cast(noSideEffect).}:
+    {.cast(tags: []).}:
+      if j.rawDatum != Datum(0):
+        return j.rawDatum
+      return JsonNodeToDatum(j.toJsonNode())
 
 proc getJsonNode*(datum: Datum): JsonNode {.inline.} =
   DatumToJsonNode(datum)

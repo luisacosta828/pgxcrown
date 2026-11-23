@@ -11,6 +11,11 @@ type
     label*: string
     status*: ArchStatus
 
+  ArchMetrics* = object
+    ratio*: float32
+    flag*: bool
+    tiny*: int8
+
   NoSqlBuffer* {.noSql.} = object
     raw*: int32
 

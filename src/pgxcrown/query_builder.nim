@@ -5,7 +5,7 @@
 ## PostgreSQL UPSERT (ON CONFLICT), Set Operations, and Infix `as` Sugar.
 ## =============================================================================
 
-import std/[strutils, sequtils, tables, macros, options, json, typetraits]
+import std/[strutils, sequtils, tables, macros, options, json, typetraits, math]
 export json
 
 # =============================================================================
@@ -56,6 +56,7 @@ proc quoteQualifiedIdent*(s: string): string {.inline.} =
 
 type
   RawSql* = distinct string
+  SqlIdent* = distinct string
   SqlExpr* = object
     sql*: string
 
@@ -63,20 +64,44 @@ proc raw*(s: string): RawSql = RawSql(s)
 proc `$`*(r: RawSql): string = string(r)
 proc `$`*(e: SqlExpr): string = e.sql
 
+proc formatPgFloat*(v: float64): string {.inline.} =
+  case classify(v)
+  of fcNan: "'NaN'::float8"
+  of fcInf: "'Infinity'::float8"
+  of fcNegInf: "'-Infinity'::float8"
+  else: $v
+
+proc isDatumOrContainsDatum*[T](): bool {.compileTime.} =
+  when typetraits.name(T) == "Datum":
+    true
+  elif T is Option:
+    isDatumOrContainsDatum[typeof(default(T).get)]()
+  elif T is seq:
+    isDatumOrContainsDatum[typeof(default(T)[0])]()
+  elif T is distinct:
+    isDatumOrContainsDatum[distinctBase(T, false)]()
+  else:
+    false
+
 proc formatSqlValue*[T](val: T): string =
   ## Safely serializes a Nim value into a SQL literal for queries, INSERT/UPDATE and VALUES statements
-  when T is RawSql:
+  when isDatumOrContainsDatum[T]():
+    {.error: "Raw PostgreSQL Datum (or container of Datum) cannot be formatted as a SQL literal value; convert it to a typed Nim value first.".}
+  elif T is RawSql:
     string(val)
   elif T is SqlExpr:
     val.sql
   elif T is distinct:
-    formatSqlValue(val.distinctBase)
+    when T is SqlIdent:
+      {.error: "SqlIdent represents a SQL identifier, not a SQL literal value; use ColumnRef, Select, GroupBy, OrderBy, or quoteIdent instead.".}
+    else:
+      formatSqlValue(val.distinctBase)
   elif T is int or T is int32 or T is int64 or T is int16 or T is int8 or T is byte:
     $val
   elif T is uint or T is uint32 or T is uint64 or T is uint16 or T is uint8:
     $val
   elif T is float or T is float64 or T is float32:
-    $val
+    formatPgFloat(float64(val))
   elif T is bool:
     if val: "TRUE" else: "FALSE"
   elif T is string or T is cstring:
@@ -111,7 +136,7 @@ proc formatSqlValue*[T](val: T): string =
       else: "ARRAY[" & val.mapIt($it).join(", ") & "]"
     elif typeof(val[0]) is float or typeof(val[0]) is float64 or typeof(val[0]) is float32:
       if val.len == 0: "ARRAY[]::double precision[]"
-      else: "ARRAY[" & val.mapIt($it).join(", ") & "]"
+      else: "ARRAY[" & val.mapIt(formatPgFloat(float64(it))).join(", ") & "]"
     elif typeof(val[0]) is bool:
       if val.len == 0: "ARRAY[]::boolean[]"
       else: "ARRAY[" & val.mapIt(if it: "TRUE" else: "FALSE").join(", ") & "]"
@@ -119,10 +144,16 @@ proc formatSqlValue*[T](val: T): string =
       if val.len == 0: "ARRAY[]::jsonb[]"
       else: "ARRAY[" & val.mapIt(if it.isNil or it.kind == JNull: "NULL" else: quoteLiteral($it)).join(", ") & "]::jsonb[]"
     elif typeof(val[0]) is distinct:
-      if val.len == 0: "ARRAY[]"
-      else: "ARRAY[" & val.mapIt(formatSqlValue(it.distinctBase)).join(", ") & "]"
+      when typeof(val[0]) is SqlIdent:
+        {.error: "seq[SqlIdent] cannot be formatted as a SQL literal ARRAY; pass identifier columns to Select, GroupBy, or OrderBy instead.".}
+      elif typeof(val[0]) is RawSql:
+        if val.len == 0: "ARRAY[]::text[]"
+        else: "ARRAY[" & val.mapIt(string(it)).join(", ") & "]"
+      else:
+        if val.len == 0: formatSqlValue(newSeq[distinctBase(typeof(val[0]))]())
+        else: formatSqlValue(val.mapIt(it.distinctBase))
     elif typeof(val[0]) is enum:
-      if val.len == 0: "ARRAY[]"
+      if val.len == 0: "ARRAY[]::text[]"
       else: "ARRAY[" & val.mapIt(quoteLiteral($it)).join(", ") & "]"
     elif typetraits.name(typeof(val[0])) in ["PgUuid", "PgBytea", "PgDate", "PgTimestamp", "PgTimestampTz", "PgInterval"]:
       let sqlCast = case typetraits.name(typeof(val[0]))
@@ -138,6 +169,9 @@ proc formatSqlValue*[T](val: T): string =
     elif typetraits.name(typeof(val[0])) == "PgNumeric":
       if val.len == 0: "ARRAY[]::numeric[]"
       else: "ARRAY[" & val.mapIt(quoteLiteral($it) & "::numeric").join(", ") & "]"
+    elif typetraits.name(typeof(val[0])) == "PgText":
+      if val.len == 0: "ARRAY[]::text[]"
+      else: "ARRAY[" & val.mapIt(quoteLiteral($it)).join(", ") & "]"
     else:
       quoteLiteral($val)
   else:
@@ -165,6 +199,8 @@ proc toParam*(v: int8): QueryParam = QueryParam(kind: pkInt, intVal: v.int64)
 proc toParam*(v: uint): QueryParam = QueryParam(kind: pkRaw, rawVal: $v)
 proc toParam*(v: uint32): QueryParam = QueryParam(kind: pkRaw, rawVal: $v)
 proc toParam*(v: uint64): QueryParam = QueryParam(kind: pkRaw, rawVal: $v)
+proc toParam*(v: uint16): QueryParam = QueryParam(kind: pkRaw, rawVal: $v)
+proc toParam*(v: uint8): QueryParam = QueryParam(kind: pkRaw, rawVal: $v)
 proc toParam*(v: float): QueryParam = QueryParam(kind: pkFloat, floatVal: v)
 proc toParam*(v: float32): QueryParam = QueryParam(kind: pkFloat, floatVal: v.float64)
 proc toParam*(v: string): QueryParam = QueryParam(kind: pkString, strVal: v)
@@ -175,9 +211,21 @@ proc toParam*(v: JsonNode): QueryParam = (if v.isNil or v.kind == JNull: QueryPa
 proc toParam*(r: RawSql): QueryParam = QueryParam(kind: pkRaw, rawVal: string(r))
 proc toParam*(e: SqlExpr): QueryParam = QueryParam(kind: pkRaw, rawVal: e.sql)
 proc toParam*(p: QueryParam): QueryParam = p
-proc toParam*[T](o: Option[T]): QueryParam = (if o.isSome: toParam(o.get) else: QueryParam(kind: pkNull))
+proc toParam*[T](o: Option[T]): QueryParam =
+  mixin toParam
+  when isDatumOrContainsDatum[T]():
+    {.error: "Option[Datum] cannot be passed as a QueryParam; convert Datum to a typed Nim value first.".}
+  else:
+    if o.isSome: toParam(o.get) else: QueryParam(kind: pkNull)
 proc toParam*[T](s: seq[T]): QueryParam = QueryParam(kind: pkRaw, rawVal: formatSqlValue(s))
-proc toParam*[T: distinct](v: T): QueryParam = toParam(v.distinctBase)
+proc toParam*[T: distinct](v: T): QueryParam =
+  mixin toParam
+  when T is SqlIdent:
+    {.error: "SqlIdent represents a SQL identifier, not a QueryParam literal value; pass ColumnRef/ColumnExpr or a string.".}
+  elif isDatumOrContainsDatum[T]():
+    {.error: "Raw PostgreSQL Datum cannot be passed as a QueryParam; convert it to a typed Nim value (e.g. int64, string, PgText, float64) first.".}
+  else:
+    toParam(v.distinctBase)
 proc toParam*[T: enum](v: T): QueryParam = QueryParam(kind: pkString, strVal: $v)
 
 converter toQueryParam*(v: int): QueryParam = toParam(v)
@@ -188,6 +236,8 @@ converter toQueryParam*(v: int8): QueryParam = toParam(v)
 converter toQueryParam*(v: uint): QueryParam = toParam(v)
 converter toQueryParam*(v: uint32): QueryParam = toParam(v)
 converter toQueryParam*(v: uint64): QueryParam = toParam(v)
+converter toQueryParam*(v: uint16): QueryParam = toParam(v)
+converter toQueryParam*(v: uint8): QueryParam = toParam(v)
 converter toQueryParam*(v: float): QueryParam = toParam(v)
 converter toQueryParam*(v: float32): QueryParam = toParam(v)
 converter toQueryParam*(v: bool): QueryParam = toParam(v)
@@ -199,13 +249,19 @@ converter toQueryParam*(r: RawSql): QueryParam = toParam(r)
 converter toQueryParam*(e: SqlExpr): QueryParam = toParam(e)
 converter toQueryParam*[T](s: seq[T]): QueryParam = toParam(s)
 converter toQueryParam*[T](o: Option[T]): QueryParam = toParam(o)
-converter toQueryParam*[T: distinct](v: T): QueryParam = toParam(v)
+converter toQueryParam*[T: distinct](v: T): QueryParam =
+  when T is SqlIdent:
+    {.error: "SqlIdent represents a SQL identifier, not a QueryParam literal value.".}
+  elif isDatumOrContainsDatum[T]():
+    {.error: "Raw PostgreSQL Datum cannot be implicitly converted to QueryParam; convert it to a typed Nim value first.".}
+  else:
+    toParam(v)
 converter toQueryParam*[T: enum](v: T): QueryParam = toParam(v)
 
 proc `$`*(p: QueryParam): string =
   case p.kind
   of pkInt: $p.intVal
-  of pkFloat: $p.floatVal
+  of pkFloat: formatPgFloat(p.floatVal)
   of pkString: quoteLiteral(p.strVal)
   of pkBool: (if p.boolVal: "TRUE" else: "FALSE")
   of pkNull: "NULL"
@@ -224,8 +280,6 @@ type
     rawTable*: string
     rawAlias*: string
     rawCol*: string
-
-  SqlIdent* = distinct string
 
 proc table*(name: string, alias: string = ""): TableRef =
   ## Creates a Table Proxy for zero-string column access (e.g. `let u = table("users", "u")`)
@@ -276,10 +330,25 @@ proc `==`*(c: ColumnRef, val: string): SqlExpr = SqlExpr(sql: $c & " = " & quote
 proc `==`*(c: ColumnRef, val: int): SqlExpr = SqlExpr(sql: $c & " = " & $val)
 proc `==`*(c: ColumnRef, val: int32): SqlExpr = SqlExpr(sql: $c & " = " & $val)
 proc `==`*(c: ColumnRef, val: int64): SqlExpr = SqlExpr(sql: $c & " = " & $val)
-proc `==`*(c: ColumnRef, val: float): SqlExpr = SqlExpr(sql: $c & " = " & $val)
+proc `==`*(c: ColumnRef, val: float): SqlExpr = SqlExpr(sql: $c & " = " & formatPgFloat(val))
 proc `==`*(c: ColumnRef, val: bool): SqlExpr = SqlExpr(sql: $c & " = " & (if val: "TRUE" else: "FALSE"))
-proc `==`*(c: ColumnRef, val: QueryParam): SqlExpr = SqlExpr(sql: $c & " = " & $val)
-proc `==`*[T: enum](c: ColumnRef, val: T): SqlExpr = SqlExpr(sql: $c & " = " & quoteLiteral($val))
+proc `==`*(c: ColumnRef, val: QueryParam): SqlExpr =
+  if val.kind == pkNull:
+    SqlExpr(sql: $c & " IS NULL")
+  else:
+    SqlExpr(sql: $c & " = " & $val)
+proc `==`*[T: not (ColumnRef or ColumnExpr or QueryParam or JsonNode)](c: ColumnRef, val: T): SqlExpr =
+  mixin toParam
+  when T is SqlIdent:
+    {.error: "SqlIdent represents a SQL identifier, not a value literal; pass ColumnRef/ColumnExpr or a string.".}
+  elif isDatumOrContainsDatum[T]():
+    {.error: "Raw PostgreSQL Datum cannot be compared against a SQL ColumnRef; convert it to a typed Nim value first.".}
+  else:
+    let p = toParam(val)
+    if p.kind == pkNull:
+      SqlExpr(sql: $c & " IS NULL")
+    else:
+      SqlExpr(sql: $c & " = " & $p)
 proc `==`*(c: ColumnRef, val: JsonNode): SqlExpr =
   if val.isNil or val.kind == JNull:
     SqlExpr(sql: $c & " IS NULL")
@@ -290,10 +359,25 @@ proc `!=`*(c: ColumnRef, val: string): SqlExpr = SqlExpr(sql: $c & " != " & quot
 proc `!=`*(c: ColumnRef, val: int): SqlExpr = SqlExpr(sql: $c & " != " & $val)
 proc `!=`*(c: ColumnRef, val: int32): SqlExpr = SqlExpr(sql: $c & " != " & $val)
 proc `!=`*(c: ColumnRef, val: int64): SqlExpr = SqlExpr(sql: $c & " != " & $val)
-proc `!=`*(c: ColumnRef, val: float): SqlExpr = SqlExpr(sql: $c & " != " & $val)
+proc `!=`*(c: ColumnRef, val: float): SqlExpr = SqlExpr(sql: $c & " != " & formatPgFloat(val))
 proc `!=`*(c: ColumnRef, val: bool): SqlExpr = SqlExpr(sql: $c & " != " & (if val: "TRUE" else: "FALSE"))
-proc `!=`*(c: ColumnRef, val: QueryParam): SqlExpr = SqlExpr(sql: $c & " != " & $val)
-proc `!=`*[T: enum](c: ColumnRef, val: T): SqlExpr = SqlExpr(sql: $c & " != " & quoteLiteral($val))
+proc `!=`*(c: ColumnRef, val: QueryParam): SqlExpr =
+  if val.kind == pkNull:
+    SqlExpr(sql: $c & " IS NOT NULL")
+  else:
+    SqlExpr(sql: $c & " != " & $val)
+proc `!=`*[T: not (ColumnRef or ColumnExpr or QueryParam or JsonNode)](c: ColumnRef, val: T): SqlExpr =
+  mixin toParam
+  when T is SqlIdent:
+    {.error: "SqlIdent represents a SQL identifier, not a value literal; pass ColumnRef/ColumnExpr or a string.".}
+  elif isDatumOrContainsDatum[T]():
+    {.error: "Raw PostgreSQL Datum cannot be compared against a SQL ColumnRef; convert it to a typed Nim value first.".}
+  else:
+    let p = toParam(val)
+    if p.kind == pkNull:
+      SqlExpr(sql: $c & " IS NOT NULL")
+    else:
+      SqlExpr(sql: $c & " != " & $p)
 proc `!=`*(c: ColumnRef, val: JsonNode): SqlExpr =
   if val.isNil or val.kind == JNull:
     SqlExpr(sql: $c & " IS NOT NULL")
@@ -303,25 +387,25 @@ proc `!=`*(c: ColumnRef, val: JsonNode): SqlExpr =
 proc `>=`*(c: ColumnRef, val: int): SqlExpr = SqlExpr(sql: $c & " >= " & $val)
 proc `>=`*(c: ColumnRef, val: int32): SqlExpr = SqlExpr(sql: $c & " >= " & $val)
 proc `>=`*(c: ColumnRef, val: int64): SqlExpr = SqlExpr(sql: $c & " >= " & $val)
-proc `>=`*(c: ColumnRef, val: float): SqlExpr = SqlExpr(sql: $c & " >= " & $val)
+proc `>=`*(c: ColumnRef, val: float): SqlExpr = SqlExpr(sql: $c & " >= " & formatPgFloat(val))
 proc `>=`*(c: ColumnRef, val: string): SqlExpr = SqlExpr(sql: $c & " >= " & quoteLiteral(val))
 
 proc `<=`*(c: ColumnRef, val: int): SqlExpr = SqlExpr(sql: $c & " <= " & $val)
 proc `<=`*(c: ColumnRef, val: int32): SqlExpr = SqlExpr(sql: $c & " <= " & $val)
 proc `<=`*(c: ColumnRef, val: int64): SqlExpr = SqlExpr(sql: $c & " <= " & $val)
-proc `<=`*(c: ColumnRef, val: float): SqlExpr = SqlExpr(sql: $c & " <= " & $val)
+proc `<=`*(c: ColumnRef, val: float): SqlExpr = SqlExpr(sql: $c & " <= " & formatPgFloat(val))
 proc `<=`*(c: ColumnRef, val: string): SqlExpr = SqlExpr(sql: $c & " <= " & quoteLiteral(val))
 
 proc `>`*(c: ColumnRef, val: int): SqlExpr = SqlExpr(sql: $c & " > " & $val)
 proc `>`*(c: ColumnRef, val: int32): SqlExpr = SqlExpr(sql: $c & " > " & $val)
 proc `>`*(c: ColumnRef, val: int64): SqlExpr = SqlExpr(sql: $c & " > " & $val)
-proc `>`*(c: ColumnRef, val: float): SqlExpr = SqlExpr(sql: $c & " > " & $val)
+proc `>`*(c: ColumnRef, val: float): SqlExpr = SqlExpr(sql: $c & " > " & formatPgFloat(val))
 proc `>`*(c: ColumnRef, val: string): SqlExpr = SqlExpr(sql: $c & " > " & quoteLiteral(val))
 
 proc `<`*(c: ColumnRef, val: int): SqlExpr = SqlExpr(sql: $c & " < " & $val)
 proc `<`*(c: ColumnRef, val: int32): SqlExpr = SqlExpr(sql: $c & " < " & $val)
 proc `<`*(c: ColumnRef, val: int64): SqlExpr = SqlExpr(sql: $c & " < " & $val)
-proc `<`*(c: ColumnRef, val: float): SqlExpr = SqlExpr(sql: $c & " < " & $val)
+proc `<`*(c: ColumnRef, val: float): SqlExpr = SqlExpr(sql: $c & " < " & formatPgFloat(val))
 proc `<`*(c: ColumnRef, val: string): SqlExpr = SqlExpr(sql: $c & " < " & quoteLiteral(val))
 
 # String helper operators
@@ -370,7 +454,7 @@ proc between*(c: ColumnRef, minVal, maxVal: int): SqlExpr =
   SqlExpr(sql: $c & " BETWEEN " & $minVal & " AND " & $maxVal)
 
 proc between*(c: ColumnRef, minVal, maxVal: float): SqlExpr =
-  SqlExpr(sql: $c & " BETWEEN " & $minVal & " AND " & $maxVal)
+  SqlExpr(sql: $c & " BETWEEN " & formatPgFloat(minVal) & " AND " & formatPgFloat(maxVal))
 
 proc between*(c: ColumnRef, minVal, maxVal: string): SqlExpr =
   SqlExpr(sql: $c & " BETWEEN " & quoteLiteral(minVal) & " AND " & quoteLiteral(maxVal))
@@ -379,34 +463,50 @@ proc between*(c: ColumnRef, minVal, maxVal: string): SqlExpr =
 proc `>`*(c: ColumnExpr, val: int): SqlExpr = SqlExpr(sql: c.expr & " > " & $val)
 proc `>`*(c: ColumnExpr, val: int32): SqlExpr = SqlExpr(sql: c.expr & " > " & $val)
 proc `>`*(c: ColumnExpr, val: int64): SqlExpr = SqlExpr(sql: c.expr & " > " & $val)
-proc `>`*(c: ColumnExpr, val: float): SqlExpr = SqlExpr(sql: c.expr & " > " & $val)
+proc `>`*(c: ColumnExpr, val: float): SqlExpr = SqlExpr(sql: c.expr & " > " & formatPgFloat(val))
 proc `>`*(c: ColumnExpr, val: string): SqlExpr = SqlExpr(sql: c.expr & " > " & quoteLiteral(val))
 
 proc `<`*(c: ColumnExpr, val: int): SqlExpr = SqlExpr(sql: c.expr & " < " & $val)
 proc `<`*(c: ColumnExpr, val: int32): SqlExpr = SqlExpr(sql: c.expr & " < " & $val)
 proc `<`*(c: ColumnExpr, val: int64): SqlExpr = SqlExpr(sql: c.expr & " < " & $val)
-proc `<`*(c: ColumnExpr, val: float): SqlExpr = SqlExpr(sql: c.expr & " < " & $val)
+proc `<`*(c: ColumnExpr, val: float): SqlExpr = SqlExpr(sql: c.expr & " < " & formatPgFloat(val))
 proc `<`*(c: ColumnExpr, val: string): SqlExpr = SqlExpr(sql: c.expr & " < " & quoteLiteral(val))
 
 proc `>=`*(c: ColumnExpr, val: int): SqlExpr = SqlExpr(sql: c.expr & " >= " & $val)
 proc `>=`*(c: ColumnExpr, val: int32): SqlExpr = SqlExpr(sql: c.expr & " >= " & $val)
 proc `>=`*(c: ColumnExpr, val: int64): SqlExpr = SqlExpr(sql: c.expr & " >= " & $val)
-proc `>=`*(c: ColumnExpr, val: float): SqlExpr = SqlExpr(sql: c.expr & " >= " & $val)
+proc `>=`*(c: ColumnExpr, val: float): SqlExpr = SqlExpr(sql: c.expr & " >= " & formatPgFloat(val))
 proc `>=`*(c: ColumnExpr, val: string): SqlExpr = SqlExpr(sql: c.expr & " >= " & quoteLiteral(val))
 
 proc `<=`*(c: ColumnExpr, val: int): SqlExpr = SqlExpr(sql: c.expr & " <= " & $val)
 proc `<=`*(c: ColumnExpr, val: int32): SqlExpr = SqlExpr(sql: c.expr & " <= " & $val)
 proc `<=`*(c: ColumnExpr, val: int64): SqlExpr = SqlExpr(sql: c.expr & " <= " & $val)
-proc `<=`*(c: ColumnExpr, val: float): SqlExpr = SqlExpr(sql: c.expr & " <= " & $val)
+proc `<=`*(c: ColumnExpr, val: float): SqlExpr = SqlExpr(sql: c.expr & " <= " & formatPgFloat(val))
 proc `<=`*(c: ColumnExpr, val: string): SqlExpr = SqlExpr(sql: c.expr & " <= " & quoteLiteral(val))
 
 proc `==`*(c: ColumnExpr, val: int): SqlExpr = SqlExpr(sql: c.expr & " = " & $val)
 proc `==`*(c: ColumnExpr, val: int32): SqlExpr = SqlExpr(sql: c.expr & " = " & $val)
 proc `==`*(c: ColumnExpr, val: int64): SqlExpr = SqlExpr(sql: c.expr & " = " & $val)
-proc `==`*(c: ColumnExpr, val: float): SqlExpr = SqlExpr(sql: c.expr & " = " & $val)
+proc `==`*(c: ColumnExpr, val: float): SqlExpr = SqlExpr(sql: c.expr & " = " & formatPgFloat(val))
 proc `==`*(c: ColumnExpr, val: bool): SqlExpr = SqlExpr(sql: c.expr & " = " & (if val: "TRUE" else: "FALSE"))
 proc `==`*(c: ColumnExpr, val: string): SqlExpr = SqlExpr(sql: c.expr & " = " & quoteLiteral(val))
-proc `==`*(c: ColumnExpr, val: QueryParam): SqlExpr = SqlExpr(sql: c.expr & " = " & $val)
+proc `==`*(c: ColumnExpr, val: QueryParam): SqlExpr =
+  if val.kind == pkNull:
+    SqlExpr(sql: c.expr & " IS NULL")
+  else:
+    SqlExpr(sql: c.expr & " = " & $val)
+proc `==`*[T: not (ColumnRef or ColumnExpr or QueryParam or JsonNode)](c: ColumnExpr, val: T): SqlExpr =
+  mixin toParam
+  when T is SqlIdent:
+    {.error: "SqlIdent represents a SQL identifier, not a value literal; pass ColumnRef/ColumnExpr or a string.".}
+  elif isDatumOrContainsDatum[T]():
+    {.error: "Raw PostgreSQL Datum cannot be compared against a SQL ColumnExpr; convert it to a typed Nim value first.".}
+  else:
+    let p = toParam(val)
+    if p.kind == pkNull:
+      SqlExpr(sql: c.expr & " IS NULL")
+    else:
+      SqlExpr(sql: c.expr & " = " & $p)
 proc `==`*(c: ColumnExpr, val: ColumnRef): SqlExpr = SqlExpr(sql: c.expr & " = " & $val)
 proc `==`*(a: ColumnExpr, b: ColumnExpr): SqlExpr = SqlExpr(sql: a.expr & " = " & b.expr)
 proc `==`*(c: ColumnExpr, val: JsonNode): SqlExpr =
@@ -418,10 +518,26 @@ proc `==`*(c: ColumnExpr, val: JsonNode): SqlExpr =
 proc `!=`*(c: ColumnExpr, val: int): SqlExpr = SqlExpr(sql: c.expr & " != " & $val)
 proc `!=`*(c: ColumnExpr, val: int32): SqlExpr = SqlExpr(sql: c.expr & " != " & $val)
 proc `!=`*(c: ColumnExpr, val: int64): SqlExpr = SqlExpr(sql: c.expr & " != " & $val)
-proc `!=`*(c: ColumnExpr, val: float): SqlExpr = SqlExpr(sql: c.expr & " != " & $val)
+proc `!=`*(c: ColumnExpr, val: float): SqlExpr = SqlExpr(sql: c.expr & " != " & formatPgFloat(val))
 proc `!=`*(c: ColumnExpr, val: bool): SqlExpr = SqlExpr(sql: c.expr & " != " & (if val: "TRUE" else: "FALSE"))
 proc `!=`*(c: ColumnExpr, val: string): SqlExpr = SqlExpr(sql: c.expr & " != " & quoteLiteral(val))
-proc `!=`*(c: ColumnExpr, val: QueryParam): SqlExpr = SqlExpr(sql: c.expr & " != " & $val)
+proc `!=`*(c: ColumnExpr, val: QueryParam): SqlExpr =
+  if val.kind == pkNull:
+    SqlExpr(sql: c.expr & " IS NOT NULL")
+  else:
+    SqlExpr(sql: c.expr & " != " & $val)
+proc `!=`*[T: not (ColumnRef or ColumnExpr or QueryParam or JsonNode)](c: ColumnExpr, val: T): SqlExpr =
+  mixin toParam
+  when T is SqlIdent:
+    {.error: "SqlIdent represents a SQL identifier, not a value literal; pass ColumnRef/ColumnExpr or a string.".}
+  elif isDatumOrContainsDatum[T]():
+    {.error: "Raw PostgreSQL Datum cannot be compared against a SQL ColumnExpr; convert it to a typed Nim value first.".}
+  else:
+    let p = toParam(val)
+    if p.kind == pkNull:
+      SqlExpr(sql: c.expr & " IS NOT NULL")
+    else:
+      SqlExpr(sql: c.expr & " != " & $p)
 proc `!=`*(c: ColumnExpr, val: ColumnRef): SqlExpr = SqlExpr(sql: c.expr & " != " & $val)
 proc `!=`*(a: ColumnExpr, b: ColumnExpr): SqlExpr = SqlExpr(sql: a.expr & " != " & b.expr)
 proc `!=`*(c: ColumnExpr, val: JsonNode): SqlExpr =
@@ -479,7 +595,7 @@ proc between*(c: ColumnExpr, minVal, maxVal: int): SqlExpr =
   SqlExpr(sql: c.expr & " BETWEEN " & $minVal & " AND " & $maxVal)
 
 proc between*(c: ColumnExpr, minVal, maxVal: float): SqlExpr =
-  SqlExpr(sql: c.expr & " BETWEEN " & $minVal & " AND " & $maxVal)
+  SqlExpr(sql: c.expr & " BETWEEN " & formatPgFloat(minVal) & " AND " & formatPgFloat(maxVal))
 
 proc between*(c: ColumnExpr, minVal, maxVal: string): SqlExpr =
   SqlExpr(sql: c.expr & " BETWEEN " & quoteLiteral(minVal) & " AND " & quoteLiteral(maxVal))
@@ -634,6 +750,12 @@ converter toOrderExpr*(s: string): OrderExpr =
 
 converter toOrderExpr*(id: SqlIdent): OrderExpr =
   OrderExpr(sql: quoteIdent(string(id)))
+
+proc toOrderExpr*[T: distinct](v: T): OrderExpr =
+  when isDatumOrContainsDatum[T]():
+    {.error: "Raw PostgreSQL Datum cannot be used in ORDER BY; pass a ColumnRef, SqlIdent, or column name string.".}
+  else:
+    {.error: "Distinct type cannot be implicitly used as an ORDER BY expression; pass a ColumnRef, SqlIdent, or column name string.".}
 
 # SQL Aggregates
 proc count*(c: ColumnRef): ColumnExpr = ColumnExpr(expr: "COUNT(" & $c & ")", alias: "")
@@ -839,7 +961,7 @@ proc toColumnExpr*(s: string): ColumnExpr = ColumnExpr(expr: quoteIdent(s, split
 proc toColumnExpr*(n: int): ColumnExpr = ColumnExpr(expr: $n, alias: "")
 proc toColumnExpr*(n: int32): ColumnExpr = ColumnExpr(expr: $n, alias: "")
 proc toColumnExpr*(n: int64): ColumnExpr = ColumnExpr(expr: $n, alias: "")
-proc toColumnExpr*(f: float): ColumnExpr = ColumnExpr(expr: $f, alias: "")
+proc toColumnExpr*(f: float): ColumnExpr = ColumnExpr(expr: formatPgFloat(f), alias: "")
 proc toColumnExpr*(b: bool): ColumnExpr = ColumnExpr(expr: (if b: "TRUE" else: "FALSE"), alias: "")
 proc toColumnExpr*(j: JsonNode): ColumnExpr =
   if j.isNil or j.kind == JNull:
@@ -851,7 +973,10 @@ proc toColumnExpr*(c: ColumnExpr): ColumnExpr = c
 proc toColumnExpr*(q: ExecutableQuery): ColumnExpr = ColumnExpr(expr: "(" & $q & ")", alias: "")
 
 template `as`*(a: typed, b: string): ColumnExpr =
-  colExpr((when compiles(toColumnExpr(a)): toColumnExpr(a).expr else: quoteIdent($a)), b)
+  when isDatumOrContainsDatum[typeof(a)]():
+    {.error: "Raw PostgreSQL Datum cannot be selected or aliased in QueryBuilder; convert it to a typed Nim value first.".}
+  else:
+    colExpr((when compiles(toColumnExpr(a)): toColumnExpr(a).expr else: quoteIdent($a)), b)
 
 # =============================================================================
 # 5. Macros for Infix `as`
@@ -871,7 +996,10 @@ proc parseColNode(node: NimNode): NimNode =
     let col = node[1]
     let al = node[2]
     result = quote do:
-      colExpr((when compiles(toColumnExpr(`col`)): toColumnExpr(`col`).expr else: quoteIdent($`col`)), $`al`)
+      when isDatumOrContainsDatum[typeof(`col`)]():
+        {.error: "Raw PostgreSQL Datum cannot be selected or aliased in QueryBuilder; convert it to a typed Nim value first.".}
+      else:
+        colExpr((when compiles(toColumnExpr(`col`)): toColumnExpr(`col`).expr else: quoteIdent($`col`)), $`al`)
   else:
     result = quote do:
       toColumnExpr(`node`)
@@ -992,6 +1120,10 @@ proc GroupBy*(step: FromStep or WhereStep, cols: varargs[ColumnRef]): GroupBySte
 
 proc GroupBy*(step: FromStep or WhereStep, cols: varargs[ColumnExpr]): GroupByStep =
   step.state.groupBys.add(cols.mapIt(it.expr))
+  GroupByStep(state: step.state)
+
+proc GroupBy*(step: FromStep or WhereStep, cols: varargs[SqlIdent]): GroupByStep =
+  step.state.groupBys.add(cols.mapIt(quoteIdent(string(it))))
   GroupByStep(state: step.state)
 
 proc Having*(step: GroupByStep, expr: SqlExpr): HavingStep =
@@ -1313,7 +1445,9 @@ proc toSql*(st: QueryState): string =
 # =============================================================================
 
 proc nimFieldToSqlColType[F](): string =
-  when F is int or F is int32: "INTEGER"
+  when isDatumOrContainsDatum[F]():
+    {.error: "Raw PostgreSQL Datum (or container of Datum) cannot be used as a table column field type in createTableFrom.".}
+  elif F is int or F is int32: "INTEGER"
   elif F is int64: "BIGINT"
   elif F is int16 or F is int8 or F is byte: "SMALLINT"
   elif F is uint or F is uint32: "BIGINT"
@@ -1326,7 +1460,10 @@ proc nimFieldToSqlColType[F](): string =
   elif F is char: "CHAR(1)"
   elif F is JsonNode: "JSONB"
   elif F is distinct:
-    nimFieldToSqlColType[distinctBase(F)]()
+    when F is SqlIdent:
+      {.error: "SqlIdent cannot be used as a table column field type in createTableFrom.".}
+    else:
+      nimFieldToSqlColType[distinctBase(F)]()
   elif typetraits.name(F) == "PgUuid": "UUID"
   elif typetraits.name(F) == "PgBytea": "BYTEA"
   elif typetraits.name(F) == "PgDate": "DATE"
@@ -1341,7 +1478,13 @@ proc nimFieldToSqlColType[F](): string =
     elif ElemF is string: "TEXT[]"
     elif ElemF is float or ElemF is float64: "DOUBLE PRECISION[]"
     elif ElemF is bool: "BOOLEAN[]"
+    elif ElemF is uint64: "NUMERIC(20)[]"
     elif ElemF is JsonNode: "JSONB[]"
+    elif ElemF is distinct:
+      when ElemF is SqlIdent:
+        {.error: "seq[SqlIdent] cannot be used as a table column field type in createTableFrom.".}
+      else:
+        nimFieldToSqlColType[typeof(distinctBase(default(ElemF)))]() & "[]"
     elif typetraits.name(ElemF) == "PgUuid": "UUID[]"
     elif typetraits.name(ElemF) == "PgBytea": "BYTEA[]"
     elif typetraits.name(ElemF) == "PgDate": "DATE[]"

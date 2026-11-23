@@ -103,9 +103,23 @@ template ActivateHooks*() =
   pgxHookPostNimInit()
 
 proc toParam*(v: PgText): QueryParam {.inline.} = toParam(toString(v))
-proc toQueryParam*(v: PgText): QueryParam {.inline.} = toParam(toString(v))
+proc toColumnExpr*(v: PgText): ColumnExpr {.inline.} =
+  ColumnExpr(expr: quoteLiteral(toString(v)), alias: "")
+converter toQueryParam*(v: PgText): QueryParam = toParam(toString(v))
+proc desc*(d: Datum): string {.error: "Raw PostgreSQL Datum cannot be used with .desc; pass a ColumnRef, SqlIdent, or column name string.".}
+proc asc*(d: Datum): string {.error: "Raw PostgreSQL Datum cannot be used with .asc; pass a ColumnRef, SqlIdent, or column name string.".}
+when (NimMajor, NimMinor) >= (2, 2):
+  {.push warning[InvalidCmpOp]: off.}
+proc `==`*(c: ColumnRef, val: PgText): SqlExpr {.inline.} = c == toParam(val)
+proc `!=`*(c: ColumnRef, val: PgText): SqlExpr {.inline.} = c != toParam(val)
+proc `==`*(c: ColumnExpr, val: PgText): SqlExpr {.inline.} = c == toParam(val)
+proc `!=`*(c: ColumnExpr, val: PgText): SqlExpr {.inline.} = c != toParam(val)
+when (NimMajor, NimMinor) >= (2, 2):
+  {.pop.}
 proc Set*(step: UpdateStep or UpdateSetStep, col: ColumnRef, val: PgText): UpdateSetStep {.inline.} =
   Set(step, col, toParam(val))
+proc toParam*[T](v: PgVector[T]): QueryParam {.inline.} = toParam(@v)
+converter toQueryParam*[T](v: PgVector[T]): QueryParam = toParam(v)
 proc toParam*(v: PgBytea): QueryParam {.inline.} = toParam($v)
 converter toQueryParam*(v: PgBytea): QueryParam = toParam($v)
 proc toParam*(v: PgUuid): QueryParam {.inline.} = toParam($v)

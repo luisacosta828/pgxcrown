@@ -152,7 +152,7 @@ proc getPgUuid*(datum: Datum): PgUuid {.noSideEffect, tags: [].} =
   ## Extracts a 16-byte `PgUuid` from a PostgreSQL `uuid` `Datum`.
   {.cast(noSideEffect).}:
     {.cast(tags: []).}:
-      if datum == 0:
+      if datum == Datum(0):
         return nilUuid()
       discard pgx_datum_to_uuid_bytes(datum, addr result.bytes[0])
 

@@ -155,3 +155,142 @@ proc v30_syscache_probe*(): string {.stable.} =
 
   parts.add("amop4=" & $hitOk & "/" & $missOk)
   return parts.join("|")
+
+proc v30_f32_double*(x: float32): float32 {.immutable, parallelSafe.} =
+  x * 2.0'f32
+
+proc v30_float32_vec_sum*(v: PgVector[float32]): float64 {.immutable, parallelSafe.} =
+  var total = 0.0
+  for item in v:
+    total += float64(v30_f32_double(item))
+  total
+
+proc v30_metrics_check*(m: ArchMetrics): string {.immutable, parallelSafe.} =
+  "ratio=" & $m.ratio & "|flag=" & $m.flag & "|tiny=" & $int(m.tiny)
+
+proc v30_converter_roundtrip*(): string {.immutable, parallelSafe.} =
+  let origF64: float64 = 3.141592653589793
+  let dF64: Datum = origF64
+  let backF64: float64 = dF64
+
+  let dBool: Datum = true
+  let backBool: bool = dBool
+
+  let dInt8: Datum = -7'i8
+  let backInt8: int8 = dInt8
+
+  let dZeroStr: string = Datum(0)
+  let dOkStr: Datum = "v30_conv"
+  let backStr: string = dOkStr
+
+  var srcVec = @[10'i32, 20'i32, 30'i32]
+  let pv = toPgVector(srcVec)
+  srcVec = @[99'i32]
+  let backVecSeq: seq[int32] = pv
+
+  let t = table("items", "i")
+  let pt = toPgText("hi")
+  let qpPt: QueryParam = pt
+  let u8Val: uint8 = 7'u8
+  let qbSql = $Select(sqlIdent("k"), t.v)
+    .From(t)
+    .Where(t.x == none(string) and t.u == u8Val and t.f == NaN)
+    .GroupBy(sqlIdent("k"))
+    .OrderBy(sqlIdent("k"))
+
+  "f64=" & (if abs(backF64 - origF64) < 1e-14: "exact" else: "lossy") &
+    "|bool=" & $backBool &
+    "|i8=" & $int(backInt8) &
+    "|str0=" & $dZeroStr.len &
+    "|str=" & backStr &
+    "|vec=" & $backVecSeq &
+    "|pt=" & $qpPt &
+    "|qb=" & $qbSql.contains("'NaN'::float8") & "/" & $qbSql.contains("IS NULL") & "/" & $qbSql.contains("GROUP BY \"k\"")
+
+proc v30_qb_spi_live*(): string {.volatile.} =
+  type
+    LiveTagId = distinct int64
+    LiveState = enum
+      lsOpen = "open"
+      lsClosed = "closed"
+
+  let t = table("v30_qb_items", "i")
+  # Compile-time verification under full `import pgxcrown` that raw Datum is rejected
+  doAssert not compiles(toParam(Datum(1)))
+  doAssert not compiles(toQueryParam(Datum(1)))
+  doAssert not compiles(formatSqlValue(Datum(1)))
+  doAssert not compiles(t.u == Datum(1))
+  doAssert not compiles(t.u != Datum(1))
+  doAssert not compiles(parseValue[Datum]("1"))
+  doAssert not compiles(Select(Datum(1) as "x"))
+  doAssert not compiles(Datum(1).desc)
+  doAssert not compiles(Datum(1).asc)
+  doAssert $Select(toPgText("hi") as "x") == "SELECT 'hi' AS \"x\""
+  doAssert $toParam(some(toPgText("hi"))) == "'hi'"
+
+  discard fetchRawRows("DO $$ BEGIN IF to_regclass('pg_temp.v30_qb_items') IS NOT NULL THEN DROP TABLE pg_temp.v30_qb_items; END IF; END $$")
+  discard fetchRawRows("""
+    CREATE TEMP TABLE v30_qb_items (
+      k text NOT NULL,
+      note text,
+      u int4 NOT NULL,
+      score float8 NOT NULL,
+      tag_ids bigint[] NOT NULL,
+      states text[] NOT NULL,
+      vec int4[] NOT NULL
+    )
+  """)
+  try:
+    let emptyTags = newSeq[LiveTagId]()
+    let emptyStates = newSeq[LiveState]()
+    discard InsertInto(t, t.k, t.note, t.u, t.score, t.tag_ids, t.states, t.vec)
+      .Values(
+        toPgText("alpha"),
+        none(string),
+        7'u8,
+        NaN,
+        emptyTags,
+        emptyStates,
+        toPgVector(@[10'i32, 20'i32])
+      )
+      .Values(
+        toPgText("beta"),
+        some("present"),
+        byte(250'u8),
+        Inf,
+        @[LiveTagId(101'i64), LiveTagId(202'i64)],
+        @[LiveState.lsOpen],
+        toPgVector(@[30'i32])
+      )
+      .run()
+
+    let r1 = Select(
+        sqlIdent("k"),
+        raw("min(cardinality(i.tag_ids))") as "tc",
+        raw("min(cardinality(i.states))") as "sc",
+        raw("min(i.vec::text)") as "vt"
+      )
+      .From(t)
+      .Where(t.note == none(string) and t.u == 7'u8 and t.score == NaN)
+      .GroupBy(sqlIdent("k"))
+      .OrderBy(sqlIdent("k"))
+      .rows()
+    doAssert r1.len == 1
+
+    let r2 = Select(
+        sqlIdent("k"),
+        raw("min(cardinality(i.tag_ids))") as "tc",
+        raw("min(cardinality(i.states))") as "sc",
+        raw("min(i.vec::text)") as "vt"
+      )
+      .From(t)
+      .Where(t.note != none(string) and t.u == byte(250'u8) and t.score == Inf and t.k == toPgText("beta"))
+      .GroupBy(sqlIdent("k"))
+      .OrderBy(sqlIdent("k"))
+      .rows()
+    doAssert r2.len == 1
+
+    return "row1=" & r1[0]["k"] & ":" & r1[0]["tc"] & ":" & r1[0]["sc"] & ":" & r1[0]["vt"] &
+      "|row2=" & r2[0]["k"] & ":" & r2[0]["tc"] & ":" & r2[0]["sc"] & ":" & r2[0]["vt"]
+  finally:
+    discard fetchRawRows("DROP TABLE IF EXISTS v30_qb_items")

@@ -107,6 +107,7 @@ jobs:
               tests/test_base_types.nim \
               tests/test_bgworker.nim \
               tests/test_bytea_uuid.nim \
+              tests/test_converters_datum.nim \
               tests/test_errors.nim \
               tests/test_lwlock.nim \
               tests/test_milestone2_arch.nim \

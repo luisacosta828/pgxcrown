@@ -412,7 +412,7 @@ proc getPgNumeric*(datum: Datum): PgNumeric {.inline, noSideEffect, tags: [].} =
   installNumericBackendHooks()
   {.cast(noSideEffect).}:
     {.cast(tags: []).}:
-      if datum == 0:
+      if datum == Datum(0):
         return initPgNumericZero()
       PgNumeric(raw: pgx_datum_get_numeric(datum), lit: "")
 

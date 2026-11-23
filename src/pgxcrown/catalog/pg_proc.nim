@@ -3,12 +3,7 @@
 """.}
 
 import ../datatypes/basic
-import ../datatypes/arrays
 import ../syscache
-
-{.push header: "postgres.h".}
-proc pgxDatumGetBool(x: Datum): bool {.importc: "DatumGetBool".}
-{.pop.}
 
 {.push header: "funcapi.h".}
 proc get_func_input_arg_names*(proargnames, proargmodes: Datum, arg_names: var cstringArray): cint {.importc.}
@@ -60,7 +55,7 @@ template get_pg_proc_retset*(ttuple: typed): bool =
       var attrIsNull = false
       let datum = SysCacheGetAttr(PROCOID, pgxTup, Anum_pg_proc_proretset, addr(attrIsNull))
       if not attrIsNull:
-        res = pgxDatumGetBool(datum)
+        res = DatumGetBool(datum)
     res
 
 template get_pg_proc_src*(ttuple: typed): cstring =
@@ -106,7 +101,7 @@ template get_pg_proc_is_strict*(ttuple: typed): bool =
       var attrIsNull = false
       let datum = SysCacheGetAttr(PROCOID, pgxTup, Anum_pg_proc_proisstrict, addr(attrIsNull))
       if not attrIsNull:
-        res = pgxDatumGetBool(datum)
+        res = DatumGetBool(datum)
     res
 
 template get_pg_proc_nargs*(ttuple: typed): int16 =

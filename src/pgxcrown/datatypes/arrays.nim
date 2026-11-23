@@ -118,6 +118,18 @@ type
     nullElems*: seq[T]
     nullBitmap*: seq[bool]
 
+proc activeDataPtr*[T](v: PgVector[T]): ptr UncheckedArray[T] {.inline, noSideEffect, tags: [].} =
+  if v.nullElems.len > 0:
+    cast[ptr UncheckedArray[T]](unsafeAddr v.nullElems[0])
+  else:
+    v.dataPtr
+
+proc activeMutDataPtr*[T](v: var PgVector[T]): ptr UncheckedArray[T] {.inline, noSideEffect, tags: [].} =
+  if v.nullElems.len > 0:
+    cast[ptr UncheckedArray[T]](addr v.nullElems[0])
+  else:
+    v.dataPtr
+
 template len*[T](v: PgVector[T]): int = v.len
 template low*[T](v: PgVector[T]): int = 0
 template high*[T](v: PgVector[T]): int = (if v.len > 0: v.len - 1 else: 0)
@@ -125,7 +137,7 @@ template high*[T](v: PgVector[T]): int = (if v.len > 0: v.len - 1 else: 0)
 proc `[]`*[T](v: PgVector[T], idx: int): T {.inline.} =
   if idx < 0 or idx >= v.len:
     raise newException(IndexDefect, "Index " & $idx & " out of bounds for PgVector of length " & $v.len)
-  v.dataPtr[idx]
+  v.activeDataPtr()[idx]
 
 proc `[]`*[T](v: PgVector[T], slice: HSlice[int, int]): PgVector[T] =
   let sA = slice.a
@@ -133,28 +145,45 @@ proc `[]`*[T](v: PgVector[T], slice: HSlice[int, int]): PgVector[T] =
   if sA < 0 or (sB >= v.len and v.len > 0) or (v.len == 0 and (sA != 0 or sB != -1)):
     raise newException(IndexDefect, "Slice " & $sA & ".." & $sB & " out of bounds for PgVector of length " & $v.len)
   let subLen = if sB >= sA: sB - sA + 1 else: 0
-  let subPtr = if subLen > 0 and v.dataPtr != nil: cast[ptr UncheckedArray[T]](addr v.dataPtr[sA]) else: nil
-  PgVector[T](
-    raw: nil,
-    dataPtr: subPtr,
-    len: subLen,
-    hasNulls: v.hasNulls,
-    nullElems: if v.hasNulls and v.nullElems.len > 0 and sB >= sA: v.nullElems[sA .. sB] else: @[],
-    nullBitmap: if v.hasNulls and v.nullBitmap.len > 0 and sB >= sA: v.nullBitmap[sA .. sB] else: @[]
-  )
+  let subBitmap = if v.hasNulls and v.nullBitmap.len > 0 and subLen > 0: v.nullBitmap[sA .. sB] else: @[]
+  if v.nullElems.len > 0:
+    result = PgVector[T](
+      raw: nil,
+      dataPtr: nil,
+      len: subLen,
+      hasNulls: v.hasNulls,
+      nullElems: if subLen > 0: v.nullElems[sA .. sB] else: @[],
+      nullBitmap: subBitmap
+    )
+    if result.nullElems.len > 0:
+      result.dataPtr = cast[ptr UncheckedArray[T]](addr result.nullElems[0])
+  else:
+    let subPtr = if subLen > 0 and v.dataPtr != nil: cast[ptr UncheckedArray[T]](addr v.dataPtr[sA]) else: nil
+    result = PgVector[T](
+      raw: nil,
+      dataPtr: subPtr,
+      len: subLen,
+      hasNulls: v.hasNulls,
+      nullElems: @[],
+      nullBitmap: subBitmap
+    )
 
 proc `[]=`*[T](v: var PgVector[T], idx: int, val: T) {.inline.} =
   if idx < 0 or idx >= v.len:
     raise newException(IndexDefect, "Index " & $idx & " out of bounds for PgVector of length " & $v.len)
-  v.dataPtr[idx] = val
+  v.activeMutDataPtr()[idx] = val
 
 iterator items*[T](v: PgVector[T]): T =
-  for i in 0 ..< v.len:
-    yield v.dataPtr[i]
+  let p = v.activeDataPtr()
+  if p != nil:
+    for i in 0 ..< v.len:
+      yield p[i]
 
 iterator pairs*[T](v: PgVector[T]): (int, T) =
-  for i in 0 ..< v.len:
-    yield (i, v.dataPtr[i])
+  let p = v.activeDataPtr()
+  if p != nil:
+    for i in 0 ..< v.len:
+      yield (i, p[i])
 
 proc isNull*[T](v: PgVector[T], idx: int): bool {.inline.} =
   if idx < 0 or idx >= v.len:
@@ -170,50 +199,61 @@ proc get*[T](v: PgVector[T], idx: int): Option[T] =
   if v.isNull(idx):
     none(T)
   else:
-    some(v.dataPtr[idx])
+    some(v.activeDataPtr()[idx])
 
 template toOpenArray*[T](v: PgVector[T]): untyped =
-  toOpenArray(v.dataPtr, 0, v.len - 1)
+  toOpenArray(activeDataPtr(v), 0, v.len - 1)
 
 template toOpenArray*[T](v: PgVector[T], first, last: int): untyped =
-  toOpenArray(v.dataPtr, first, last)
+  toOpenArray(activeDataPtr(v), first, last)
+
+proc toSeqImpl*[T](v: PgVector[T]): seq[T] {.noSideEffect, tags: [].} =
+  if v.len <= 0:
+    return @[]
+  let p = v.activeDataPtr()
+  if p == nil:
+    return @[]
+  result = newSeq[T](v.len)
+  for i in 0 ..< v.len:
+    result[i] = p[i]
 
 template `@`*[T](v: PgVector[T]): seq[T] =
-  var res = newSeq[T](v.len)
-  for i in 0 ..< v.len:
-    res[i] = v.dataPtr[i]
-  res
+  toSeqImpl(v)
 
-converter toSeq*[T](v: PgVector[T]): seq[T] =
-  @v
+converter toSeq*[T](v: PgVector[T]): seq[T] {.inline, noSideEffect, tags: [].} =
+  toSeqImpl(v)
 
-converter optPgVectorToOptSeq*[T](o: Option[PgVector[T]]): Option[seq[T]] {.inline.} =
+converter optPgVectorToOptSeq*[T](o: Option[PgVector[T]]): Option[seq[T]] {.inline, noSideEffect, tags: [].} =
   ## Converts `Option[PgVector[T]]` parameters into `Option[seq[T]]` for inter-UDF and return compatibility.
-  if o.isSome: some(@(o.get))
+  if o.isSome: some(toSeqImpl(o.get))
   else: none(seq[T])
 
 proc toPgVector*[T](s: seq[T]): PgVector[T] =
   if s.len == 0:
-    PgVector[T](raw: nil, dataPtr: nil, len: 0, hasNulls: false)
+    result = PgVector[T](raw: nil, dataPtr: nil, len: 0, hasNulls: false)
   else:
-    PgVector[T](
+    result = PgVector[T](
       raw: nil,
-      dataPtr: cast[ptr UncheckedArray[T]](unsafeAddr s[0]),
+      dataPtr: nil,
       len: s.len,
       hasNulls: false,
       nullElems: s
     )
+    result.dataPtr = cast[ptr UncheckedArray[T]](addr result.nullElems[0])
 
 proc clonePgVectorInCtx*[T](v: PgVector[T]): PgVector[T] {.noSideEffect, tags: [].} =
   ## Clones `v`'s buffer into PostgreSQL's `CurrentMemoryContext` (`multi_call_memory_ctx`)
   ## so closure iterators never retain pointers into per-tuple caller contexts.
   if v.len <= 0:
     return PgVector[T](raw: nil, dataPtr: nil, len: 0, hasNulls: false)
+  let srcPtr = v.activeDataPtr()
+  if srcPtr == nil:
+    return PgVector[T](raw: nil, dataPtr: nil, len: 0, hasNulls: false)
   {.cast(noSideEffect).}:
     let totalBytes = csize_t(v.len * sizeof(T))
     let buf = arr_palloc(totalBytes)
+    copyMem(buf, srcPtr, v.len * sizeof(T))
     if v.hasNulls and v.nullElems.len >= v.len:
-      copyMem(buf, unsafeAddr v.nullElems[0], v.len * sizeof(T))
       return PgVector[T](
         raw: nil,
         dataPtr: cast[ptr UncheckedArray[T]](buf),
@@ -222,10 +262,6 @@ proc clonePgVectorInCtx*[T](v: PgVector[T]): PgVector[T] {.noSideEffect, tags: [
         nullElems: v.nullElems,
         nullBitmap: v.nullBitmap
       )
-    if v.dataPtr == nil:
-      arr_pfree(buf)
-      return PgVector[T](raw: nil, dataPtr: nil, len: 0, hasNulls: false)
-    copyMem(buf, v.dataPtr, v.len * sizeof(T))
     return PgVector[T](
       raw: nil,
       dataPtr: cast[ptr UncheckedArray[T]](buf),
@@ -235,21 +271,23 @@ proc clonePgVectorInCtx*[T](v: PgVector[T]): PgVector[T] {.noSideEffect, tags: [
 
 proc `$`*[T](v: PgVector[T]): string =
   result = "@["
+  let p = v.activeDataPtr()
   for i in 0 ..< v.len:
     if i > 0: result.add(", ")
     if v.isNull(i):
       result.add("null")
     else:
-      result.add($v.dataPtr[i])
+      result.add($p[i])
   result.add("]")
 
 proc `%`*[T](v: PgVector[T]): JsonNode =
   result = newJArray()
+  let p = v.activeDataPtr()
   for i in 0 ..< v.len:
     if v.isNull(i):
       result.add(newJNull())
     else:
-      result.add(%v.dataPtr[i])
+      result.add(%p[i])
 
 proc `==`*[T](a, b: PgVector[T]): bool =
   if a.len != b.len: return false
@@ -258,13 +296,16 @@ proc `==`*[T](a, b: PgVector[T]): bool =
       if a.isNull(i) != b.isNull(i): return false
       if not a.isNull(i) and a[i] != b[i]: return false
     return true
-  if a.dataPtr == b.dataPtr: return true
+  let pa = a.activeDataPtr()
+  let pb = b.activeDataPtr()
+  if pa == pb: return true
+  if pa == nil or pb == nil: return false
   for i in 0 ..< a.len:
-    if a.dataPtr[i] != b.dataPtr[i]: return false
+    if pa[i] != pb[i]: return false
   return true
 
 template extractPgVectorFast(arrayDatum, elemOid, elemLen, elemByVal, elemAlign, elemDatumGetter, T): untyped =
-  if arrayDatum == 0:
+  if arrayDatum == Datum(0):
     PgVector[T](raw: nil, dataPtr: nil, len: 0, hasNulls: false)
   else:
     let arrPtr = DatumGetArrayTypeP(arrayDatum)
@@ -306,15 +347,17 @@ template extractPgVectorFast(arrayDatum, elemOid, elemLen, elemByVal, elemAlign,
         if elemsPtr != nil: pfree(elemsPtr)
         if nullsPtr != nil: pfree(nullsPtr)
 
-        let ptrData = if nullElems.len > 0: cast[ptr UncheckedArray[T]](addr nullElems[0]) else: nil
-        PgVector[T](
+        var vec = PgVector[T](
           raw: arrPtr,
-          dataPtr: ptrData,
+          dataPtr: nil,
           len: extractedElems.int,
           hasNulls: true,
-          nullElems: nullElems,
-          nullBitmap: nullBitmap
+          nullElems: move(nullElems),
+          nullBitmap: move(nullBitmap)
         )
+        if vec.nullElems.len > 0:
+          vec.dataPtr = cast[ptr UncheckedArray[T]](addr vec.nullElems[0])
+        vec
 
 proc getPgVectorFloat64*(arrayDatum: Datum): PgVector[float64] =
   extractPgVectorFast(arrayDatum, FLOAT8OID, 8'i32, true, 'd'.cchar, DatumGetFloat8, float64)
@@ -332,7 +375,7 @@ proc getPgVectorInt16*(arrayDatum: Datum): PgVector[int16] =
   extractPgVectorFast(arrayDatum, INT2OID, 2'i32, true, 's'.cchar, DatumGetInt16, int16)
 
 proc getPgVectorBool*(arrayDatum: Datum): PgVector[bool] =
-  extractPgVectorFast(arrayDatum, BOOLOID, 1'i32, true, 'c'.cchar, (proc(d: Datum): bool = d != 0'u64), bool)
+  extractPgVectorFast(arrayDatum, BOOLOID, 1'i32, true, 'c'.cchar, (proc(d: Datum): bool = DatumGetBool(d)), bool)
 
 proc returnPgVectorFloat64*(v: PgVector[float64]): Datum =
   if v.raw != nil and not v.hasNulls:
@@ -345,7 +388,7 @@ proc returnPgVectorFloat64*(v: PgVector[float64]): Datum =
   let nullsBuf = if hasNulls: cast[ptr UncheckedArray[bool]](palloc(cuint(v.len * sizeof(bool)))) else: nil
   for i in 0 ..< v.len:
     if hasNulls and v.nullBitmap[i]:
-      elemsBuf[i] = 0'u64
+      elemsBuf[i] = Datum(0)
       nullsBuf[i] = true
     else:
       elemsBuf[i] = Float8GetDatum(v[i])
@@ -366,7 +409,7 @@ proc returnPgVectorFloat32*(v: PgVector[float32]): Datum =
   let nullsBuf = if hasNulls: cast[ptr UncheckedArray[bool]](palloc(cuint(v.len * sizeof(bool)))) else: nil
   for i in 0 ..< v.len:
     if hasNulls and v.nullBitmap[i]:
-      elemsBuf[i] = 0'u64
+      elemsBuf[i] = Datum(0)
       nullsBuf[i] = true
     else:
       elemsBuf[i] = Float4GetDatum(v[i])
@@ -387,7 +430,7 @@ proc returnPgVectorInt32*(v: PgVector[int32]): Datum =
   let nullsBuf = if hasNulls: cast[ptr UncheckedArray[bool]](palloc(cuint(v.len * sizeof(bool)))) else: nil
   for i in 0 ..< v.len:
     if hasNulls and v.nullBitmap[i]:
-      elemsBuf[i] = 0'u64
+      elemsBuf[i] = Datum(0)
       nullsBuf[i] = true
     else:
       elemsBuf[i] = Int32GetDatum(v[i])
@@ -408,7 +451,7 @@ proc returnPgVectorInt64*(v: PgVector[int64]): Datum =
   let nullsBuf = if hasNulls: cast[ptr UncheckedArray[bool]](palloc(cuint(v.len * sizeof(bool)))) else: nil
   for i in 0 ..< v.len:
     if hasNulls and v.nullBitmap[i]:
-      elemsBuf[i] = 0'u64
+      elemsBuf[i] = Datum(0)
       nullsBuf[i] = true
     else:
       elemsBuf[i] = Int64GetDatum(v[i])
@@ -429,7 +472,7 @@ proc returnPgVectorInt16*(v: PgVector[int16]): Datum =
   let nullsBuf = if hasNulls: cast[ptr UncheckedArray[bool]](palloc(cuint(v.len * sizeof(bool)))) else: nil
   for i in 0 ..< v.len:
     if hasNulls and v.nullBitmap[i]:
-      elemsBuf[i] = 0'u64
+      elemsBuf[i] = Datum(0)
       nullsBuf[i] = true
     else:
       elemsBuf[i] = Int16GetDatum(v[i])
@@ -450,7 +493,7 @@ proc returnPgVectorBool*(v: PgVector[bool]): Datum =
   let nullsBuf = if hasNulls: cast[ptr UncheckedArray[bool]](palloc(cuint(v.len * sizeof(bool)))) else: nil
   for i in 0 ..< v.len:
     if hasNulls and v.nullBitmap[i]:
-      elemsBuf[i] = 0'u64
+      elemsBuf[i] = Datum(0)
       nullsBuf[i] = true
     else:
       elemsBuf[i] = BoolGetDatum(v[i])
@@ -461,7 +504,7 @@ proc returnPgVectorBool*(v: PgVector[bool]): Datum =
   return PointerGetDatum(cast[Pointer](arrPtr))
 
 proc getArrayHeapTuples*(arrayDatum: Datum): seq[HeapTupleHeader] =
-  if arrayDatum == 0: return @[]
+  if arrayDatum == Datum(0): return @[]
   let arrPtr = DatumGetArrayTypeP(arrayDatum)
   if arrPtr == nil: return @[]
 
@@ -489,7 +532,7 @@ proc getArrayHeapTuples*(arrayDatum: Datum): seq[HeapTupleHeader] =
 # -----------------------------------------------------------------------------
 
 proc getArrayInt32*(arrayDatum: Datum): seq[int32] =
-  if arrayDatum == 0: return @[]
+  if arrayDatum == Datum(0): return @[]
   let arrPtr = DatumGetArrayTypeP(arrayDatum)
   if arrPtr == nil: return @[]
 
@@ -513,7 +556,7 @@ proc getArrayInt32*(arrayDatum: Datum): seq[int32] =
   if nullsPtr != nil: pfree(nullsPtr)
 
 proc getArrayInt64*(arrayDatum: Datum): seq[int64] =
-  if arrayDatum == 0: return @[]
+  if arrayDatum == Datum(0): return @[]
   let arrPtr = DatumGetArrayTypeP(arrayDatum)
   if arrPtr == nil: return @[]
 
@@ -537,7 +580,7 @@ proc getArrayInt64*(arrayDatum: Datum): seq[int64] =
   if nullsPtr != nil: pfree(nullsPtr)
 
 proc getArrayFloat64*(arrayDatum: Datum): seq[float64] =
-  if arrayDatum == 0: return @[]
+  if arrayDatum == Datum(0): return @[]
   let arrPtr = DatumGetArrayTypeP(arrayDatum)
   if arrPtr == nil: return @[]
 
@@ -561,7 +604,7 @@ proc getArrayFloat64*(arrayDatum: Datum): seq[float64] =
   if nullsPtr != nil: pfree(nullsPtr)
 
 proc getArrayBool*(arrayDatum: Datum): seq[bool] =
-  if arrayDatum == 0: return @[]
+  if arrayDatum == Datum(0): return @[]
   let arrPtr = DatumGetArrayTypeP(arrayDatum)
   if arrPtr == nil: return @[]
 
@@ -579,13 +622,13 @@ proc getArrayBool*(arrayDatum: Datum): seq[bool] =
     if nullArray != nil and nullArray[i]:
       result[i] = false
     else:
-      result[i] = (elemArray[i] != 0'u64)
+      result[i] = DatumGetBool(elemArray[i])
 
   if elemsPtr != nil: pfree(elemsPtr)
   if nullsPtr != nil: pfree(nullsPtr)
 
 proc getArrayString*(arrayDatum: Datum): seq[string] =
-  if arrayDatum == 0: return @[]
+  if arrayDatum == Datum(0): return @[]
   let arrPtr = DatumGetArrayTypeP(arrayDatum)
   if arrPtr == nil: return @[]
 
@@ -714,13 +757,13 @@ proc returnArrayString*(s: seq[string]): Datum =
 
   let arrPtr = construct_array(cast[ptr Datum](elemsBuf), s.len.cint, TEXTOID, -1'i32, false, 'i'.cchar)
   for i in 0 ..< s.len:
-    if elemsBuf[i] != 0:
+    if elemsBuf[i] != Datum(0):
       pfree(DatumGetPointer(elemsBuf[i]))
   pfree(elemsBuf)
   return PointerGetDatum(cast[Pointer](arrPtr))
 
 proc getArrayJsonNode*(arrayDatum: Datum): seq[JsonNode] =
-  if arrayDatum == 0: return @[]
+  if arrayDatum == Datum(0): return @[]
   let arrPtr = DatumGetArrayTypeP(arrayDatum)
   if arrPtr == nil: return @[]
 
@@ -754,7 +797,7 @@ proc returnArrayJsonNode*(s: seq[JsonNode]): Datum =
 
   let arrPtr = construct_array(cast[ptr Datum](elemsBuf), s.len.cint, JSONBOID, -1'i32, false, 'i'.cchar)
   for i in 0 ..< s.len:
-    if elemsBuf[i] != 0:
+    if elemsBuf[i] != Datum(0):
       pfree(DatumGetPointer(elemsBuf[i]))
   pfree(elemsBuf)
   return PointerGetDatum(cast[Pointer](arrPtr))
@@ -778,7 +821,7 @@ template unpackArrayWith[T](
   elemGetter: untyped
 ): seq[T] =
   var res: seq[T] = @[]
-  if arrayDatum != 0:
+  if arrayDatum != Datum(0):
     let arrPtr = DatumGetArrayTypeP(arrayDatum)
     if arrPtr != nil:
       var elemsPtr: ptr Datum
@@ -818,7 +861,7 @@ template packArrayWith[T](
                                  elmOid, elmLen, elmByVal, elmAlign)
     when freeAfterConstruct:
       for i in 0 ..< s.len:
-        if elemsBuf[i] != 0:
+        if elemsBuf[i] != Datum(0):
           arr_pfree(cast[pointer](DatumGetPointer(elemsBuf[i])))
     arr_pfree(cast[pointer](elemsBuf))
     PointerGetDatum(cast[Pointer](arrPtr))

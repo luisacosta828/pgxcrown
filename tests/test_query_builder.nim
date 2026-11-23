@@ -2,7 +2,7 @@ import std/strutils
 const pgIncludeDirServer = staticExec("pg_config --includedir-server").strip()
 const pgIncludeDir = staticExec("pg_config --includedir").strip()
 {.passC: "-I" & (if pgIncludeDirServer.len > 0: pgIncludeDirServer else: "/usr/include/postgresql/14/server") & " -I" & (if pgIncludeDir.len > 0: pgIncludeDir else: "/usr/include/postgresql").}
-import std/[unittest, tables, options, strutils, json]
+import std/[unittest, tables, options, strutils, json, math]
 import ../src/pgxcrown/query_builder
 import ../src/pgxcrown/spi
 import ../src/pgxcrown/native_functions
@@ -674,5 +674,169 @@ suite "pgxcrown v0.16.0 - Type-Safe SQL Query Builder & SPI Execution Suite":
     check parseValue[seq[PgUuid]]("{550e8400-e29b-41d4-a716-446655440000,00000000-0000-0000-0000-000000000000}") ==
       @[uid, nilUuid()]
 
+  test "uint8, byte, and uint16 QueryParam conversions":
+    let u8Val: uint8 = 7'u8
+    let bVal: byte = 250'u8
+    let u16Val: uint16 = 65000'u16
 
+    let pU8: QueryParam = u8Val
+    let pByte: QueryParam = bVal
+    let pU16: QueryParam = u16Val
+    check $toParam(u8Val) == "7"
+    check $toParam(bVal) == "250"
+    check $toParam(u16Val) == "65000"
+    check $pU8 == "7"
+    check $pByte == "250"
+    check $pU16 == "65000"
 
+    let qWhere = Select(u.id).From(u).Where(u.flags == u8Val and u.mask == bVal and u.port == u16Val)
+    check "\"u\".\"flags\" = 7 AND \"u\".\"mask\" = 250 AND \"u\".\"port\" = 65000" in $qWhere
+
+    let qInsert = InsertInto(u, u.flags, u.mask, u.port).Values(u8Val, bVal, u16Val)
+    check "(7, 250, 65000)" in $qInsert
+
+    let qVals = Values(Row(u8Val, bVal, u16Val))
+    check $qVals == "VALUES\n  (7, 250, 65000)"
+
+    let qUpd = Update(u).Set(u.flags, u8Val).Set(u.port, u16Val).Where(u.id == 1)
+    check "SET \"flags\" = 7, \"port\" = 65000" in $qUpd
+
+  test "Special floats NaN, Inf, -Inf formatting across QueryBuilder":
+    check formatPgFloat(NaN) == "'NaN'::float8"
+    check formatPgFloat(Inf) == "'Infinity'::float8"
+    check formatPgFloat(-Inf) == "'-Infinity'::float8"
+    check formatPgFloat(1.5) == "1.5"
+
+    check formatSqlValue(NaN) == "'NaN'::float8"
+    check formatSqlValue(Inf) == "'Infinity'::float8"
+    check formatSqlValue(-Inf) == "'-Infinity'::float8"
+    check formatSqlValue(float32(Inf)) == "'Infinity'::float8"
+
+    check $toParam(NaN) == "'NaN'::float8"
+    check $toParam(Inf) == "'Infinity'::float8"
+    check $toParam(-Inf) == "'-Infinity'::float8"
+
+    let qWhere = Select(u.id).From(u).Where(
+      (u.score == NaN) and (u.score != Inf) and (u.score > -Inf) and
+      (u.score >= -Inf) and (u.score < Inf) and (u.score <= Inf) and
+      u.score.between(-Inf, Inf)
+    )
+    let wSql = $qWhere
+    check "\"u\".\"score\" = 'NaN'::float8" in wSql
+    check "\"u\".\"score\" != 'Infinity'::float8" in wSql
+    check "\"u\".\"score\" > '-Infinity'::float8" in wSql
+    check "\"u\".\"score\" >= '-Infinity'::float8" in wSql
+    check "\"u\".\"score\" < 'Infinity'::float8" in wSql
+    check "\"u\".\"score\" <= 'Infinity'::float8" in wSql
+    check "\"u\".\"score\" BETWEEN '-Infinity'::float8 AND 'Infinity'::float8" in wSql
+
+    let exprScore = u.data["score"]
+    check (exprScore == NaN).sql == "\"u\".\"data\" -> 'score' = 'NaN'::float8"
+    check (exprScore != Inf).sql == "\"u\".\"data\" -> 'score' != 'Infinity'::float8"
+    check (exprScore > -Inf).sql == "\"u\".\"data\" -> 'score' > '-Infinity'::float8"
+    check (exprScore >= -Inf).sql == "\"u\".\"data\" -> 'score' >= '-Infinity'::float8"
+    check (exprScore < Inf).sql == "\"u\".\"data\" -> 'score' < 'Infinity'::float8"
+    check (exprScore <= Inf).sql == "\"u\".\"data\" -> 'score' <= 'Infinity'::float8"
+    check exprScore.between(-Inf, Inf).sql == "\"u\".\"data\" -> 'score' BETWEEN '-Infinity'::float8 AND 'Infinity'::float8"
+
+    let qSelFloat = Select(NaN as "nan_col", Inf as "inf_col", (-Inf) as "neginf_col")
+    check $qSelFloat == "SELECT 'NaN'::float8 AS \"nan_col\", 'Infinity'::float8 AS \"inf_col\", '-Infinity'::float8 AS \"neginf_col\""
+
+    let floatArr = @[1.5, NaN, Inf, -Inf]
+    check formatSqlValue(floatArr) == "ARRAY[1.5, 'NaN'::float8, 'Infinity'::float8, '-Infinity'::float8]"
+    let qInsertArr = InsertInto("metrics", "vals").Values(floatArr)
+    check "(ARRAY[1.5, 'NaN'::float8, 'Infinity'::float8, '-Infinity'::float8])" in $qInsertArr
+
+  test "SqlIdent blocked from QueryParam/formatSqlValue while Select/GroupBy/OrderBy work":
+    check not compiles(toQueryParam(sqlIdent("col")))
+    check not compiles(toParam(sqlIdent("col")))
+    check not compiles((var p: QueryParam = sqlIdent("col"); p))
+    check not compiles(formatSqlValue(sqlIdent("col")))
+    check not compiles(formatSqlValue(@[sqlIdent("col")]))
+    check not compiles(formatSqlValue(newSeq[SqlIdent]()))
+    check not compiles(formatSqlValue(some(sqlIdent("col"))))
+    check not compiles(toParam(@[sqlIdent("col")]))
+
+    let qOrder = Select(sqlIdent("col")).From(u).OrderBy(sqlIdent("col"))
+    check $qOrder == "SELECT \"col\"\nFROM \"users\" \"u\"\nORDER BY \"col\""
+
+    let qOrderDir = Select(u.id).From(u).OrderBy(sqlIdent("col").desc)
+    check "ORDER BY \"col\" DESC" in $qOrderDir
+
+    let t = table("items", "t")
+    let qGroup = Select(t.id).From(t).GroupBy(sqlIdent("category"))
+    check "GROUP BY \"category\"" in $qGroup
+
+    let qGroupWhere = Select(u.id).From(u).Where(u.active == true).GroupBy(sqlIdent("category"), sqlIdent("subcat")).OrderBy(sqlIdent("category"))
+    check "GROUP BY \"category\", \"subcat\"" in $qGroupWhere
+    check "ORDER BY \"category\"" in $qGroupWhere
+
+  test "Option none(T) NULL comparison emits IS NULL / IS NOT NULL":
+    let qNull = Select(u.id).From(u).Where((u.name == none(string)) and (u.bio != none(string)))
+    check "WHERE \"u\".\"name\" IS NULL AND \"u\".\"bio\" IS NOT NULL" in $qNull
+
+    let exprName = u.data["name"]
+    check (exprName == none(string)).sql == "\"u\".\"data\" -> 'name' IS NULL"
+    check (exprName != none(string)).sql == "\"u\".\"data\" -> 'name' IS NOT NULL"
+
+    let qSome = Select(u.id).From(u).Where((u.name == some("alice")) and (u.bio != some("bot")))
+    check "WHERE \"u\".\"name\" = 'alice' AND \"u\".\"bio\" != 'bot'" in $qSome
+
+    let qUpdNull = Update(u).Set(u.name, none(string)).Where(u.id == 1)
+    check "SET \"name\" = NULL" in $qUpdNull
+    let qInsNull = InsertInto(u, u.name).Values(none(string))
+    check "VALUES\n  (NULL)" in $qInsNull
+
+  test "Empty seq[distinct] and seq[enum] emit typed PostgreSQL ARRAY casts":
+    type
+      DistinctI64 = distinct int64
+      DistinctI32 = distinct int32
+      DistinctStr = distinct string
+      DistinctF64 = distinct float64
+      DistinctBool = distinct bool
+      NestedI64 = distinct DistinctI64
+      DistinctRole = enum
+        drAdmin = "admin"
+        drGuest = "guest"
+      DistinctEntity = object
+        id: int64
+        ids: seq[DistinctI64]
+
+    check formatSqlValue(newSeq[DistinctI64]()) == "ARRAY[]::bigint[]"
+    check formatSqlValue(newSeq[NestedI64]()) == "ARRAY[]::bigint[]"
+    check formatSqlValue(newSeq[DistinctI32]()) == "ARRAY[]::integer[]"
+    check formatSqlValue(newSeq[DistinctStr]()) == "ARRAY[]::text[]"
+    check formatSqlValue(newSeq[DistinctF64]()) == "ARRAY[]::double precision[]"
+    check formatSqlValue(newSeq[DistinctBool]()) == "ARRAY[]::boolean[]"
+    check formatSqlValue(newSeq[DistinctRole]()) == "ARRAY[]::text[]"
+
+    check $toParam(newSeq[DistinctI64]()) == "ARRAY[]::bigint[]"
+    check $toParam(newSeq[DistinctRole]()) == "ARRAY[]::text[]"
+
+    check formatSqlValue(@[DistinctI64(10'i64), DistinctI64(20'i64)]) == "ARRAY[10, 20]"
+    check formatSqlValue(@[DistinctRole.drAdmin]) == "ARRAY['admin']"
+
+    let ddlDistinct = createTableFrom(DistinctEntity)
+    check "\"ids\" BIGINT[] NOT NULL" in ddlDistinct
+
+    check not compiles((block:
+      type BadIdentObj = object
+        id: int64
+        bad: SqlIdent
+      discard createTableFrom(BadIdentObj)
+    ))
+    check not compiles((block:
+      type BadIdentSeqObj = object
+        id: int64
+        badSeq: seq[SqlIdent]
+      discard createTableFrom(BadIdentSeqObj)
+    ))
+
+    # RawSql arrays, DistinctUuid casts, and Option downstream toParam resolution via mixin
+    check formatSqlValue(@[raw("1 + 1")]) == "ARRAY[1 + 1]"
+    check formatSqlValue(newSeq[RawSql]()) == "ARRAY[]::text[]"
+    type DistinctUuid = distinct PgUuid
+    let sampleUid = parsePgUuid("550e8400-e29b-41d4-a716-446655440000")
+    check formatSqlValue(@[DistinctUuid(sampleUid)]) == "ARRAY['550e8400-e29b-41d4-a716-446655440000']::uuid[]"
+    check formatSqlValue(newSeq[DistinctUuid]()) == "ARRAY[]::uuid[]"
+    check $toParam(some(sampleUid)) == "'550e8400-e29b-41d4-a716-446655440000'"

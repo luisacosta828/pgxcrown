@@ -75,13 +75,13 @@ template toOpenArray*(t: PgText, first, last: int): untyped =
 template toOpenArray*(t: PgText): untyped =
   toOpenArray(t.dataPtr, 0, t.len - 1)
 
-converter toString*(t: PgText): string =
-  if t.len == 0 or t.dataPtr == nil:
+converter toString*(t: PgText): string {.noSideEffect, tags: [].} =
+  if t.len <= 0 or t.dataPtr == nil:
     return ""
   result = newString(t.len)
   copyMem(addr result[0], t.dataPtr, t.len)
 
-converter optPgTextToOptString*(o: Option[PgText]): Option[string] {.inline.} =
+converter optPgTextToOptString*(o: Option[PgText]): Option[string] {.inline, noSideEffect, tags: [].} =
   ## Converts `Option[PgText]` parameters into `Option[string]` for inter-UDF and return compatibility.
   if o.isSome: some(toString(o.get))
   else: none(string)
@@ -222,7 +222,7 @@ proc hash*(t: PgText): Hash =
 
 # Extraction from PostgreSQL Datum
 proc getPgText*(datum: Datum): PgText =
-  if datum == 0:
+  if datum == Datum(0):
     return initPgText()
   let p = PG_DETOAST_DATUM_PACKED(datum)
   if p == nil:

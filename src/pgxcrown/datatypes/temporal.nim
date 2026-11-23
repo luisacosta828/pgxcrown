@@ -852,7 +852,7 @@ proc returnPgTimestampTz*(ts: PgTimestampTz): Datum {.inline, noSideEffect,
 
 proc getPgInterval*(datum: Datum): PgInterval {.noSideEffect, tags: [].} =
   {.cast(noSideEffect).}: {.cast(tags: []).}:
-    if datum == 0:
+    if datum == Datum(0):
       return PgInterval()
     var u: int64 = 0
     var d: int32 = 0

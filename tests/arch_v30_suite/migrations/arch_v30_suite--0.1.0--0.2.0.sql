@@ -6,6 +6,12 @@ CREATE TYPE "ArchItem" AS (
   "status" "ArchStatus"
 );
 
+CREATE TYPE "ArchMetrics" AS (
+  "ratio" float4,
+  "flag" boolean,
+  "tiny" "char"
+);
+
 CREATE OR REPLACE FUNCTION v30_echo(int4) returns int4 as
 'arch_v30_suite', 'pgx_v30_echo_356672_int4'
 language c IMMUTABLE PARALLEL SAFE STRICT;
@@ -141,3 +147,23 @@ language c VOLATILE STRICT;
 CREATE OR REPLACE FUNCTION v30_syscache_probe() returns Text as
 'arch_v30_suite', 'pgx_v30_syscache_probe_3e3bde_void'
 language c STABLE STRICT;
+
+CREATE OR REPLACE FUNCTION v30_f32_double(float4) returns float4 as
+'arch_v30_suite', 'pgx_v30_f32_double_d2ea76_float4'
+language c IMMUTABLE PARALLEL SAFE STRICT;
+
+CREATE OR REPLACE FUNCTION v30_float32_vec_sum(float4[]) returns float8 as
+'arch_v30_suite', 'pgx_v30_float32_vec_sum_535a6f_arr_float4'
+language c IMMUTABLE PARALLEL SAFE STRICT;
+
+CREATE OR REPLACE FUNCTION v30_metrics_check("ArchMetrics") returns Text as
+'arch_v30_suite', 'pgx_v30_metrics_check_6b990e_archmetrics'
+language c IMMUTABLE PARALLEL SAFE STRICT;
+
+CREATE OR REPLACE FUNCTION v30_converter_roundtrip() returns Text as
+'arch_v30_suite', 'pgx_v30_converter_roundtrip_e41b94_void'
+language c IMMUTABLE PARALLEL SAFE STRICT;
+
+CREATE OR REPLACE FUNCTION v30_qb_spi_live() returns Text as
+'arch_v30_suite', 'pgx_v30_qb_spi_live_6fd433_void'
+language c VOLATILE STRICT;

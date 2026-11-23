@@ -317,6 +317,37 @@ SELECT v30_syscache_probe() AS syscache_probe;
  type=int4:4:NULL|proc=v30_echo:1:23:0|amop4=true/true
 (1 row)
 
+-- 11. Converter hardening: float32 vec/DFC/composite, float64 precision, bool/int8, Datum(0), toPgVector ARC, QueryBuilder
+SELECT v30_f32_double(1.25::float4) AS f32_double_25;
+ f32_double_25
+---------------
+           2.5
+(1 row)
+
+SELECT round(v30_float32_vec_sum(ARRAY[1.5::float4, 2.25::float4, -0.75::float4])::numeric, 2) AS f32_vec_sum_600;
+ f32_vec_sum_600
+-----------------
+            6.00
+(1 row)
+
+SELECT v30_metrics_check(ROW(2.5::float4, true, 'K'::"char")::"ArchMetrics") AS metrics_check;
+        metrics_check
+-----------------------------
+ ratio=2.5|flag=true|tiny=75
+(1 row)
+
+SELECT v30_converter_roundtrip() AS converter_roundtrip;
+                                    converter_roundtrip
+-------------------------------------------------------------------------------------------
+ f64=exact|bool=true|i8=-7|str0=0|str=v30_conv|vec=@[10, 20, 30]|pt='hi'|qb=true/true/true
+(1 row)
+
+SELECT v30_qb_spi_live() AS qb_spi_live;
+                qb_spi_live
+-------------------------------------------
+ row1=alpha:0:0:{10,20}|row2=beta:2:1:{30}
+(1 row)
+
 -- 7. SECURITY DEFINER vs SECURITY INVOKER + trusted non-superuser CREATE EXTENSION
 CREATE TABLE public.arch_v30_priv_vault (id int);
 CREATE TABLE
@@ -430,6 +461,24 @@ SELECT v30_syscache_probe() AS upgraded_syscache_probe;
                 upgraded_syscache_probe
 -------------------------------------------------------
  type=int4:4:NULL|proc=v30_echo:1:23:0|amop4=true/true
+(1 row)
+
+SELECT round(v30_float32_vec_sum(ARRAY[1.5::float4, 2.25::float4, -0.75::float4])::numeric, 2) AS upgraded_f32_vec_sum;
+ upgraded_f32_vec_sum
+----------------------
+                 6.00
+(1 row)
+
+SELECT v30_converter_roundtrip() AS upgraded_converter_roundtrip;
+                               upgraded_converter_roundtrip
+-------------------------------------------------------------------------------------------
+ f64=exact|bool=true|i8=-7|str0=0|str=v30_conv|vec=@[10, 20, 30]|pt='hi'|qb=true/true/true
+(1 row)
+
+SELECT v30_qb_spi_live() AS upgraded_qb_spi_live;
+           upgraded_qb_spi_live
+-------------------------------------------
+ row1=alpha:0:0:{10,20}|row2=beta:2:1:{30}
 (1 row)
 
 DROP EXTENSION arch_v30_suite;

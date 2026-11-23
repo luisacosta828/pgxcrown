@@ -3,7 +3,7 @@ const pgIncludeDirServer = staticExec("pg_config --includedir-server").strip()
 const pgIncludeDir = staticExec("pg_config --includedir").strip()
 {.passC: "-I" & (if pgIncludeDirServer.len > 0: pgIncludeDirServer else: "/usr/include/postgresql/14/server") & " -I" & (if pgIncludeDir.len > 0: pgIncludeDir else: "/usr/include/postgresql").}
 import unittest
-import std/[sets, strutils]
+import std/[sets, strutils, options]
 import ../src/pgxcrown
 
 {.emit: """
@@ -209,4 +209,74 @@ suite "Pgxcrown - Zero-Cost Fast-Path PgText String Suite":
     check compiles(returnPgText(str))
     check compiles(returnPgText(cs))
 
+  test "toString handles empty, nil dataPtr, zero/negative lengths, and embedded NUL bytes":
+    let empty = initPgText()
+    check toString(empty) == ""
+    let emptyImplicit: string = empty
+    check emptyImplicit == ""
+
+    let nilPos = PgText(raw: nil, dataPtr: nil, len: 5)
+    check toString(nilPos) == ""
+    let nilPosImplicit: string = nilPos
+    check nilPosImplicit == ""
+
+    let nilNeg = PgText(raw: nil, dataPtr: nil, len: -5)
+    check toString(nilNeg) == ""
+    let nilNegImplicit: string = nilNeg
+    check nilNegImplicit == ""
+
+    var buf = ['a', 'b', 'c']
+    let ptrNonNil = cast[ptr UncheckedArray[char]](addr buf[0])
+    let zeroLen = PgText(raw: nil, dataPtr: ptrNonNil, len: 0)
+    check toString(zeroLen) == ""
+    let zeroLenImplicit: string = zeroLen
+    check zeroLenImplicit == ""
+
+    let negLen = PgText(raw: nil, dataPtr: ptrNonNil, len: -5)
+    check toString(negLen) == ""
+    let negLenImplicit: string = negLen
+    check negLenImplicit == ""
+
+    var nulBuf = ['a', 'b', '\0', 'c', 'd', '\0', 'e', 'f']
+    let nulTxt = toPgText(addr nulBuf[0], nulBuf.len)
+    let s: string = nulTxt
+    check s.len == 8
+    check s == "ab\0cd\0ef"
+
+  test "optPgTextToOptString handles some with NULs and none":
+    var nulBuf = ['x', '\0', 'y', '\0', 'z']
+    let nulTxt = toPgText(addr nulBuf[0], nulBuf.len)
+    let optSome = some(nulTxt)
+    let sSome: Option[string] = optSome
+    check sSome.isSome
+    check sSome.get.len == 5
+    check sSome.get == "x\0y\0z"
+    check optPgTextToOptString(optSome) == some("x\0y\0z")
+
+    let optNone = none(PgText)
+    let sNone: Option[string] = optNone
+    check sNone.isNone
+    check optPgTextToOptString(optNone).isNone
+
+  test "toString and optPgTextToOptString are callable inside noSideEffect tags: [] procs":
+    proc pureConvert(t: PgText, o: Option[PgText]): (string, string, Option[string], Option[string]) {.noSideEffect, tags: [].} =
+      let implicitStr: string = t
+      let explicitStr = toString(t)
+      let implicitOpt: Option[string] = o
+      let explicitOpt = optPgTextToOptString(o)
+      (implicitStr, explicitStr, implicitOpt, explicitOpt)
+
+    var nulBuf = ['p', 'g', '\0', 'x']
+    let nulTxt = toPgText(addr nulBuf[0], nulBuf.len)
+    let (s1, s2, o1, o2) = pureConvert(nulTxt, some(nulTxt))
+    check s1 == "pg\0x"
+    check s2 == "pg\0x"
+    check o1 == some("pg\0x")
+    check o2 == some("pg\0x")
+
+    let (e1, e2, n1, n2) = pureConvert(initPgText(), none(PgText))
+    check e1 == ""
+    check e2 == ""
+    check n1.isNone
+    check n2.isNone
 

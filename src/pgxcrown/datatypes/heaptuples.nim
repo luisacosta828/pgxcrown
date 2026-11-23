@@ -1,12 +1,12 @@
-from basic import Oid, Datum, NameData, OidOutputFunctionCall, PointerGetDatum,
+from basic import Oid, Datum, NullDatum, `==`, isZero, NameData, OidOutputFunctionCall, PointerGetDatum,
     DatumGetPointer, Pointer,
   Int8GetDatum, Int32GetDatum, Int64GetDatum, Int16GetDatum, UInt8GetDatum,
   UInt16GetDatum, UInt64GetDatum, Float4GetDatum, Float8GetDatum, BoolGetDatum,
   CharGetDatum, ObjectIdGetDatum, CStringGetTextDatum, TextDatumGetCString,
-  DatumToInt32, DatumToInt64,
+  DatumToInt32, DatumToInt, DatumToInt64,
   DatumGetFloat8, DatumGetChar, DatumGetObjectId, DatumToCString,
   DatumGetInt32, DatumGetInt64, DatumGetInt16, DatumGetUInt64, DatumGetUInt16,
-  DatumGetUInt8, DatumGetFloat4, palloc, MemoryContextSwitchTo
+  DatumGetUInt8, DatumGetFloat4, DatumGetBool, palloc, MemoryContextSwitchTo
 
 from jsonb import JsonNodeToDatum, DatumToJsonNode
 from strings import PgText, getPgText, returnPgText
@@ -91,7 +91,7 @@ proc heap_freetuple*(htup: HeapTuple) {.importc: "heap_freetuple".}
 {.pop.}
 
 proc HeapTupleGetDatum*(htup: HeapTuple): Datum {.inline.} =
-  if htup.isNil: return 0.Datum
+  if htup.isNil: return Datum(0)
   return PointerGetDatum(cast[Pointer](htup.t_data))
 
 {.push header: "access/tupdesc.h".}
@@ -193,7 +193,7 @@ proc getTupleStringAttr*(element: HeapTupleHeader, row: TupleDesc,
   var isNull: bool
   if not row.isNil and not element.isNil:
     let d = GetAttributeByNum(element, idx, isNull)
-    if not isNull and d != 0:
+    if not isNull and d != Datum(0):
       let attr = TupleDescAttr(row, idx - 1)
       if attr != nil:
         var outputProc: Oid
@@ -258,7 +258,7 @@ proc unpackDatumToElem[ElemT](d: Datum): ElemT =
   elif ElemT is uint32 or ElemT is uint or ElemT is cuint: ElemT(DatumGetObjectId(d))
   elif ElemT is float64 or ElemT is float or ElemT is cdouble: ElemT(DatumGetFloat8(d))
   elif ElemT is float32 or ElemT is cfloat: ElemT(DatumGetFloat4(d))
-  elif ElemT is bool: (d != 0)
+  elif ElemT is bool: DatumGetBool(d)
   elif ElemT is PgBytea: getPgBytea(d)
   elif ElemT is PgUuid: getPgUuid(d)
   elif ElemT is PgDate: getPgDate(d)
@@ -283,7 +283,7 @@ proc extractField*[FieldT](th: HeapTupleHeader, tupDesc: TupleDesc, idx: cint,
     rawDatum: Datum): FieldT {.tags: [].} =
   {.cast(noSideEffect).}:
     {.cast(tags: []).}:
-      when FieldT is bool: (rawDatum != 0)
+      when FieldT is bool: DatumGetBool(rawDatum)
       elif FieldT is int8: int8(DatumGetChar(rawDatum))
       elif FieldT is uint8: DatumGetUInt8(rawDatum)
       elif FieldT is int16 or FieldT is cshort: FieldT(DatumGetInt16(rawDatum))
@@ -307,11 +307,11 @@ proc extractField*[FieldT](th: HeapTupleHeader, tupDesc: TupleDesc, idx: cint,
       elif FieldT is string:
         getTupleStringAttr(th, tupDesc, idx)
       elif FieldT is PgText:
-        if rawDatum == 0: default(FieldT) else: getPgText(rawDatum)
+        if rawDatum == Datum(0): default(FieldT) else: getPgText(rawDatum)
       elif FieldT is PgBytea:
-        if rawDatum == 0: default(FieldT) else: getPgBytea(rawDatum)
+        if rawDatum == Datum(0): default(FieldT) else: getPgBytea(rawDatum)
       elif FieldT is PgUuid:
-        if rawDatum == 0: default(FieldT) else: getPgUuid(rawDatum)
+        if rawDatum == Datum(0): default(FieldT) else: getPgUuid(rawDatum)
       elif FieldT is PgDate:
         getPgDate(rawDatum)
       elif FieldT is PgTimestamp:
@@ -319,15 +319,15 @@ proc extractField*[FieldT](th: HeapTupleHeader, tupDesc: TupleDesc, idx: cint,
       elif FieldT is PgTimestampTz:
         getPgTimestampTz(rawDatum)
       elif FieldT is PgInterval:
-        if rawDatum == 0: default(FieldT) else: getPgInterval(rawDatum)
+        if rawDatum == Datum(0): default(FieldT) else: getPgInterval(rawDatum)
       elif FieldT is PgNumeric:
-        if rawDatum == 0: default(FieldT) else: getPgNumeric(rawDatum)
+        if rawDatum == Datum(0): default(FieldT) else: getPgNumeric(rawDatum)
       elif FieldT is cstring:
         {.error: "Raw 'cstring' fields in composite objects are unsafe (no memory ownership). Use 'string' (ORC-managed) or 'PgText' (zero-copy) instead.".}
       elif FieldT is char:
         DatumGetChar(rawDatum)
       elif FieldT is JsonNode:
-        if rawDatum == 0: newJNull()
+        if rawDatum == Datum(0): newJNull()
         else: DatumToJsonNode(rawDatum)
       elif FieldT is enum:
         let colOid = getTupleAttrOid(tupDesc, idx)
@@ -342,7 +342,7 @@ proc extractField*[FieldT](th: HeapTupleHeader, tupDesc: TupleDesc, idx: cint,
           try: oidToEnum[FieldT](DatumGetObjectId(rawDatum))
           except CatchableError: default(FieldT)
       elif FieldT is seq:
-        if rawDatum == 0:
+        if rawDatum == Datum(0):
           result = @[]
         else:
           type ElemT = typeof(default(FieldT)[0])
@@ -489,7 +489,7 @@ proc htupPackSeq*[E](s: seq[E]): Datum =
       layout.oid, layout.len, layout.byVal, layout.align)
   if needFreeElem:
     for i in 0 ..< s.len:
-      if elemsBuf[i] != 0:
+      if elemsBuf[i] != Datum(0):
         htup_pfree(DatumGetPointer(elemsBuf[i]))
   htup_pfree(elemsBuf)
   PointerGetDatum(cast[Pointer](arrPtr))
@@ -636,7 +636,7 @@ proc objectToHeapTuple*[T: object | tuple](obj: T,
             when typeof(val) is Option:
               if val.isNone:
                 nulls[slot] = true
-                values[slot] = 0.Datum
+                values[slot] = Datum(0)
               else:
                 nulls[slot] = false
                 let innerVal = val.get
@@ -661,7 +661,7 @@ proc objectToHeapTuple*[T: object | tuple](obj: T,
         let htup = heap_form_tuple(tupDesc, cast[ptr Datum](addr values[0]),
             cast[ptr bool](addr nulls[0]))
         for k in 0 ..< descNatts:
-          if freeAfterForm[k] and not nulls[k] and values[k] != 0:
+          if freeAfterForm[k] and not nulls[k] and values[k] != Datum(0):
             htup_pfree(DatumGetPointer(values[k]))
         return htup
       finally:
@@ -673,7 +673,7 @@ proc objectToDatum*[T: object | tuple](obj: T,
   {.cast(noSideEffect).}:
     {.cast(tags: []).}:
       let htup = objectToHeapTuple[T](obj, customDesc)
-      if htup.isNil: return 0.Datum
+      if htup.isNil: return Datum(0)
       return HeapTupleGetDatum(htup)
 
 proc objectToDatum*[T: distinct](obj: T): Datum {.tags: [].} =

@@ -199,3 +199,159 @@ suite "Pgxcrown - Zero-Cost Fast-Path PgVector[T] Suite":
       discard v.isNull(10)
     expect IndexDefect:
       discard v.get(-2)
+
+  test "PgVector toPgVector ARC safety across temporary seq, mutation, and value copies":
+    proc makeOwnedVec(): PgVector[int32] =
+      var tmp = @[10'i32, 20, 30, 40]
+      result = toPgVector(tmp)
+      tmp[0] = -999
+      tmp = @[1'i32]
+
+    var src = @[10'i32, 20, 30, 40]
+    var v1 = toPgVector(src)
+    src[1] = 888
+    src.setLen(0)
+    src = @[999'i32, 998]
+
+    var v2 = v1
+    let v3 = makeOwnedVec()
+    # Clobber and replace v1 so v2's copied dataPtr would dangle if ever dereferenced.
+    v1[0] = -111
+    v1 = toPgVector(@[1'i32])
+
+    check v2.len == 4
+    check v2[0] == 10
+    check v2[1] == 20
+    check v2[2] == 30
+    check v2[3] == 40
+    check v3 == toPgVector(@[10'i32, 20, 30, 40])
+
+    # Mutation via activeMutDataPtr does not affect independent copies
+    v2[1] = 25
+    check v2[1] == 25
+    check v3[1] == 20
+
+    var iterated: seq[int32] = @[]
+    for x in v2:
+      iterated.add(x)
+    check iterated == @[10'i32, 25, 30, 40]
+
+    var pairSum = 0
+    for i, x in v2:
+      check x == v2[i]
+      pairSum += i
+    check pairSum == 6
+
+    check v2.get(2) == some(30'i32)
+    check @v2 == @[10'i32, 25, 30, 40]
+    check toSeq(v2) == @[10'i32, 25, 30, 40]
+    check $v2 == "@[10, 25, 30, 40]"
+    check %v2 == %(@[10, 25, 30, 40])
+
+    let v2Copy = v2
+    var v2Diff = v2
+    v2Diff[0] = 777
+    check v2 == v2Copy
+    check v2 != v2Diff
+
+    proc sumOpenArray(oa: openArray[int32]): int32 =
+      for x in oa:
+        result += x
+
+    check sumOpenArray(v2.toOpenArray) == 105
+    check sumOpenArray(v2.toOpenArray(1, 2)) == 55
+
+    # Owned slices must stay valid after source vector is mutated/replaced
+    var sliceOwner = toPgVector(@[100'i32, 200, 300, 400])
+    var sub = sliceOwner[1..2]
+    sliceOwner[1] = -1
+    sliceOwner = toPgVector(newSeq[int32]())
+
+    check sub.len == 2
+    check sub[0] == 200
+    check sub[1] == 300
+    check @sub == @[200'i32, 300]
+
+    let subCopy = sub
+    sub[0] = 222
+    check sub[0] == 222
+    check subCopy[0] == 200
+    check sub != subCopy
+
+    let subFromTemp = makeOwnedVec()[1..2]
+    check subFromTemp.len == 2
+    check @subFromTemp == @[20'i32, 30]
+
+    let emptySlice = v3[2..1]
+    check emptySlice.len == 0
+    check (@emptySlice).len == 0
+
+  test "PgVector single-evaluation guard for @ and toSeq":
+    var evalCount = 0
+    proc fetchVec(): PgVector[int32] =
+      inc evalCount
+      toPgVector(@[11'i32, 22, 33, 44])
+
+    let seqAt = @(fetchVec())
+    check evalCount == 1
+    check seqAt == @[11'i32, 22, 33, 44]
+
+    evalCount = 0
+    let seqExplicit = toSeq(fetchVec())
+    check evalCount == 1
+    check seqExplicit == @[11'i32, 22, 33, 44]
+
+    proc acceptSeq(s: seq[int32]): seq[int32] = s
+    evalCount = 0
+    let seqImplicit = acceptSeq(fetchVec())
+    check evalCount == 1
+    check seqImplicit == @[11'i32, 22, 33, 44]
+
+  test "PgVector optPgVectorToOptSeq conversions":
+    proc passthroughOptSeq(o: Option[seq[int32]]): Option[seq[int32]] = o
+
+    let ownedOpt = some(toPgVector(@[5'i32, 6, 7]))
+    check optPgVectorToOptSeq(ownedOpt) == some(@[5'i32, 6, 7])
+    check passthroughOptSeq(ownedOpt) == some(@[5'i32, 6, 7])
+
+    var rawBuf = [10'i32, 20, 30]
+    let zeroCopyVec = PgVector[int32](
+      raw: nil,
+      dataPtr: cast[ptr UncheckedArray[int32]](addr rawBuf[0]),
+      len: rawBuf.len,
+      hasNulls: false
+    )
+    let zeroOpt = some(zeroCopyVec)
+    check optPgVectorToOptSeq(zeroOpt) == some(@[10'i32, 20, 30])
+    check passthroughOptSeq(zeroOpt) == some(@[10'i32, 20, 30])
+
+    let noneOpt = none(PgVector[int32])
+    check optPgVectorToOptSeq(noneOpt) == none(seq[int32])
+    check passthroughOptSeq(noneOpt) == none(seq[int32])
+
+  test "PgVector toSeq and optPgVectorToOptSeq in noSideEffect tags:[] context":
+    proc pureSeqAccept(s: seq[int32]): seq[int32] {.noSideEffect, tags: [].} = s
+    proc pureOptAccept(o: Option[seq[int32]]): Option[seq[int32]] {.noSideEffect, tags: [].} = o
+
+    proc pureConvert(
+      v: PgVector[int32],
+      ov: Option[PgVector[int32]]
+    ): (seq[int32], seq[int32], seq[int32], Option[seq[int32]], Option[seq[int32]]) {.noSideEffect, tags: [].} =
+      let s1 = toSeq(v)
+      let s2 = @v
+      let s3 = pureSeqAccept(v)
+      let o1 = optPgVectorToOptSeq(ov)
+      let o2 = pureOptAccept(ov)
+      (s1, s2, s3, o1, o2)
+
+    let vec = toPgVector(@[4'i32, 5, 6])
+    let (s1, s2, s3, o1, o2) = pureConvert(vec, some(vec))
+    check s1 == @[4'i32, 5, 6]
+    check s2 == @[4'i32, 5, 6]
+    check s3 == @[4'i32, 5, 6]
+    check o1 == some(@[4'i32, 5, 6])
+    check o2 == some(@[4'i32, 5, 6])
+
+    let (_, _, _, oNone1, oNone2) = pureConvert(vec, none(PgVector[int32]))
+    check oNone1 == none(seq[int32])
+    check oNone2 == none(seq[int32])
