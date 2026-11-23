@@ -69,28 +69,28 @@ DROP ROLE IF EXISTS pgx_interop_lowpriv;
 -- 3. XactCallback + SubXactCallback + Binary SPI v2 + Option[string] NULL vs ''
 BEGIN;
 SELECT interop_arm_subxact_probe() AS subxact_armed;
-SELECT interop_record_event('  Alpha  '::InteropTag, '', 10) > 0 AS rec_empty;
+SELECT interop_record_event('  Alpha  '::"InteropTag", '', 10) > 0 AS rec_empty;
 SAVEPOINT sp1;
   INSERT INTO interop_events(tag, note, qty) VALUES ('alpha', 'aborted_sub', 99);
 ROLLBACK TO SAVEPOINT sp1;
 SAVEPOINT sp2;
-  SELECT interop_record_event('alpha'::InteropTag, 'hello', 20) > 0 AS rec_val;
+  SELECT interop_record_event('alpha'::"InteropTag", 'hello', 20) > 0 AS rec_val;
 RELEASE SAVEPOINT sp2;
 COMMIT;
 
 SELECT interop_take_subxact_log() AS subxact_log;
 
 BEGIN;
-SELECT interop_record_event('alpha'::InteropTag, 'doomed', 30) > 0 AS rec_doomed;
+SELECT interop_record_event('alpha'::"InteropTag", 'doomed', 30) > 0 AS rec_doomed;
 ROLLBACK;
 
-SELECT interop_record_event('alpha'::InteropTag, NULL, 40) > 0 AS rec_null;
+SELECT interop_record_event('alpha'::"InteropTag", NULL, 40) > 0 AS rec_null;
 SELECT interop_xact_counts() AS xact_counts;
-SELECT interop_query_events('  ALPHA  '::InteropTag) AS spi_events;
+SELECT interop_query_events('  ALPHA  '::"InteropTag") AS spi_events;
 
 BEGIN;
 SET LOCAL v32interop.batch_limit = 2;
-SELECT interop_query_events('alpha'::InteropTag) AS limited_events;
+SELECT interop_query_events('alpha'::"InteropTag") AS limited_events;
 COMMIT;
 
 -- 4. Composable ExecutorEnd + ProcessUtility_hook

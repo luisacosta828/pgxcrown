@@ -39,8 +39,8 @@ SHOW shared_preload_libraries;
 (1 row)
 
 SELECT interop_status() AS initial_status;
-                                     initial_status
-----------------------------------------------------------------------------------------
+                                  initial_status
+-----------------------------------------------------------------------------------
  plugin_inits=1|exec_end_hook=true|util_hook=true|batch_limit=25|strict_audit=true
 (1 row)
 
@@ -136,7 +136,7 @@ SELECT interop_arm_subxact_probe() AS subxact_armed;
  t
 (1 row)
 
-SELECT interop_record_event('  Alpha  '::InteropTag, '', 10) > 0 AS rec_empty;
+SELECT interop_record_event('  Alpha  '::"InteropTag", '', 10) > 0 AS rec_empty;
  rec_empty
 -----------
  t
@@ -150,7 +150,7 @@ ROLLBACK TO SAVEPOINT sp1;
 ROLLBACK
 SAVEPOINT sp2;
 SAVEPOINT
-  SELECT interop_record_event('alpha'::InteropTag, 'hello', 20) > 0 AS rec_val;
+  SELECT interop_record_event('alpha'::"InteropTag", 'hello', 20) > 0 AS rec_val;
  rec_val
 ---------
  t
@@ -161,14 +161,14 @@ RELEASE
 COMMIT;
 COMMIT
 SELECT interop_take_subxact_log() AS subxact_log;
-           subxact_log
----------------------------------
- sxeAbortSub:true|sxeCommitSub:true
+                     subxact_log
+------------------------------------------------------
+ sxeAbortSub:true|sxeCommitSub:true|sxeCommitSub:true
 (1 row)
 
 BEGIN;
 BEGIN
-SELECT interop_record_event('alpha'::InteropTag, 'doomed', 30) > 0 AS rec_doomed;
+SELECT interop_record_event('alpha'::"InteropTag", 'doomed', 30) > 0 AS rec_doomed;
  rec_doomed
 ------------
  t
@@ -176,7 +176,7 @@ SELECT interop_record_event('alpha'::InteropTag, 'doomed', 30) > 0 AS rec_doomed
 
 ROLLBACK;
 ROLLBACK
-SELECT interop_record_event('alpha'::InteropTag, NULL, 40) > 0 AS rec_null;
+SELECT interop_record_event('alpha'::"InteropTag", NULL, 40) > 0 AS rec_null;
  rec_null
 ----------
  t
@@ -188,9 +188,9 @@ SELECT interop_xact_counts() AS xact_counts;
  committed=3|aborted=1
 (1 row)
 
-SELECT interop_query_events('  ALPHA  '::InteropTag) AS spi_events;
-                     spi_events
-----------------------------------------------------
+SELECT interop_query_events('  ALPHA  '::"InteropTag") AS spi_events;
+                       spi_events
+---------------------------------------------------------
  1:alpha:EMPTY:10|3:alpha:SOME(hello):20|5:alpha:NULL:40
 (1 row)
 
@@ -198,7 +198,7 @@ BEGIN;
 BEGIN
 SET LOCAL v32interop.batch_limit = 2;
 SET
-SELECT interop_query_events('alpha'::InteropTag) AS limited_events;
+SELECT interop_query_events('alpha'::"InteropTag") AS limited_events;
              limited_events
 -----------------------------------------
  1:alpha:EMPTY:10|3:alpha:SOME(hello):20
@@ -237,15 +237,15 @@ SELECT pg_temp.try_drop_protected() AS protected_drop_blocked;
 DROP TABLE interop_scratch_tbl;
 DROP TABLE
 SELECT interop_hook_stats() AS hook_stats;
-                             hook_stats
----------------------------------------------------------------------
+                        hook_stats
+----------------------------------------------------------
  select=1|insert=1|rows=4|blocked_drops=1|allowed_drops=1
 (1 row)
 
 -- 5. Live catalog integrity verification + transactional tamper check
 SELECT interop_integrity_report() AS integrity_ok;
-                           integrity_ok
--------------------------------------------------------------------
+                        integrity_ok
+-------------------------------------------------------------
  intact=true|violations=0|codes=NONE|sha64=true|fns_gt0=true
 (1 row)
 
@@ -262,7 +262,7 @@ ALTER FUNCTION
 SELECT interop_integrity_report() AS tampered_report;
                                            tampered_report
 -----------------------------------------------------------------------------------------------------
- intact=false|violations=1|codes=VOLATILITY_MISMATCH:interop_assert_intact|sha64=true|fns_gt0=true
+ intact=false|violations=1|codes=VOLATILITY_TAMPERED:interop_assert_intact()|sha64=true|fns_gt0=true
 (1 row)
 
 ROLLBACK;

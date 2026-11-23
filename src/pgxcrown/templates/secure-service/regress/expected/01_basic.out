@@ -19,8 +19,8 @@ SHOW {{guc_prefix}}.strict_mode;
 (1 row)
 
 SELECT {{project_snake}}_policy_status() AS policy_default;
-       policy_default
-----------------------------
+         policy_default
+--------------------------------
  max_limit=100|strict_mode=true
 (1 row)
 
@@ -63,14 +63,14 @@ SELECT {{project_snake}}_record('null_item', NULL) > 0 AS null_saved;
 (1 row)
 
 SELECT {{project_snake}}_xact_stats() AS xact_stats;
-     xact_stats
----------------------
+      xact_stats
+-----------------------
  committed=3|aborted=1
 (1 row)
 
 SELECT {{project_snake}}_fetch_summary() AS all_rows_summary;
-                  all_rows_summary
-----------------------------------------------------
+                   all_rows_summary
+------------------------------------------------------
  empty_item:EMPTY|val_item:SOME(hello)|null_item:NULL
 (1 row)
 
@@ -79,15 +79,15 @@ BEGIN
 SET LOCAL {{guc_prefix}}.max_limit = 2;
 SET
 SELECT {{project_snake}}_fetch_summary() AS limited_summary;
-         limited_summary
----------------------------------
+            limited_summary
+---------------------------------------
  empty_item:EMPTY|val_item:SOME(hello)
 (1 row)
 
 COMMIT;
 COMMIT
 SELECT {{project_snake}}_integrity_status() AS integrity_status;
-            integrity_status
-----------------------------------------
+          integrity_status
+-------------------------------------
  intact=true|violations=0|sha64=true
 (1 row)

@@ -58,8 +58,8 @@ proc {{project_snake}}_record*(label: string, payload: Option[string] = none(str
     .Returning("id")
     .scalar(int64)
 
-  discard onCommit(proc() = inc gCommittedOps, once = true)
-  discard onAbort(proc() = inc gAbortedOps, once = true)
+  discard onCommit((proc() = inc gCommittedOps), once = true)
+  discard onAbort((proc() = inc gAbortedOps), once = true)
   insertedId
 
 proc {{project_snake}}_fetch_summary*(): string {.volatile.} =

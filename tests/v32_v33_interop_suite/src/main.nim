@@ -149,8 +149,8 @@ proc interop_record_event*(tag: InteropTag, note: Option[string], qty: int32): i
     .Returning("id")
     .scalar(int64)
 
-  discard onCommit(proc() = inc gCommittedOps, once = true)
-  discard onAbort(proc() = inc gAbortedOps, once = true)
+  discard onCommit((proc() = inc gCommittedOps), once = true)
+  discard onAbort((proc() = inc gAbortedOps), once = true)
   newId
 
 proc interop_query_events*(tag: InteropTag): string {.volatile.} =
