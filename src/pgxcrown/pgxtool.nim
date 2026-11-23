@@ -453,8 +453,15 @@ proc loadSecurityAuditPolicy*(projectDir: string): SecurityAuditPolicy =
   discard applyPgxExtJson(projectDir, meta)
   result.allowDynamicLoader = meta.allowDynamicLoader
 
-proc auditBinaryWithPolicy*(soPath: string, policy: SecurityAuditPolicy): bool =
-  let res = auditBinaryFile(soPath, policy)
+proc auditBinaryWithPolicy*(soPath: string, policy: SecurityAuditPolicy, projectDir: string = ""): bool =
+  let ctx = AuditContext(
+    soPath: soPath,
+    projectDir: projectDir,
+    policy: policy
+  )
+  let res = runPipeline(defaultPgxcrownPipeline(), ctx)
+  for w in res.warnings:
+    echo "⚠️  [SECURITY WARNING] ", w
   if not res.passed:
     if res.blockedOsSymbols.len > 0:
       echo "❌ [SECURITY VIOLATION] Restricted OS System Calls Detected in ", soPath, ":"
@@ -467,10 +474,18 @@ proc auditBinaryWithPolicy*(soPath: string, policy: SecurityAuditPolicy): bool =
         echo "   • Blocked Loader Symbol: '", s, "' (Blocked by default)"
       echo "   To explicitly opt in, set \"allowDynamicLoader\": true in pgxext.json."
     if res.unsafeRunpaths.len > 0:
-      echo "❌ [SECURITY VIOLATION] Unsafe ELF RPATH/RUNPATH Entries Detected in ", soPath, ":"
+      echo "❌ [SECURITY VIOLATION] ELF RPATH/RUNPATH Entries Forbidden in ", soPath, ":"
       for rp in res.unsafeRunpaths:
-        echo "   • Unsafe RPATH/RUNPATH: '", rp, "'"
-    if res.blockedOsSymbols.len == 0 and res.blockedLoaderSymbols.len == 0 and res.unsafeRunpaths.len == 0:
+        echo "   • Forbidden RPATH/RUNPATH: '", rp, "'"
+      echo "   Extensions and hooks must not embed RPATH/RUNPATH entries (zero unapproved .so loading)."
+    if res.blockedNeededLibs.len > 0:
+      echo "❌ [SECURITY VIOLATION] Unapproved DT_NEEDED Shared Library Dependencies Detected in ", soPath, ":"
+      for dep in res.blockedNeededLibs:
+        echo "   • Unapproved Dependency: '", dep, "'"
+      if "libdl.so.2" in res.blockedNeededLibs:
+        echo "   To explicitly permit libdl.so.2 dynamic loading, set \"allowDynamicLoader\": true in pgxext.json."
+    if res.blockedOsSymbols.len == 0 and res.blockedLoaderSymbols.len == 0 and
+       res.unsafeRunpaths.len == 0 and res.blockedNeededLibs.len == 0:
       for err in res.errors:
         echo err
     return false
@@ -479,7 +494,7 @@ proc auditBinaryWithPolicy*(soPath: string, policy: SecurityAuditPolicy): bool =
     echo "ℹ️  [SECURITY AUDIT] Dynamic Library Loader Symbols Explicitly Allowed (\"allowDynamicLoader\": true) in ", soPath, ":"
     for s in res.allowedLoaderSymbols:
       echo "   • Extension Loader Symbol: '", s, "'"
-  echo "🛡️  [SECURITY AUDIT PASSED] No blacklisted OS system calls or unsafe ELF runpaths detected in ", soPath
+  echo "🛡️  [SECURITY AUDIT PASSED] No blacklisted OS calls, unapproved DT_NEEDED deps, or ELF runpaths detected in ", soPath
   true
 
 proc auditBinarySymbols*(soPath: string, projectDir: string = ""): bool =
@@ -489,7 +504,7 @@ proc auditBinarySymbols*(soPath: string, projectDir: string = ""): bool =
   except CatchableError as e:
     echo "❌ [SECURITY POLICY ERROR] Failed to parse pgxext.json in '", projectDir, "': ", e.msg
     return false
-  auditBinaryWithPolicy(soPath, policy)
+  auditBinaryWithPolicy(soPath, policy, projectDir)
 
 proc cleanupGeneratedFiles*(dir: string, prjName: string, tmpFile: string) =
   var filesToDelete = @[
@@ -682,7 +697,7 @@ proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = fa
 
   let currentSourceHash = computeSourceHash(projectDir)
   const currentPgxcrownVersion = PgxcrownVersion & "-arc"
-  const currentSecurityAuditVersion = 2
+  const currentSecurityAuditVersion = 3
 
   # Smart incremental check: if target library exists and sources/policy haven't changed, skip build (unless debug or force)
   if not force and not cleanBefore and not debug and targetLib.len > 0 and fileExists(targetLib) and fileExists(manifestFile):
