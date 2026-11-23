@@ -509,13 +509,7 @@ proc loadSecurityAuditPolicy*(projectDir: string): SecurityAuditPolicy =
   discard applyPgxExtJson(projectDir, meta)
   result.allowDynamicLoader = meta.allowDynamicLoader
 
-proc auditBinaryWithPolicy*(soPath: string, policy: SecurityAuditPolicy, projectDir: string = ""): bool =
-  let ctx = AuditContext(
-    soPath: soPath,
-    projectDir: projectDir,
-    policy: policy
-  )
-  let res = runPipeline(defaultPgxcrownPipeline(), ctx)
+proc reportPipelineDiagnostics(soPath: string, res: PipelineReport): bool =
   for w in res.warnings:
     echo "⚠️  [SECURITY WARNING] ", w
   if not res.passed:
@@ -540,8 +534,17 @@ proc auditBinaryWithPolicy*(soPath: string, policy: SecurityAuditPolicy, project
         echo "   • Unapproved Dependency: '", dep, "'"
       if "libdl.so.2" in res.blockedNeededLibs:
         echo "   To explicitly permit libdl.so.2 dynamic loading, set \"allowDynamicLoader\": true in pgxext.json."
-    if res.blockedOsSymbols.len == 0 and res.blockedLoaderSymbols.len == 0 and
-       res.unsafeRunpaths.len == 0 and res.blockedNeededLibs.len == 0:
+
+    const structuredCodes = [
+      "BLOCKED_OS_SYMBOL", "BLOCKED_DYNAMIC_LOADER", "ALLOWED_DYNAMIC_LOADER",
+      "FORBIDDEN_RPATH", "UNAPPROVED_DT_NEEDED"
+    ]
+    for lr in res.layerReports:
+      if not lr.passed:
+        for f in lr.findings:
+          if f.severity == sevError and f.code notin structuredCodes:
+            echo f.message
+    if res.layerReports.len == 0:
       for err in res.errors:
         echo err
     return false
@@ -552,6 +555,15 @@ proc auditBinaryWithPolicy*(soPath: string, policy: SecurityAuditPolicy, project
       echo "   • Extension Loader Symbol: '", s, "'"
   echo "🛡️  [SECURITY AUDIT PASSED] No blacklisted OS calls, unapproved DT_NEEDED deps, or ELF runpaths detected in ", soPath
   true
+
+proc auditBinaryWithPolicy*(soPath: string, policy: SecurityAuditPolicy, projectDir: string = ""): bool =
+  let ctx = AuditContext(
+    soPath: soPath,
+    projectDir: projectDir,
+    policy: policy
+  )
+  let res = runPipeline(defaultPgxcrownPipeline(), ctx)
+  reportPipelineDiagnostics(soPath, res)
 
 proc auditBinarySymbols*(soPath: string, projectDir: string = ""): bool =
   var policy: SecurityAuditPolicy
@@ -982,6 +994,7 @@ proc install_extension(req: string) =
 proc verifyExtension*(req: string, installed: bool = false, requireSignature: bool = false): bool =
   var
     prjName = ""
+    projectDir = ""
     manifestPath = ""
     soPath = ""
     controlPath = ""
@@ -992,9 +1005,14 @@ proc verifyExtension*(req: string, installed: bool = false, requireSignature: bo
       let cwd = getCurrentDir().strip(leading = false, trailing = true, chars = {'/', '\\'})
       if fileExists(cwd / "src" / "main.nim"):
         prjName = cwd.lastPathPart
+        projectDir = cwd
     else:
       let cleaned = req.strip(leading = false, trailing = true, chars = {'/', '\\'})
       prjName = cleaned.lastPathPart
+      if '/' in req or '\\' in req or req == "." or req == "..":
+        let absCand = absolutePath(req).strip(leading = false, trailing = true, chars = {'/', '\\'})
+        if dirExists(absCand / "src"):
+          projectDir = absCand
     if prjName.len == 0:
       echo "❌ [INTEGRITY VIOLATION] Could not resolve extension name for installed verification."
       return false
@@ -1015,6 +1033,7 @@ proc verifyExtension*(req: string, installed: bool = false, requireSignature: bo
         resolvedName = absCand.lastPathPart
         resolvedDir = absCand
     prjName = resolvedName
+    projectDir = resolvedDir
     if prjName.len == 0 or not dirExists(resolvedDir):
       echo "❌ [INTEGRITY VIOLATION] Extension project not found: ", (if req.len > 0: req else: getCurrentDir())
       return false
@@ -1031,54 +1050,52 @@ proc verifyExtension*(req: string, installed: bool = false, requireSignature: bo
     controlPath = srcDir / (prjName & ".control")
     sqlDir = srcDir
 
-  if not fileExists(manifestPath):
-    echo "❌ [INTEGRITY VIOLATION] Integrity manifest not found: ", manifestPath
-    return false
+  var
+    manifestVersion = ""
+    manifestSigned = false
+    manifestFnCount = 0
+  if fileExists(manifestPath):
+    try:
+      let manifest = jsonToManifest(parseJson(readFile(manifestPath)))
+      if manifest.extension != prjName:
+        echo "❌ [INTEGRITY VIOLATION] Manifest extension mismatch: expected '", prjName, "', got '", manifest.extension, "'"
+        return false
+      manifestVersion = manifest.version
+      manifestSigned = manifest.hmacSha256.len > 0
+      manifestFnCount = manifest.functions.len
+    except CatchableError:
+      # Layer 3 (integritySecurityLayer) reports invalid manifest JSON under fail-closed pipeline
+      discard
 
-  var manifest: IntegrityManifest
+  let versionedSql = if manifestVersion.len > 0: sqlDir / (prjName & "--" & manifestVersion & ".sql") else: ""
+  let plainSql = sqlDir / (prjName & ".sql")
+  let sqlPath = if versionedSql.len > 0 and fileExists(versionedSql): versionedSql else: plainSql
+
+  var policy: SecurityAuditPolicy
   try:
-    manifest = jsonToManifest(parseJson(readFile(manifestPath)))
+    policy = loadSecurityAuditPolicy(projectDir)
   except CatchableError as e:
-    echo "❌ [INTEGRITY VIOLATION] Invalid integrity manifest (", manifestPath, "): ", e.msg
-    return false
-
-  if manifest.extension != prjName:
-    echo "❌ [INTEGRITY VIOLATION] Manifest extension mismatch: expected '", prjName, "', got '", manifest.extension, "'"
+    echo "❌ [INTEGRITY VIOLATION] Failed to parse pgxext.json in '", projectDir, "': ", e.msg
     return false
 
   let key = getEnv("PGX_INTEGRITY_KEY", "")
-  if requireSignature or manifest.hmacSha256.len > 0:
-    if key.len == 0:
-      if requireSignature:
-        echo "❌ [INTEGRITY VIOLATION] --require-signature was specified, but PGX_INTEGRITY_KEY is not set."
-      else:
-        echo "❌ [INTEGRITY VIOLATION] Manifest contains an HMAC-SHA256 signature, but PGX_INTEGRITY_KEY is not set."
-      return false
-    if manifest.hmacSha256.len == 0:
-      echo "❌ [INTEGRITY VIOLATION] --require-signature was specified, but manifest is unsigned (empty hmacSha256)."
-      return false
-    if not verifyManifestSignature(manifest, key):
-      echo "❌ [INTEGRITY VIOLATION] HMAC-SHA256 signature verification failed for ", manifestPath
-      return false
-
-  let versionedSql = sqlDir / (prjName & "--" & manifest.version & ".sql")
-  let plainSql = sqlDir / (prjName & ".sql")
-  let sqlPath = if fileExists(versionedSql): versionedSql else: plainSql
-
-  let artifactErrors = verifyDiskArtifacts(manifest, soPath, sqlPath, controlPath)
-  if artifactErrors.len > 0:
-    echo "❌ [INTEGRITY VIOLATION] Artifact hash verification failed for extension '", prjName, "':"
-    for err in artifactErrors:
-      echo "   • ", err
+  let ctx = AuditContext(
+    soPath: soPath,
+    projectDir: projectDir,
+    policy: policy,
+    sqlPath: sqlPath,
+    controlPath: controlPath,
+    manifestPath: manifestPath
+  )
+  let res = verifyExtensionBundle(ctx, expectedKey = key, requireSignature = requireSignature)
+  if not reportPipelineDiagnostics(soPath, res):
+    if "INTEGRITY VIOLATION" notin res.errorMessage:
+      echo "❌ [INTEGRITY VIOLATION] Binary security audit failed for ", soPath
     return false
 
-  if not auditBinarySymbols(soPath):
-    echo "❌ [INTEGRITY VIOLATION] Binary security audit failed for ", soPath
-    return false
-
-  let sigStatus = if manifest.hmacSha256.len > 0: "HMAC-SHA256 verified" else: "unsigned"
-  echo "✅ [INTEGRITY VERIFIED] Extension '", prjName, "' v", manifest.version,
-       " (", manifest.functions.len, " attested routines, ", sigStatus, ")"
+  let sigStatus = if manifestSigned: "HMAC-SHA256 verified" else: "unsigned"
+  echo "✅ [INTEGRITY VERIFIED] Extension '", prjName, "' v", manifestVersion,
+       " (", manifestFnCount, " attested routines, ", sigStatus, ")"
   return true
 
 template build_project_template(req: string, kind: string = "") =

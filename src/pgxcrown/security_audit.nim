@@ -1,8 +1,8 @@
 ## Backward-compatible facade over the layered pgxcrown security pipeline (`pgxcrown/security/`).
 ## Pure stdlib only; compiles statically with `musl-gcc --passL:-static` as part of `pgxtool`.
 
-import ./security/[policy, layer_symbols, layer_elf_deps, pipeline]
-export policy, layer_symbols, layer_elf_deps, pipeline
+import ./security/[policy, layer_symbols, layer_elf_deps, layer_integrity, pipeline]
+export policy, layer_symbols, layer_elf_deps, layer_integrity, pipeline
 
 type
   AuditResult* = PipelineReport

@@ -1,5 +1,6 @@
-import std/[os, osproc, strutils, unittest]
+import std/[json, os, osproc, strutils, unittest]
 import ../src/pgxcrown/ext_meta
+import ../src/pgxcrown/integrity
 import ../src/pgxcrown/security_audit
 import ../src/pgxcrown/pgxtool
 
@@ -455,6 +456,162 @@ int check_dl(void) {
           check not failRep.passed
           check "SECURITY VIOLATION" in failRep.errorMessage
           check "manifest digest mismatch" in failRep.errorMessage
+        finally:
+          if dirExists(tmpDir):
+            removeDir(tmpDir)
+
+  test "Layer 3 integritySecurityLayer composition, removeLayer refusal, tamper & signature enforcement":
+    var pipe3 = defaultPgxcrownPipeline()
+    pipe3.addIntegrityLayer(expectedKey = "test-key", requireSignature = false)
+    check pipe3.layers.len == 3
+    check pipe3.layers[2].id == "integrity"
+    check pipe3.layers[2].kind == slkIntegrity
+    check pipe3.layers[2].mandatory
+
+    # Mandatory Layer 3 cannot be removed
+    check not pipe3.removeLayer("integrity")
+    check pipe3.layers.len == 3
+
+    # fullPgxcrownPipeline helper matches 3-layer composition
+    var fullPipe = fullPgxcrownPipeline(expectedKey = "test-key", requireSignature = true)
+    check fullPipe.layers.len == 3
+    check not fullPipe.removeLayer("symbols")
+    check not fullPipe.removeLayer("elf_deps")
+    check not fullPipe.removeLayer("integrity")
+
+    when defined(linux):
+      if findExe("gcc").len > 0 and findExe("nm").len > 0 and findExe("readelf").len > 0:
+        let tmpDir = getTempDir() / ("pgx_sec_layer3_" & $getCurrentProcessId())
+        let projDir = tmpDir / "bundle_ext"
+        let srcDir = projDir / "src"
+        createDir(srcDir)
+        try:
+          let cPath = tmpDir / "bundle_ext.c"
+          writeFile(cPath, "int bundle_add(int a, int b) { return a + b; }\n")
+          let soPath = srcDir / "bundle_ext.so"
+          let (_, gccCode) = execCmdEx("gcc -shared -fPIC -o " & quoteShell(soPath) & " " & quoteShell(cPath))
+          check gccCode == 0
+
+          let sqlPath = srcDir / "bundle_ext--0.1.0.sql"
+          let ctrlPath = srcDir / "bundle_ext.control"
+          let manifestPath = srcDir / "bundle_ext.integrity.json"
+          writeFile(sqlPath, "CREATE FUNCTION bundle_add(int4, int4) RETURNS int4 AS '$libdir/bundle_ext', 'bundle_add' LANGUAGE c IMMUTABLE STRICT;\n")
+          writeFile(ctrlPath, "default_version = '0.1.0'\nrelocatable = true\n")
+
+          var manifest = IntegrityManifest(
+            schemaVersion: IntegritySchemaVersion,
+            extension: "bundle_ext",
+            version: "0.1.0",
+            soSha256: sha256File(soPath),
+            sqlSha256: sha256File(sqlPath),
+            controlSha256: sha256File(ctrlPath),
+            functions: @[],
+            hmacSha256: ""
+          )
+          writeFile(manifestPath, pretty(manifestToJson(manifest)))
+
+          let ctx = AuditContext(
+            soPath: soPath,
+            projectDir: projDir,
+            policy: SecurityAuditPolicy(),
+            sqlPath: sqlPath,
+            controlPath: ctrlPath,
+            manifestPath: manifestPath
+          )
+
+          # Calling 2-layer pipeline when manifestPath is present or requireIntegrity=true must fail closed
+          let missingL3 = runPipeline(defaultPgxcrownPipeline(), ctx)
+          check not missingL3.passed
+          check "PIPELINE_MISSING_MANDATORY_LAYER" in missingL3.errorMessage
+          check "slkIntegrity" in missingL3.errorMessage
+
+          let reqIntMissing = runPipeline(defaultPgxcrownPipeline(), AuditContext(soPath: soPath), requireIntegrity = true)
+          check not reqIntMissing.passed
+          check "slkIntegrity" in reqIntMissing.errorMessage
+
+          # Unsigned bundle passes when signature not required, fails when required
+          let unsignedPass = verifyExtensionBundle(ctx, expectedKey = "", requireSignature = false)
+          check unsignedPass.passed
+          check unsignedPass.layerReports.len == 3
+
+          let unsignedReqSigFail = verifyExtensionBundle(ctx, expectedKey = "key-1", requireSignature = true)
+          check not unsignedReqSigFail.passed
+          check "INTEGRITY VIOLATION" in unsignedReqSigFail.errorMessage
+
+          # Signed bundle verification with right key, wrong key, and missing key
+          let signingKey = "layer3-pipeline-hmac-key"
+          signManifest(manifest, signingKey)
+          writeFile(manifestPath, pretty(manifestToJson(manifest)))
+
+          let signedPass = verifyExtensionBundle(ctx, expectedKey = signingKey, requireSignature = true)
+          check signedPass.passed
+          check signedPass.layerReports.len == 3
+
+          let signedWrongKey = verifyExtensionBundle(ctx, expectedKey = "wrong-key", requireSignature = true)
+          check not signedWrongKey.passed
+          check "HMAC-SHA256" in signedWrongKey.errorMessage
+
+          let signedNoKey = verifyExtensionBundle(ctx, expectedKey = "", requireSignature = false)
+          check not signedNoKey.passed
+          check "PGX_INTEGRITY_KEY is not set" in signedNoKey.errorMessage
+
+          # 1-byte tamper in .so, .sql, .control, or corrupt manifest rejected via 3-layer pipeline
+          for targetPath in [soPath, sqlPath, ctrlPath]:
+            var raw = readFile(targetPath)
+            raw[0] = chr(ord(raw[0]) xor 0x01)
+            writeFile(targetPath, raw)
+            let tamperRep = verifyExtensionBundle(ctx, expectedKey = signingKey, requireSignature = true)
+            check not tamperRep.passed
+            check "INTEGRITY VIOLATION" in tamperRep.errorMessage
+            raw[0] = chr(ord(raw[0]) xor 0x01)
+            writeFile(targetPath, raw)
+
+          let savedManifest = readFile(manifestPath)
+          writeFile(manifestPath, "{bad-json")
+          let corruptRep = verifyExtensionBundle(ctx, expectedKey = signingKey, requireSignature = true)
+          check not corruptRep.passed
+          check "Invalid integrity manifest" in corruptRep.errorMessage
+          writeFile(manifestPath, savedManifest)
+
+          # verifyExtension respects pgxext.json allowDynamicLoader policy (uses projectDir, not empty)
+          let dlC = tmpDir / "dl_bundle.c"
+          writeFile(dlC, """
+#include <dlfcn.h>
+int dl_probe(void) {
+  void *h = dlopen("libc.so.6", RTLD_LAZY);
+  if (h) dlclose(h);
+  return 0;
+}
+""")
+          let dlProj = tmpDir / "dl_verified"
+          let dlSrc = dlProj / "src"
+          createDir(dlSrc)
+          let dlSo = dlSrc / "dl_verified.so"
+          let dlSql = dlSrc / "dl_verified--0.1.0.sql"
+          let dlCtrl = dlSrc / "dl_verified.control"
+          let dlManifestPath = dlSrc / "dl_verified.integrity.json"
+          let (_, gccDlCode) = execCmdEx("gcc -shared -fPIC -o " & quoteShell(dlSo) & " " & quoteShell(dlC) & " -ldl")
+          check gccDlCode == 0
+          writeFile(dlSql, "-- sql\n")
+          writeFile(dlCtrl, "default_version = '0.1.0'\n")
+          let dlManifest = IntegrityManifest(
+            schemaVersion: IntegritySchemaVersion,
+            extension: "dl_verified",
+            version: "0.1.0",
+            soSha256: sha256File(dlSo),
+            sqlSha256: sha256File(dlSql),
+            controlSha256: sha256File(dlCtrl),
+            functions: @[],
+            hmacSha256: ""
+          )
+          writeFile(dlManifestPath, pretty(manifestToJson(dlManifest)))
+
+          # Without allowDynamicLoader in pgxext.json -> Layer 1/2 rejects inside verifyExtension
+          check not verifyExtension(dlProj)
+
+          # With allowDynamicLoader: true in pgxext.json -> verifyExtension succeeds via 3-layer pipeline
+          writeFile(dlProj / "pgxext.json", """{"version": "0.1.0", "allowDynamicLoader": true}""")
+          check verifyExtension(dlProj)
         finally:
           if dirExists(tmpDir):
             removeDir(tmpDir)

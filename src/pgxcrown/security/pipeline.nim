@@ -1,10 +1,12 @@
 ## Composable, fail-closed security audit pipeline orchestrator.
-## Enforces mandatory layers (`slkSymbols`, `slkElfDeps`) and catches layer failures safely.
+## Enforces mandatory layers (`slkSymbols`, `slkElfDeps`, and `slkIntegrity` when present/required)
+## and catches layer failures safely.
 
 import std/[sets, strutils]
 import ./policy
 import ./layer_symbols
 import ./layer_elf_deps
+import ./layer_integrity
 
 export policy.SecurityLayer
 
@@ -43,20 +45,34 @@ proc addUnique(target: var seq[string], seen: var HashSet[string], item: string)
     seen.incl(item)
     target.add(item)
 
-proc runPipeline*(p: SecurityPipeline, ctx: AuditContext): PipelineReport =
+proc addIntegrityLayer*(p: var SecurityPipeline, expectedKey: string = "", requireSignature: bool = false) =
+  ## Composes the mandatory Layer 3 integrity attestation layer into `p`.
+  p.addLayer(integritySecurityLayer(expectedKey = expectedKey, requireSignature = requireSignature))
+
+proc fullPgxcrownPipeline*(expectedKey: string = "", requireSignature: bool = false): SecurityPipeline =
+  ## Returns the full 3-layer pgxcrown pipeline (`symbols` + `elf_deps` + `integrity`).
+  result = defaultPgxcrownPipeline()
+  result.addIntegrityLayer(expectedKey = expectedKey, requireSignature = requireSignature)
+
+proc runPipeline*(p: SecurityPipeline, ctx: AuditContext, requireIntegrity: bool = false): PipelineReport =
   ## Executes all configured security layers under fail-closed invariants.
   var hasSymbols = false
   var hasElfDeps = false
+  var hasIntegrity = false
   for layer in p.layers:
     if layer.kind == slkSymbols:
       hasSymbols = true
     elif layer.kind == slkElfDeps:
       hasElfDeps = true
+    elif layer.kind == slkIntegrity:
+      hasIntegrity = true
 
-  if p.layers.len == 0 or not hasSymbols or not hasElfDeps:
+  let mustEnforceIntegrity = requireIntegrity or ctx.manifestPath.len > 0
+  if p.layers.len == 0 or not hasSymbols or not hasElfDeps or (mustEnforceIntegrity and not hasIntegrity):
     var missing: seq[string] = @[]
     if not hasSymbols: missing.add("slkSymbols")
     if not hasElfDeps: missing.add("slkElfDeps")
+    if mustEnforceIntegrity and not hasIntegrity: missing.add("slkIntegrity")
     let msg = "❌ [SECURITY AUDIT FAILED] PIPELINE_MISSING_MANDATORY_LAYER: missing " &
       missing.join(", ") & "."
     result.layerReports.add(LayerReport(
@@ -121,12 +137,24 @@ proc runPipeline*(p: SecurityPipeline, ctx: AuditContext): PipelineReport =
       )
 
     var hasErrFinding = false
+    if rep.kind != layer.kind:
+      let kindErr = "❌ [SECURITY AUDIT FAILED] LAYER_CONTRACT_VIOLATION in '" & layer.id &
+        "': expected " & $layer.kind & ", got " & $rep.kind
+      rep.findings.add(SecurityFinding(
+        layerId: layer.id,
+        code: "LAYER_CONTRACT_VIOLATION",
+        severity: sevError,
+        message: kindErr
+      ))
+      rep.passed = false
+
     for f in rep.findings:
       case f.severity
       of sevError:
         hasErrFinding = true
         let formatted =
-          if "SECURITY VIOLATION" in f.message or "SECURITY AUDIT FAILED" in f.message:
+          if "SECURITY VIOLATION" in f.message or "SECURITY AUDIT FAILED" in f.message or
+             "INTEGRITY VIOLATION" in f.message:
             f.message
           else:
             "❌ [SECURITY VIOLATION] " & f.message
@@ -170,3 +198,9 @@ proc runPipeline*(p: SecurityPipeline, ctx: AuditContext): PipelineReport =
 
   result.errorMessage = result.errors.join("\n")
   result.passed = (not anyFailed) and (result.errors.len == 0)
+
+proc verifyExtensionBundle*(ctx: AuditContext, expectedKey: string = "", requireSignature: bool = false): PipelineReport =
+  ## Composes the 3-layer security pipeline (`symbols` + `elf_deps` + `integrity`)
+  ## and executes it fail-closed on `ctx`.
+  let pipe = fullPgxcrownPipeline(expectedKey = expectedKey, requireSignature = requireSignature)
+  runPipeline(pipe, ctx, requireIntegrity = true)

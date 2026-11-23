@@ -180,6 +180,22 @@ run_container_unit_phase() {
     pgxtool create-project lsp_smoke
     (cd "$TMP_LSP_HOME/lsp_smoke" && nim check src/main.nim)
     rm -rf "$TMP_LSP_HOME"
+
+    TMP_VERIFY_HOME="$(mktemp -d)"
+    export PGXTOOL_HOME="$TMP_VERIFY_HOME"
+    export PGX_INTEGRITY_KEY="ci-verify-smoke-key"
+    pgxtool init >/dev/null
+    pgxtool create-project verify_smoke
+    pgxtool build-extension verify_smoke
+    pgxtool verify verify_smoke --require-signature
+    "$TMP_VERIFY_HOME/verify_smoke/src/install.sh" >/dev/null
+    pgxtool verify verify_smoke --installed --require-signature
+    if PGX_INTEGRITY_KEY="wrong-verify-key" pgxtool verify verify_smoke --require-signature >/dev/null 2>&1; then
+      echo "❌ Expected pgxtool verify to reject mismatched PGX_INTEGRITY_KEY!"
+      exit 1
+    fi
+    unset PGX_INTEGRITY_KEY
+    rm -rf "$TMP_VERIFY_HOME"
   '
 }
 
@@ -218,6 +234,11 @@ run_smoke_phase() {
 
     "${PGXTOOL_BIN}" init
     "${PGXTOOL_BIN}" available-hooks
+    "${PGXTOOL_BIN}" verify --help >/dev/null
+    if "${PGXTOOL_BIN}" verify nonexistent_smoke_ext >/dev/null 2>&1; then
+      echo "❌ Expected pgxtool verify on nonexistent project to fail!"
+      exit 1
+    fi
     "${PGXTOOL_BIN}" create-project sample_ext
     "${PGXTOOL_BIN}" create-type factorial --base-type int
     "${PGXTOOL_BIN}" create-type geo_coord --base-type float64
