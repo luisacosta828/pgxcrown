@@ -7,6 +7,9 @@ const pgIncludeDir = staticExec("pg_config --includedir").strip()
 
 {.emit: """/*INCLUDESECTION*/
 #include "postgres.h"
+#if PG_VERSION_NUM >= 160000
+#include "varatt.h"
+#endif
 #include "utils/builtins.h"
 """ .}
 
