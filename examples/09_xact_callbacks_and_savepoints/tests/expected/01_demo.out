@@ -1,0 +1,105 @@
+\set VERBOSITY terse
+SELECT ex09_reset() AS init_counts;
+   init_counts
+------------------
+ xact=0|subxact=0
+(1 row)
+
+-- 1. Top-level COMMIT and ROLLBACK with one-shot callbacks and pgxWithLibcAlloc
+BEGIN;
+BEGIN
+SELECT ex09_arm_tx('alpha') AS armed_commit_tx;
+ armed_commit_tx
+-----------------
+               3
+(1 row)
+
+COMMIT;
+COMMIT
+BEGIN;
+BEGIN
+SELECT ex09_arm_tx('beta') AS armed_abort_tx;
+ armed_abort_tx
+----------------
+              3
+(1 row)
+
+ROLLBACK;
+ROLLBACK
+SELECT ex09_take_log(false) AS tx_log;
+                tx_log
+---------------------------------------
+ pre:alpha | commit:alpha | abort:beta
+(1 row)
+
+SELECT ex09_stats() AS stats_after_tx;
+                 stats_after_tx
+------------------------------------------------
+ committed=1|aborted=1|xact_cbs=0|subxact_cbs=0
+(1 row)
+
+-- 2. Savepoint subtransactions (SAVEPOINT / ROLLBACK TO SAVEPOINT / RELEASE SAVEPOINT)
+BEGIN;
+BEGIN
+SELECT ex09_arm_subxact() AS subxact_armed;
+ subxact_armed
+---------------
+             1
+(1 row)
+
+SAVEPOINT sp1;
+SAVEPOINT
+  SAVEPOINT sp2;
+SAVEPOINT
+  ROLLBACK TO SAVEPOINT sp2;
+ROLLBACK
+  RELEASE SAVEPOINT sp2;
+RELEASE
+COMMIT;
+COMMIT
+SELECT ex09_take_log(true) AS subxact_log;
+                       subxact_log
+----------------------------------------------------------
+ sxeAbortSub:true | sxeCommitSub:true | sxeCommitSub:true
+(1 row)
+
+-- 3. Anti-PANIC Shield in xeAbort: Nim exception becomes WARNING and remaining callbacks execute
+BEGIN;
+BEGIN
+SELECT ex09_arm_abort_shield() AS shield_armed;
+ shield_armed
+--------------
+            2
+(1 row)
+
+ROLLBACK;
+psql:/tmp/current_test.sql:31: WARNING:  pgxcrown xeAbort callback error [ValueError]: simulated cleanup error
+ROLLBACK
+SELECT ex09_take_log(false) AS shield_log;
+           shield_log
+--------------------------------
+ shield_before | shield_tail_ok
+(1 row)
+
+-- 4. Controlled rejection during xePreCommit triggers clean ERROR + xeAbort cleanup
+BEGIN;
+BEGIN
+SELECT ex09_arm_precommit_policy() AS policy_armed;
+ policy_armed
+--------------
+            2
+(1 row)
+
+COMMIT;
+psql:/tmp/current_test.sql:38: ERROR:  blocked by ex09 precommit policy
+SELECT ex09_take_log(true) AS precommit_abort_log;
+       precommit_abort_log
+----------------------------------
+ precommit_check | policy_aborted
+(1 row)
+
+SELECT ex09_stats() AS final_stats;
+                  final_stats
+------------------------------------------------
+ committed=1|aborted=1|xact_cbs=0|subxact_cbs=0
+(1 row)
