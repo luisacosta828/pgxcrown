@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "comment": "{{project_name}} custom service extension (service_tag={{service_tag}})",
+  "relocatable": true,
+  "trusted": true
+}

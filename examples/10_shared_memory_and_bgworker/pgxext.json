@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "comment": "Shared memory (pgxShared + initShmemStruct), Atomic/LWLock synchronization, and dynamic BgWorker",
+  "relocatable": true,
+  "trusted": false
+}

@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "comment": "Fluent QueryBuilder and Binary SPI v2 with Option[string] NULL vs empty, prepared plans, and streaming cursors",
+  "relocatable": true,
+  "trusted": false
+}

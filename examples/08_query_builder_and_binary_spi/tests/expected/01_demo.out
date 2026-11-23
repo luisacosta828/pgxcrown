@@ -1,0 +1,83 @@
+\set VERBOSITY terse
+CREATE TABLE ex08_orders (
+  id serial PRIMARY KEY,
+  code text NOT NULL,
+  note text,
+  amount bigint NOT NULL
+);
+CREATE TABLE
+CREATE TABLE ex08_items (
+  id serial PRIMARY KEY,
+  sku text NOT NULL,
+  qty int4 NOT NULL
+);
+CREATE TABLE
+INSERT INTO ex08_items (sku, qty) VALUES
+  ('CPU-01', 4),
+  ('RAM-16', 12),
+  ('CPU-01', 6),
+  ('SSD-1T', 2);
+INSERT 0 4
+-- 1. Distinguishing SQL NULL vs empty string '' and SQLi-safe parameterization
+SELECT ex08_insert_order('ORD-EMPTY', '', 100) AS id_empty;
+ id_empty
+----------
+        1
+(1 row)
+
+SELECT ex08_insert_order('ORD-NULL', NULL, 200) AS id_null;
+ id_null
+---------
+       2
+(1 row)
+
+SELECT ex08_insert_order('ORD-SQLI', $sql$'; DROP TABLE ex08_orders; --$sql$, 300) AS id_sqli;
+ id_sqli
+---------
+       3
+(1 row)
+
+SELECT ex08_inspect_orders(0) AS all_orders;
+                                          all_orders
+----------------------------------------------------------------------------------------------
+ 1:ORD-EMPTY:EMPTY:100|2:ORD-NULL:NULL:200|3:ORD-SQLI:SOME('; DROP TABLE ex08_orders; --):300
+(1 row)
+
+-- 2. Parameterized UPDATE ... RETURNING and filtered fetch
+SELECT ex08_update_order_amount('ORD-EMPTY', 250) AS updated_amount;
+ updated_amount
+----------------
+            250
+(1 row)
+
+SELECT ex08_inspect_orders(250) AS high_value_orders;
+                            high_value_orders
+--------------------------------------------------------------------------
+ 1:ORD-EMPTY:EMPTY:250|3:ORD-SQLI:SOME('; DROP TABLE ex08_orders; --):300
+(1 row)
+
+-- 3. Kept prepared plan (spiPrepare keep = true + fetchPlan)
+SELECT ex08_prepare_sku_plan() AS plan_kept;
+ plan_kept
+-----------
+ t
+(1 row)
+
+SELECT ex08_lookup_sku('CPU-01') AS cpu_batches;
+      cpu_batches
+-----------------------
+ 1:CPU-01:4|3:CPU-01:6
+(1 row)
+
+-- 4. Streaming cursors (spiCursorOpen/Fetch/Close + QueryBuilder stream)
+SELECT ex08_stream_summary(4, 2) AS stream_summary;
+                 stream_summary
+-------------------------------------------------
+ cursor_rows=3|cursor_qty=22|qb_rows=3|qb_qty=22
+(1 row)
+
+SELECT count(*) AS open_cursors_after FROM pg_cursors;
+ open_cursors_after
+--------------------
+                  0
+(1 row)

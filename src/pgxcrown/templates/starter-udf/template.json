@@ -1,0 +1,19 @@
+{
+  "name": "starter-udf",
+  "description": "Minimal PostgreSQL extension with typed scalar Nim UDFs and pg_regress-style SQL tests",
+  "minPgxcrownVersion": "0.31.0",
+  "variables": [
+    {
+      "name": "author",
+      "default": "pgxcrown",
+      "pattern": "^[A-Za-z0-9_ .-]{1,64}$"
+    }
+  ],
+  "files": [
+    "pgxext.json",
+    "src/main.nim",
+    {"src": "regress/sql/01_basic.sql", "dest": "tests/sql/01_basic.sql"},
+    {"src": "regress/expected/01_basic.out", "dest": "tests/expected/01_basic.out"},
+    "README.md"
+  ]
+}

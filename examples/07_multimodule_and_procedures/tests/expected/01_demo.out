@@ -1,0 +1,114 @@
+\set VERBOSITY terse
+-- 1. Extension metadata: pgxExtension overrides pgxext.json (trusted = t)
+SELECT extname, extversion, extrelocatable
+FROM pg_extension
+WHERE extname = '07_multimodule_and_procedures';
+            extname            | extversion | extrelocatable
+-------------------------------+------------+----------------
+ 07_multimodule_and_procedures | 0.1.0      | t
+(1 row)
+
+SELECT version, relocatable, trusted, comment
+FROM pg_available_extension_versions
+WHERE name = '07_multimodule_and_procedures'
+ORDER BY version;
+ version | relocatable | trusted |                                       comment
+---------+-------------+---------+-------------------------------------------------------------------------------------
+ 0.1.0   | t           | t       | Multi-module pgxcrown extension with SQL PROCEDURE, SECURITY DEFINER, and LEAKPROOF
+(1 row)
+
+-- 2. Chained {.pgxInit.} across billing_ops.nim -> main.nim and {.noSql.} isolation
+SELECT ex07_init_status() AS chained_init_bias;
+ chained_init_bias
+-------------------
+               107
+(1 row)
+
+SELECT count(*) AS leaked_nosql_procs
+FROM pg_proc
+WHERE proname IN ('computecentsinternal', 'computeCentsInternal', 'initbillingops', 'initmainmodule');
+ leaked_nosql_procs
+--------------------
+                  0
+(1 row)
+
+-- 3. Pure LEAKPROOF & regular UDFs + SQL PROCEDURE inspection
+SELECT proname, prokind, prosecdef, proleakproof, proconfig
+FROM pg_proc
+WHERE proname IN (
+  'ex07_is_valid_amount',
+  'ex07_post_charge',
+  'ex07_reset_ledger',
+  'ex07_vault_total',
+  'ex07_caller_vault_total'
+)
+ORDER BY proname;
+         proname         | prokind | prosecdef | proleakproof |             proconfig
+-------------------------+---------+-----------+--------------+------------------------------------
+ ex07_caller_vault_total | f       | f         | f            | {"search_path=public, pg_catalog"}
+ ex07_is_valid_amount    | f       | f         | t            |
+ ex07_post_charge        | p       | t         | f            | {"search_path=public, pg_catalog"}
+ ex07_reset_ledger       | p       | f         | f            |
+ ex07_vault_total        | f       | t         | f            | {"search_path=public, pg_catalog"}
+(5 rows)
+
+SELECT ex07_is_valid_amount(500) AS valid_pos,
+       ex07_is_valid_amount(-10) AS valid_neg,
+       ex07_calc_invoice(4, 250) AS invoice_cents;
+ valid_pos | valid_neg | invoice_cents
+-----------+-----------+---------------
+ t         | f         |          1000
+(1 row)
+
+-- 4. Invoking SQL PROCEDUREs with CALL
+CALL ex07_reset_ledger();
+CALL
+CALL ex07_post_charge(1500);
+CALL
+CALL ex07_post_charge(250);
+CALL
+SELECT ex07_ledger_total() AS ledger_after_calls;
+ ledger_after_calls
+--------------------
+               1750
+(1 row)
+
+-- 5. SECURITY DEFINER vs SECURITY INVOKER isolation
+CREATE TABLE public.ex07_billing_vault (id serial PRIMARY KEY, amount_cents bigint NOT NULL);
+CREATE TABLE
+INSERT INTO public.ex07_billing_vault (amount_cents) VALUES (1200), (800);
+INSERT 0 2
+REVOKE ALL ON public.ex07_billing_vault FROM PUBLIC;
+REVOKE
+CREATE ROLE ex07_auditor LOGIN NOSUPERUSER;
+CREATE ROLE
+CREATE FUNCTION pg_temp.try_caller_vault() RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  v bigint;
+BEGIN
+  v := ex07_caller_vault_total();
+  RETURN 'UNEXPECTED:' || v;
+EXCEPTION WHEN insufficient_privilege THEN
+  RETURN 'BLOCKED_42501';
+END $$;
+CREATE FUNCTION
+SET ROLE ex07_auditor;
+SET
+SELECT ex07_vault_total() AS definer_vault_total;
+ definer_vault_total
+---------------------
+                2000
+(1 row)
+
+SELECT pg_temp.try_caller_vault() AS invoker_vault_guard;
+ invoker_vault_guard
+---------------------
+ BLOCKED_42501
+(1 row)
+
+RESET ROLE;
+RESET
+DROP TABLE public.ex07_billing_vault;
+DROP TABLE
+DROP ROLE ex07_auditor;
+DROP ROLE

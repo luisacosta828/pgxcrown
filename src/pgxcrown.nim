@@ -22,6 +22,9 @@ import pgxcrown/shm_mq
 import pgxcrown/xact
 import pgxcrown/integrity
 import pgxcrown/integrity_runtime
+import pgxcrown/guc
+import pgxcrown/hooks/registry
+import pgxcrown/plugin_api
 
 template trusted*() {.pragma: [raises: [ValueError], forbids: [IOEffect, TimeEffect], tags: []].}
 template immutable*() {.pragma: [noSideEffect, trusted, forbids: [DbReadEffect, DbWriteEffect]].}
@@ -163,4 +166,7 @@ export shm_mq
 export xact
 export integrity
 export integrity_runtime
+export guc
+export registry
+export plugin_api
 

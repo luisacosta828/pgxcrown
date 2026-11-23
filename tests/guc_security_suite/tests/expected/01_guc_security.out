@@ -1,0 +1,234 @@
+\set VERBOSITY terse
+SHOW shared_preload_libraries;
+ shared_preload_libraries
+--------------------------
+ guc_security_suite
+(1 row)
+
+-- Initial defaults and direct .get() verification as superuser
+SHOW gucsec.max_items;
+ gucsec.max_items
+------------------
+ 10
+(1 row)
+
+SHOW gucsec.admin_flag;
+ gucsec.admin_flag
+-------------------
+ off
+(1 row)
+
+SHOW gucsec.secret_key;
+ gucsec.secret_key
+-------------------
+ top_secret_boot
+(1 row)
+
+SHOW gucsec.mode;
+ gucsec.mode
+-------------
+ safe
+(1 row)
+
+SELECT guc_max_items_native() AS max_items_native,
+       guc_admin_flag_native() AS admin_flag_native,
+       guc_mode_native() AS mode_native,
+       guc_secret_key_native() AS secret_key_native;
+ max_items_native | admin_flag_native | mode_native | secret_key_native
+------------------+-------------------+-------------+-------------------
+               10 | f                 | safe        | top_secret_boot
+(1 row)
+
+SELECT guc_get('gucsec.max_items') AS got_max,
+       guc_get('gucsec.secret_key') AS got_secret,
+       guc_get('gucsec.does_not_exist') IS NULL AS missing_is_null;
+ got_max |   got_secret    | missing_is_null
+---------+-----------------+-----------------
+ 10      | top_secret_boot | t
+(1 row)
+
+-- Verify superuserOnly GUC has GUC_NO_SHOW_ALL while regular custom GUCs appear in pg_settings
+SELECT name, setting, context FROM pg_settings WHERE name LIKE 'gucsec.%' ORDER BY name;
+       name        | setting |  context
+-------------------+---------+-----------
+ gucsec.admin_flag | off     | superuser
+ gucsec.max_items  | 10      | user
+ gucsec.mode       | safe    | superuser
+(3 rows)
+
+-- Superuser enum & superuserOnly transactional update + rollback verification
+BEGIN;
+BEGIN
+SELECT guc_set_local('gucsec.mode', 'fast') AS set_mode_res;
+ set_mode_res
+--------------
+ ok
+(1 row)
+
+SELECT guc_set_local('gucsec.secret_key', 'rotated_secret') AS set_secret_res;
+ set_secret_res
+----------------
+ ok
+(1 row)
+
+SELECT guc_mode_native() AS mode_in_tx,
+       guc_secret_key_native() AS secret_in_tx,
+       guc_get('gucsec.secret_key') AS secret_get_in_tx;
+ mode_in_tx |  secret_in_tx  | secret_get_in_tx
+------------+----------------+------------------
+ fast       | rotated_secret | rotated_secret
+(1 row)
+
+ROLLBACK;
+ROLLBACK
+SELECT guc_mode_native() AS mode_after_rollback,
+       guc_secret_key_native() AS secret_after_rollback;
+ mode_after_rollback | secret_after_rollback
+---------------------+-----------------------
+ safe                | top_secret_boot
+(1 row)
+
+-- Protected core PostgreSQL GUCs, cross-prefix, and malformed names are blocked even for superuser
+DO $$ BEGIN PERFORM guc_set_unscoped('log_statement', 'none');
+EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'CORE_LOG_42501'; END $$;
+psql:/tmp/current_test.sql:37: NOTICE:  CORE_LOG_42501
+DO
+DO $$ BEGIN PERFORM guc_set_unscoped('search_path', 'pg_catalog');
+EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'CORE_SEARCH_PATH_42501'; END $$;
+psql:/tmp/current_test.sql:40: NOTICE:  CORE_SEARCH_PATH_42501
+DO
+DO $$ BEGIN PERFORM guc_set_unscoped('pg.hack', '1');
+EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'CORE_PG_42501'; END $$;
+psql:/tmp/current_test.sql:43: NOTICE:  CORE_PG_42501
+DO
+DO $$ BEGIN PERFORM guc_set_local('otherext.flag', 'on');
+EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'CROSS_PREFIX_42501'; END $$;
+psql:/tmp/current_test.sql:46: NOTICE:  CROSS_PREFIX_42501
+DO
+DO $$ BEGIN PERFORM guc_set_local('gucsec.bad;sql', '1');
+EXCEPTION WHEN invalid_parameter_value THEN RAISE NOTICE 'BAD_SYNTAX_22023'; END $$;
+psql:/tmp/current_test.sql:49: NOTICE:  BAD_SYNTAX_22023
+DO
+-- Low-privilege role RBAC verification
+DROP ROLE IF EXISTS pgx_lowpriv;
+psql:/tmp/current_test.sql:52: NOTICE:  role "pgx_lowpriv" does not exist, skipping
+DROP ROLE
+CREATE ROLE pgx_lowpriv LOGIN NOSUPERUSER;
+CREATE ROLE
+SET ROLE pgx_lowpriv;
+SET
+-- Low-priv CAN read and set gucsec.max_items within [1..1000]
+SHOW gucsec.max_items;
+ gucsec.max_items
+------------------
+ 10
+(1 row)
+
+SET gucsec.max_items = 42;
+SET
+SHOW gucsec.max_items;
+ gucsec.max_items
+------------------
+ 42
+(1 row)
+
+SELECT guc_max_items_native() AS lowpriv_max_native,
+       guc_get('gucsec.max_items') AS lowpriv_max_get;
+ lowpriv_max_native | lowpriv_max_get
+--------------------+-----------------
+                 42 | 42
+(1 row)
+
+-- Low-priv CAN update via UDF and rollback SET LOCAL
+BEGIN;
+BEGIN
+SET LOCAL gucsec.max_items = 99;
+SET
+SELECT guc_max_items_native() AS inside_sql_local_tx;
+ inside_sql_local_tx
+---------------------
+                  99
+(1 row)
+
+ROLLBACK;
+ROLLBACK
+SELECT guc_max_items_native() AS after_sql_rollback;
+ after_sql_rollback
+--------------------
+                 42
+(1 row)
+
+BEGIN;
+BEGIN
+SELECT guc_set_local('gucsec.max_items', '88') AS udf_local_ok;
+ udf_local_ok
+--------------
+ ok
+(1 row)
+
+SELECT guc_max_items_native() AS inside_udf_local_tx;
+ inside_udf_local_tx
+---------------------
+                  88
+(1 row)
+
+ROLLBACK;
+ROLLBACK
+SELECT guc_max_items_native() AS after_udf_rollback;
+ after_udf_rollback
+--------------------
+                 42
+(1 row)
+
+-- Out-of-range value 2000 fails cleanly (22023)
+DO $$ BEGIN SET gucsec.max_items = 2000;
+EXCEPTION WHEN invalid_parameter_value THEN RAISE NOTICE 'SQL_OOB_22023'; END $$;
+psql:/tmp/current_test.sql:78: NOTICE:  SQL_OOB_22023
+DO
+DO $$ BEGIN PERFORM guc_set_local('gucsec.max_items', '2000');
+EXCEPTION WHEN invalid_parameter_value THEN RAISE NOTICE 'UDF_OOB_22023'; END $$;
+psql:/tmp/current_test.sql:81: NOTICE:  UDF_OOB_22023
+DO
+-- Low-priv gets 42501 trying to set PGC_SUSET GUCs or core PG GUCs
+DO $$ BEGIN SET gucsec.admin_flag = on;
+EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'SQL_ADMIN_42501'; END $$;
+psql:/tmp/current_test.sql:85: NOTICE:  SQL_ADMIN_42501
+DO
+DO $$ BEGIN PERFORM guc_set_local('gucsec.admin_flag', 'on');
+EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'UDF_ADMIN_42501'; END $$;
+psql:/tmp/current_test.sql:88: NOTICE:  UDF_ADMIN_42501
+DO
+DO $$ BEGIN PERFORM guc_set_local('gucsec.mode', 'fast');
+EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'UDF_MODE_42501'; END $$;
+psql:/tmp/current_test.sql:91: NOTICE:  UDF_MODE_42501
+DO
+DO $$ BEGIN PERFORM guc_set_unscoped('log_statement', 'none');
+EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'UDF_CORE_42501'; END $$;
+psql:/tmp/current_test.sql:94: NOTICE:  UDF_CORE_42501
+DO
+-- Low-priv gets 42501 trying to inspect GUC_SUPERUSER_ONLY parameter via SHOW or getGuc
+DO $$ BEGIN EXECUTE 'SHOW gucsec.secret_key';
+EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'SHOW_SECRET_42501'; END $$;
+psql:/tmp/current_test.sql:98: NOTICE:  SHOW_SECRET_42501
+DO
+DO $$ BEGIN PERFORM guc_get('gucsec.secret_key');
+EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'GETGUC_SECRET_42501'; END $$;
+psql:/tmp/current_test.sql:101: NOTICE:  GETGUC_SECRET_42501
+DO
+DO $$ BEGIN PERFORM guc_secret_key_native();
+EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'NATIVE_SECRET_42501'; END $$;
+psql:/tmp/current_test.sql:104: NOTICE:  NATIVE_SECRET_42501
+DO
+-- Verify low-priv state remained intact after rejected operations
+SELECT guc_max_items_native() AS final_max_items,
+       guc_admin_flag_native() AS final_admin_flag,
+       guc_mode_native() AS final_mode;
+ final_max_items | final_admin_flag | final_mode
+-----------------+------------------+------------
+              42 | f                | safe
+(1 row)
+
+RESET ROLE;
+RESET
+DROP ROLE IF EXISTS pgx_lowpriv;
+DROP ROLE

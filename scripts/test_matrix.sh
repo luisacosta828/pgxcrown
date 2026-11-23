@@ -168,10 +168,10 @@ run_container_unit_phase() {
     TMP_HOOK_HOME="$(mktemp -d)"
     export PGXTOOL_HOME="$TMP_HOOK_HOME"
     pgxtool init >/dev/null
-    pgxtool create-hook emit_log
-    pgxtool build-extension emit_log
-    pgxtool create-hook post_parse_analyze
-    pgxtool build-extension post_parse_analyze
+    for hk in emit_log post_parse_analyze executor process_utility; do
+      pgxtool create-hook "$hk"
+      pgxtool build-extension "$hk"
+    done
     rm -rf "$TMP_HOOK_HOME"
 
     TMP_LSP_HOME="$(mktemp -d)"
@@ -194,6 +194,12 @@ run_container_unit_phase() {
       echo "❌ Expected pgxtool verify to reject mismatched PGX_INTEGRITY_KEY!"
       exit 1
     fi
+
+    echo "==> Verifying v32_v33_interop_suite build + pgxtool verify (signed & installed)"
+    pgxtool build-extension /tmp/repo_check/tests/v32_v33_interop_suite --force
+    pgxtool verify /tmp/repo_check/tests/v32_v33_interop_suite --require-signature
+    /tmp/repo_check/tests/v32_v33_interop_suite/src/install.sh >/dev/null
+    pgxtool verify v32_v33_interop_suite --installed --require-signature
     unset PGX_INTEGRITY_KEY
     rm -rf "$TMP_VERIFY_HOME"
   '
@@ -234,6 +240,7 @@ run_smoke_phase() {
 
     "${PGXTOOL_BIN}" init
     "${PGXTOOL_BIN}" available-hooks
+    "${PGXTOOL_BIN}" list-templates
     "${PGXTOOL_BIN}" verify --help >/dev/null
     if "${PGXTOOL_BIN}" verify nonexistent_smoke_ext >/dev/null 2>&1; then
       echo "❌ Expected pgxtool verify on nonexistent project to fail!"
@@ -249,12 +256,22 @@ run_smoke_phase() {
     "${PGXTOOL_BIN}" create-worker order_archiver
     "${PGXTOOL_BIN}" create-hook emit_log
     "${PGXTOOL_BIN}" create-hook post_parse_analyze
+    "${PGXTOOL_BIN}" create-hook executor
+    "${PGXTOOL_BIN}" create-hook process_utility
 
     [ -f "$TMP_HOME/sample_ext/nim.cfg" ]
     "${PGXTOOL_BIN}" sync-lsp sample_ext --pg "${ver}"
 
-    for prj in sample_ext factorial geo_coord nickname is_active grade_code big_counter order_archiver emit_log post_parse_analyze; do
+    for prj in sample_ext factorial geo_coord nickname is_active grade_code big_counter order_archiver emit_log post_parse_analyze executor process_utility; do
       "${PGXTOOL_BIN}" test "$prj" --pg "${ver}" --bless
+    done
+
+    for tpl in starter-udf base-type bgworker-service hook-observability plugin-custom-type secure-service; do
+      tpl_prj="tpl_${tpl//-/_}"
+      "${PGXTOOL_BIN}" new "$tpl_prj" --template "$tpl"
+      [ -f "$TMP_HOME/$tpl_prj/nim.cfg" ]
+      "${PGXTOOL_BIN}" sync-lsp "$tpl_prj" --pg "${ver}"
+      "${PGXTOOL_BIN}" test "$tpl_prj" --pg "${ver}"
     done
   )
 }

@@ -1,0 +1,100 @@
+-- 1. Extension metadata & catalog objects created by pgxSql (pre + post)
+SELECT extname, extversion, extrelocatable
+FROM pg_extension
+WHERE extname = 'plugin_extensibility_suite';
+          extname           | extversion | extrelocatable
+----------------------------+------------+----------------
+ plugin_extensibility_suite | 0.3.0      | t
+(1 row)
+
+SELECT to_regclass('plugin_events') IS NOT NULL AS has_pre_events_table,
+       to_regclass('plugin_audit_meta') IS NOT NULL AS has_pre_audit_table,
+       to_regclass('idx_plugin_events_tag') IS NOT NULL AS has_post_idx,
+       to_regclass('plugin_event_summary') IS NOT NULL AS has_post_view;
+ has_pre_events_table | has_pre_audit_table | has_post_idx | has_post_view
+----------------------+---------------------+--------------+---------------
+ t                    | t                   | t            | t
+(1 row)
+
+-- 2. Plugin contract functions and internal {.noSql.} types must NOT leak into SQL catalog
+SELECT count(*) AS leaked_plugin_procs
+FROM pg_proc
+WHERE proname IN ('pgxsqltype', 'pgxtodatum', 'pgxfromdatum', 'toparam', 'toqueryparam');
+ leaked_plugin_procs
+---------------------
+                   0
+(1 row)
+
+SELECT count(*) AS leaked_nosql_types
+FROM pg_type
+WHERE typname IN ('BadgeValue', 'badgevalue');
+ leaked_nosql_types
+--------------------
+                  0
+(1 row)
+
+-- 3. Automatic _PG_init without {.pgxInit.} executes registerPgxPluginInit hooks idempotently
+SELECT pe_init_status() AS plugin_init_status;
+   plugin_init_status
+------------------------
+ before=2/15|after=2/15
+(1 row)
+
+-- 4. Mixin contract bridges for custom base type & Nim-only plugin struct
+SELECT '  AlphaTag  '::"PluginTag" AS parsed_tag;
+ parsed_tag
+------------
+ alphatag
+(1 row)
+
+SELECT pe_describe_tag('BetaTag'::"PluginTag") AS described_tag;
+               described_tag
+-------------------------------------------
+ sql=PluginTag|val=betatag|param='betatag'
+(1 row)
+
+SELECT pe_badge_roundtrip('gold', 99) AS badge_roundtrip;
+                badge_roundtrip
+-----------------------------------------------
+ sql=text|label=gold|weight=99|param='gold:99'
+(1 row)
+
+-- 5. End-to-end table/view/index operations mixing pre-phase tables, Nim UDFs, and post-phase view
+SELECT pe_seed_meta('schema_mode', 'v0.33_plugin') AS seeded_meta;
+ seeded_meta
+--------------
+ v0.33_plugin
+(1 row)
+
+SELECT pe_record_event('ops'::"PluginTag", 10) AS ops_count_1;
+ ops_count_1
+-------------
+           1
+(1 row)
+
+SELECT pe_record_event('OPS'::"PluginTag", 25) AS ops_count_2;
+ ops_count_2
+-------------
+           2
+(1 row)
+
+SELECT pe_record_event('sec'::"PluginTag", 50) AS sec_count_1;
+ sec_count_1
+-------------
+           1
+(1 row)
+
+SELECT tag, total_events, total_score, tag_meta
+FROM plugin_event_summary
+ORDER BY tag;
+ tag | total_events | total_score |             tag_meta
+-----+--------------+-------------+-----------------------------------
+ ops |            2 |          35 | sql=PluginTag|val=ops|param='ops'
+ sec |            1 |          50 | sql=PluginTag|val=sec|param='sec'
+(2 rows)
+
+SELECT k, v FROM plugin_audit_meta ORDER BY k;
+      k      |      v
+-------------+--------------
+ schema_mode | v0.33_plugin
+(1 row)

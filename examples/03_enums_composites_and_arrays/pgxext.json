@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "comment": "Pgxcrown example 03: pure enums, composite types, seq arrays, and PgVector",
+  "relocatable": true,
+  "trusted": true
+}

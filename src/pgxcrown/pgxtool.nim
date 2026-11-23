@@ -1,13 +1,14 @@
-import std/[os, strutils, json, osproc, hashes, times, algorithm]
+import std/[os, strutils, json, osproc, hashes, times, algorithm, tables]
 import pathfinders
 import test_suite
 import ext_meta
 import security_audit
 import lsp_config
 import integrity
+import scaffolding/cli
 
 const
-  available_hooks = ["emit_log", "post_parse_analyze"]
+  available_hooks = ["emit_log", "post_parse_analyze", "executor", "process_utility"]
   NimblePackageSpec =
     when compiles(staticRead("../../pgxcrown.nimble")):
       staticRead("../../pgxcrown.nimble")
@@ -176,6 +177,35 @@ proc generateHookSource*(hookName: string): (string, string) =
       "  post_parse_analyze_hook = custom_proc\n\n" &
       "proc pg_fini() {.exportc: \"_PG_fini\".} =\n" &
       "  post_parse_analyze_hook = prev_post_parse_analyze\n"
+    of "executor":
+      "import pgxcrown\n\n" &
+      "PG_MODULE_MAGIC\n" &
+      "ActivateHooks\n\n" &
+      "proc onExecutorStart(info: ExecutorQueryInfo, eflags: cint) =\n" &
+      "  discard\n\n" &
+      "proc onExecutorRun(info: ExecutorQueryInfo, direction: ScanDirection, count: uint64, executeOnce: bool) =\n" &
+      "  discard\n\n" &
+      "proc onExecutorFinish(info: ExecutorQueryInfo) =\n" &
+      "  discard\n\n" &
+      "proc onExecutorEnd(info: ExecutorQueryInfo) =\n" &
+      "  discard\n\n" &
+      "proc pg_init() {.exportc: \"_PG_init\", pginitexport.} =\n" &
+      "  registerExecutorStartHook(onExecutorStart)\n" &
+      "  registerExecutorRunHook(onExecutorRun)\n" &
+      "  registerExecutorFinishHook(onExecutorFinish)\n" &
+      "  registerExecutorEndHook(onExecutorEnd)\n\n" &
+      "proc pg_fini() {.exportc: \"_PG_fini\".} =\n" &
+      "  uninstallExecutorHooks()\n"
+    of "process_utility":
+      "import pgxcrown\n\n" &
+      "PG_MODULE_MAGIC\n" &
+      "ActivateHooks\n\n" &
+      "proc onProcessUtility(info: UtilityStmtInfo) =\n" &
+      "  discard\n\n" &
+      "proc pg_init() {.exportc: \"_PG_init\", pginitexport.} =\n" &
+      "  registerProcessUtilityHook(onProcessUtility)\n\n" &
+      "proc pg_fini() {.exportc: \"_PG_fini\".} =\n" &
+      "  uninstallProcessUtilityHook()\n"
     else:
       quit("Unsupported hook template: " & hookName)
   let testSql = "SELECT 1 AS hook_loaded;\n"
@@ -212,6 +242,14 @@ Usage: pgxtool [command] [options] [target]
 Commands:
   init: Initialize working directory
      * pgxtool init
+
+  list-templates: List available builtin and external project templates
+     * pgxtool list-templates
+
+  new: Scaffold a new pgxcrown extension project from a template
+     * pgxtool new <name|path> [--template <name|dir>] [--var key=val]
+     * pgxtool new ./my_ext --template starter-udf
+     * pgxtool new . --template base-type --var type_name=short_code
 
   create-project: Initialize a new pgxcrown project template to edit
      * pgxtool create-project <name>
@@ -461,7 +499,7 @@ template build_project(req: string, kind: string) =
   if not fileExists(pgxtool_config):
     quit("Run 'pgxtool init' command first.")
   else:
-    var 
+    var
       file = parseJson(readFile(pgxtool_config))
       modules = file.getOrDefault("modules")
       project = req.split("pgxtool_init_dir")[^1]
@@ -471,7 +509,7 @@ template build_project(req: string, kind: string) =
 
   var
     source = pgxtool_init_dir / req / "src"
-    private = pgxtool_init_dir / req / "private" 
+    private = pgxtool_init_dir / req / "private"
     testsSql = pgxtool_init_dir / req / "tests" / "sql"
     testsExp = pgxtool_init_dir / req / "tests" / "expected"
     entry_point = source / "main.nim"
@@ -480,7 +518,7 @@ template build_project(req: string, kind: string) =
   createDir(private)
   createDir(testsSql)
   createDir(testsExp)
-  
+
   if "create-project" in kind:
     let (srcCode, testSql) = generateProjectSource(req)
     writeFile(entry_point, srcCode)
@@ -1154,7 +1192,7 @@ proc resolveLspProject(pgxtoolInitDir: string, req: string): tuple[name: string,
 
 template prepare_working_directory =
   if fileExists(pgxtool_config):
-    echo "working directory " & pgxtool_init_dir & " already exists." 
+    echo "working directory " & pgxtool_init_dir & " already exists."
   else:
     echo "Initializing working directory: " & pgxtool_init_dir
     createDir(pgxtool_init_dir)
@@ -1183,8 +1221,8 @@ proc check_command(pc: int) =
     arg = paramStr(1)
     req: string
 
-  if arg in ["available-hooks", "path-finders", "init", "--help", "-h", "help", "--version", "version"]: 
-    req = ""    
+  if arg in ["available-hooks", "path-finders", "init", "list-templates", "--help", "-h", "help", "--version", "version"]:
+    req = ""
 
   case arg
   of "--version", "version":
@@ -1333,9 +1371,15 @@ Clean build artifacts (.so, .sql, .control, install.sh) and the build cache (.pg
     echo """
     * emit_log
     * post_parse_analyze
+    * executor
+    * process_utility
     """
   of "init":
     prepare_working_directory
+  of "list-templates":
+    runListTemplatesCmd(pgxtool_init_dir, PgxcrownVersion)
+  of "new":
+    runNewProjectCmd(pgxtool_init_dir, PgxcrownVersion)
   of "sync-lsp":
     var pgVer = 0
     req = ""

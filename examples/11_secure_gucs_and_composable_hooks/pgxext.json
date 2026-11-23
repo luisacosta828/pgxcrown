@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "comment": "RBAC-hardened GUCs, composable ExecutorEnd/ProcessUtility hooks, Security v2 audit, and live catalog attestation",
+  "relocatable": true,
+  "trusted": false
+}

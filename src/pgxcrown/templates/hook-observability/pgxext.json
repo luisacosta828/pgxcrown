@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "comment": "{{project_name}} post_parse_analyze observability hook ({{hook_label}})",
+  "relocatable": true,
+  "trusted": false
+}

@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "comment": "{{project_name}} secure service extension (GUC prefix: {{guc_prefix}})",
+  "relocatable": true,
+  "trusted": false
+}

@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "comment": "Pgxcrown example 06: O(1) streaming SRF iterators, NULLs, composites, and cleanup",
+  "relocatable": true,
+  "trusted": true
+}
