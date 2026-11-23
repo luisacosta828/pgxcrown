@@ -7,7 +7,7 @@
 [![Build](https://github.com/luisacosta828/pgxcrown/actions/workflows/build.yml/badge.svg)](https://github.com/luisacosta828/pgxcrown/actions/workflows/build.yml)
 [![Nim Version](https://img.shields.io/badge/Nim-2.0%2B-FFE953?logo=nim&logoColor=white)](https://nim-lang.org/)
 [![PostgreSQL Support](https://img.shields.io/badge/PostgreSQL-14%20--%2018-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![Release](https://img.shields.io/badge/Release-v0.32.0-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
+[![Release](https://img.shields.io/badge/Release-v0.33.0-00E599?logo=github)](https://github.com/luisacosta828/pgxcrown/releases)
 [![GHCR Containers](https://img.shields.io/badge/GHCR-PG%2014%20--%2018-2496ED?logo=docker&logoColor=white)](https://github.com/luisacosta828/pgxcrown/pkgs/container/pgxcrown)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Memory Safety](https://img.shields.io/badge/Safety-Memory%20Safe-success)](#-fail-safe-panic-shield--sqlstate-mapping)
@@ -43,6 +43,10 @@
 - **Transaction & Subtransaction Callbacks (`Anti-PANIC Shield`)**: Process-lifetime `registerXactCallback` (`onPreCommit`, `onCommit`, `onAbort`) and `registerSubXactCallback` (`SAVEPOINT` lifecycle) helpers with `pgxWithLibcAlloc` memory-lifetime isolation and guarded `xeAbort` execution preventing backend `PANIC`s.
 - **3-Layer Security v2 Pipeline & Integrity Attestation**: Layered ELF & policy verification (`src/pgxcrown/security/`) blocking dynamic loaders (`.so`/`.dll`/`dlopen`/`load_file`), unconditionally blocking `RPATH`/`RUNPATH`, enforcing a strict `DT_NEEDED` allowlist, pure-Nim SHA-256 + RFC 4231 HMAC-SHA256 attestation (`pgxtool verify --require-signature`), and live catalog/ELF checks (`verifyCatalogIntegrity`, `loadedSoSha256`).
 - **Zero-Config LSP Synchronization**: `pgxtool sync-lsp` automatically maintains `nim.cfg` with PostgreSQL `pg_config --includedir-server` paths for `nimlangserver` and `nim check`.
+- **RBAC-Enforced Secure GUCs**: ABI-safe custom PostgreSQL parameters (`gcUserset`, `gcSuset`, `superuserOnly`, `reserveGucPrefix`, transactional `SET LOCAL`, PG 14–18).
+- **Composable Engine Hooks**: Shared `hooks/registry` supporting `post_parse_analyze`, `ExecutorStart`/`Run`/`Finish`/`End`, `ProcessUtility`, and `emit_log` coexisting alongside UDFs in a single `.so`.
+- **Plugin API & Modular Scaffolding Templates**: Reusable Nim plugins via `plugin_api` (`pgxSql` `pre`/`post` DDL hooks, `registerPgxPluginInit`, `mixin` type contracts) plus modular CLI scaffolding (`pgxtool new --template`, `pgxtool list-templates`) with 6 built-in templates (`starter-udf`, `base-type`, `bgworker-service`, `hook-observability`, `plugin-custom-type`, `secure-service`).
+- **12 Progressive Examples (PG 14–18)**: Standalone, E2E-tested catalog from scalar UDFs to production security/hooks/plugins in [`examples/README.md`](examples/README.md).
 
 ---
 
@@ -725,6 +729,46 @@ Every extension binary passes a layered security pipeline (`src/pgxcrown/securit
 
 ---
 
+### 12. Secure GUCs, Composable Hooks, Plugin API & Project Templates
+
+#### RBAC-Enforced Secure GUCs
+
+Declare strongly typed PostgreSQL configuration parameters with prefix reservation and superuser access control:
+
+```nim
+var gMaxRowsGuc: GucVar[int32]
+
+proc ext_init*() {.pgxInit.} =
+  gMaxRowsGuc = defineGucInt(
+    "myext.max_rows", "Max rows", "Bounded limit",
+    bootValue = 50, minVal = 1, maxVal = 1000, context = gcUserset
+  )
+  reserveGucPrefix("myext")
+```
+
+#### Composable PostgreSQL Hooks
+
+Register multiple pre/post callbacks through the shared dispatcher in [`src/pgxcrown/hooks/registry.nim`](src/pgxcrown/hooks/registry.nim) (`registerPostParseHook`, `registerExecutorStartHook`, `registerExecutorRunHook`, `registerExecutorFinishHook`, `registerExecutorEndHook`, `registerProcessUtilityHook`, `registerEmitLogHook`) so hooks coexist cleanly with extension UDFs in a single `.so`.
+
+#### Reusable Plugins (`plugin_api`) & Project Scaffolding (`pgxtool new`)
+
+- **In-code plugins (`plugin_api.nim`)**: Distribute custom SQL/Nim modules implementing `pgxSqlType`/`pgxToDatum`/`pgxFromDatum`/`toParam`, `registerPgxPluginInit`, and ordered `pgxSql(..., phase = "pre"|"post")` DDL blocks.
+- **Modular project templates (`src/pgxcrown/scaffolding/`)**: Generate ready-to-test projects from the 6 built-in templates (`starter-udf`, `base-type`, `bgworker-service`, `hook-observability`, `plugin-custom-type`, `secure-service`) or custom `--template <dir>` paths:
+
+```bash
+pgxtool list-templates
+pgxtool new ./my_svc --template secure-service --var guc_prefix=my_svc
+pgxtool test ./my_svc --all
+```
+
+---
+
+## 📚 Progressive Examples (01 → 12)
+
+Explore 12 standalone, PostgreSQL 14–18 E2E-verified examples covering scalar UDFs, custom base types, $O(1)$ streaming SRFs, multi-module migrations, Binary SPI v2, transaction/savepoint callbacks, shared-memory workers, RBAC GUCs/hooks, and plugins/custom templates in [`examples/README.md`](examples/README.md).
+
+---
+
 ## 💻 `pgxtool` CLI Reference
 
 `pgxtool` automates the entire PostgreSQL extension lifecycle:
@@ -733,6 +777,8 @@ Every extension binary passes a layered security pipeline (`src/pgxcrown/securit
 | :--- | :--- | :--- |
 | **`init`** | `pgxtool init` | Initializes the local extension workspace directory (`~/.pgxtool`). |
 | **`create-project`** | `pgxtool create-project <name>` | Scaffolds a new extension project directory, `main.nim`, and test templates. |
+| **`new`** | `pgxtool new <dir> --template <name\|path> [--var k=v]` | Scaffolds a project from a built-in or external `template.json` template with `nim.cfg` setup. |
+| **`list-templates`** | `pgxtool list-templates` | Lists available built-in and local `$PGXTOOL_HOME/templates` templates and variables. |
 | **`create-worker`** | `pgxtool create-worker <name>` | Scaffolds an autonomous background worker daemon with dynamic launcher and lifecycle functions. |
 | **`build-extension`** | `pgxtool build-extension <name> [options]` | Compiles Nim to `.so` shared library, runs security audit, and generates DDL. |
 | | `--clean` | Cleans previous build artifacts and cache before compiling. |
@@ -744,7 +790,7 @@ Every extension binary passes a layered security pipeline (`src/pgxcrown/securit
 | **`verify`** | `pgxtool verify <name> [--installed] [--require-signature]` | Runs the 3-layer Security v2 ELF audit and validates SHA-256 / HMAC-SHA256 integrity manifests. |
 | **`sync-lsp`** | `pgxtool sync-lsp [project] [--pg <v>]` | Generates or refreshes `nim.cfg` with PostgreSQL server include paths for IDE/LSP (`nim check`). |
 | **`create-type`** | `pgxtool create-type <name> --base-type <type>` | Generates a custom distinct base type with dynamic parsing for 15 scalar types. |
-| **`create-hook`** | `pgxtool create-hook <name>` | Scaffolds a Postgres kernel hook template (`emit_log`, `post_parse_analyze`). |
+| **`create-hook`** | `pgxtool create-hook <name>` | Scaffolds a Postgres kernel hook template (`emit_log`, `post_parse_analyze`, `executor`, `process_utility`). |
 | **`test`** | `pgxtool test [project\|path] [--pg <v>] [--all] [--local] [--preload] [--bless] [--keep] [--debug]` | Runs SQL regression tests (with optional `shared_preload_libraries` + restart via `--preload` or `tests/preload`) in Docker/GHCR sandboxes (PG 14–18) or locally (`--local`). |
 | **`version`** | `pgxtool --version` | Prints the installed `pgxtool` / `pgxcrown` version. |
 
@@ -789,15 +835,15 @@ Every extension binary passes a layered security pipeline (`src/pgxcrown/securit
 
 Prebuilt all-in-one container images are published to GitHub Container Registry (`ghcr.io/luisacosta828/pgxcrown`, `linux/amd64`). Each image bundles official `postgres:<ver>`, `postgresql-server-dev-<ver>`, `gcc`, **Nim 2.4.0 + Nimble**, and **`pgxcrown` (`pgxtool`)** so engineers and CI runners can compile, install, and test C/Nim PostgreSQL extensions with zero host PostgreSQL setup.
 
-### Published GHCR Image Matrix (`v0.32.0`)
+### Published GHCR Image Matrix (`v0.33.0`)
 
 | PostgreSQL Version | Rolling Major Tag | Pinned Release Tag |
 | :--- | :--- | :--- |
-| **PostgreSQL 18** | `ghcr.io/luisacosta828/pgxcrown:18` / `:latest` | `ghcr.io/luisacosta828/pgxcrown:18-0.32.0` |
-| **PostgreSQL 17** | `ghcr.io/luisacosta828/pgxcrown:17` | `ghcr.io/luisacosta828/pgxcrown:17-0.32.0` |
-| **PostgreSQL 16** | `ghcr.io/luisacosta828/pgxcrown:16` | `ghcr.io/luisacosta828/pgxcrown:16-0.32.0` |
-| **PostgreSQL 15** | `ghcr.io/luisacosta828/pgxcrown:15` | `ghcr.io/luisacosta828/pgxcrown:15-0.32.0` |
-| **PostgreSQL 14** | `ghcr.io/luisacosta828/pgxcrown:14` | `ghcr.io/luisacosta828/pgxcrown:14-0.32.0` |
+| **PostgreSQL 18** | `ghcr.io/luisacosta828/pgxcrown:18` / `:latest` | `ghcr.io/luisacosta828/pgxcrown:18-0.33.0` |
+| **PostgreSQL 17** | `ghcr.io/luisacosta828/pgxcrown:17` | `ghcr.io/luisacosta828/pgxcrown:17-0.33.0` |
+| **PostgreSQL 16** | `ghcr.io/luisacosta828/pgxcrown:16` | `ghcr.io/luisacosta828/pgxcrown:16-0.33.0` |
+| **PostgreSQL 15** | `ghcr.io/luisacosta828/pgxcrown:15` | `ghcr.io/luisacosta828/pgxcrown:15-0.33.0` |
+| **PostgreSQL 14** | `ghcr.io/luisacosta828/pgxcrown:14` | `ghcr.io/luisacosta828/pgxcrown:14-0.33.0` |
 
 ### Real-World Workflows
 
