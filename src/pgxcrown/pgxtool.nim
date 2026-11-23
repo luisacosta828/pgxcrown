@@ -1,6 +1,7 @@
 import std/[os, strutils, json, osproc, hashes, times, algorithm]
 import pathfinders
 import test_suite
+import lsp_config
 
 const
   available_hooks = ["emit_log", "post_parse_analyze"]
@@ -240,6 +241,10 @@ Commands:
   path-finders: List Postgres pg_config, libdir, includedir paths
      * pgxtool path-finders
 
+  sync-lsp: Generate or update project nim.cfg for nimlangserver / 'nim check'
+     * pgxtool sync-lsp [name|path]
+     * pgxtool sync-lsp [name|path] --pg <ver>
+
   test: Run SQL regression tests inside pgxcrown Docker containers (PostgreSQL 14 to 18)
      * pgxtool test <name|path>
      * pgxtool test --pg 16
@@ -286,6 +291,27 @@ Examples:
   * pgxtool test --pg 14          (from inside project directory)
   * pgxtool test my_ext --all
   * pgxtool test my_ext --keep -v
+"""
+
+proc sync_lsp_cli_helper() =
+  echo """
+Usage: pgxtool sync-lsp [name|path] [options]
+
+Generate or update project nim.cfg for nimlangserver / 'nim check' IDE diagnostics.
+Preserves custom user lines outside '# BEGIN PGXCROWN MANAGED' ... '# END PGXCROWN MANAGED'.
+
+Arguments:
+  [name|path]             Extension project name (in PGXTOOL_HOME) or directory path.
+                          Omit when running inside a project directory (with src/main.nim or src/).
+
+Options:
+  --pg <version>          Target PostgreSQL version (14, 15, 16, 17, 18, or 'latest')
+  --help, -h              Display this help message
+
+Examples:
+  * pgxtool sync-lsp my_ext
+  * pgxtool sync-lsp ./my_ext --pg 18
+  * pgxtool sync-lsp              (from inside project directory)
 """
 
 proc wrap(s: string): string {. inline .} = "\"" & s & "\""
@@ -363,7 +389,7 @@ proc nim_c*(module: string, targetPgVersion: int = 0, nimcacheDir: string = "",
   if nimcacheDir.len > 0:
     cacheFlag = " --nimcache:" & wrap(nimcacheDir)
   let ep = if entryOverride.len > 0: entryOverride else: module
-  "nim c --noMain --compileOnly -d:release --mm:arc --cc:" & getPlatformCompiler() & pathFlags & getCIncludes() & cacheFlag & extraDefines & " -d:entrypoint=" & wrap(ep) & " " & wrap(module)
+  "nim c --skipParentCfg:on --skipProjCfg:on --noMain --compileOnly -d:release --mm:arc --cc:" & getPlatformCompiler() & pathFlags & getCIncludes() & cacheFlag & extraDefines & " -d:entrypoint=" & wrap(ep) & " " & wrap(module)
 
 proc emit_pgx_c_extension*(module: string, targetPgVersion: int = 0, nimcacheDir: string = "",
                            debug: bool = false, projectDir: string = "", realOutDir: string = "",
@@ -388,7 +414,7 @@ proc emit_pgx_c_extension*(module: string, targetPgVersion: int = 0, nimcacheDir
   var cacheFlag = ""
   if nimcacheDir.len > 0:
     cacheFlag = " --nimcache:" & wrap(nimcacheDir)
-  "nim c -d:release --mm:arc --cc:" & getPlatformCompiler() & pathFlags & getCIncludes() & getCLibs() & cacheFlag & extraDefines & " -d:entrypoint=" & wrap(module) & " --app:lib -o:" & wrap(outLibName) & " --outdir:" & wrap(prj) & " " & wrap(module)
+  "nim c --skipParentCfg:on --skipProjCfg:on -d:release --mm:arc --cc:" & getPlatformCompiler() & pathFlags & getCIncludes() & getCLibs() & cacheFlag & extraDefines & " -d:entrypoint=" & wrap(module) & " --app:lib -o:" & wrap(outLibName) & " --outdir:" & wrap(prj) & " " & wrap(module)
 
 template generate_tmp_file(input_file: string, kind: string = "") =
   var
@@ -442,6 +468,8 @@ template build_project(req: string, kind: string) =
     let (srcCode, testSql) = generateHookSource(req)
     writeFile(entry_point, srcCode)
     writeFile(testsSql / "01_basic.sql", testSql)
+
+  discard syncProjectNimCfg(pgxtool_init_dir / req)
 
 proc auditBinarySymbols*(soPath: string): bool =
   result = true
@@ -865,6 +893,27 @@ proc resolveTestProject(pgxtoolInitDir: string, req: string): tuple[name: string
 
   return (req, "")
 
+proc resolveLspProject(pgxtoolInitDir: string, req: string): tuple[name: string, projectDir: string] =
+  ## Resolves <name>, <path>, or implicit current directory into an extension project directory for `sync-lsp`.
+  if req.len == 0:
+    let cwd = getCurrentDir().strip(leading = false, trailing = true, chars = {'/', '\\'})
+    if fileExists(cwd / "src" / "main.nim") or dirExists(cwd / "src"):
+      return (cwd.lastPathPart, cwd)
+    return ("", "")
+
+  let cleanReq = req.strip(leading = false, trailing = true, chars = {'/', '\\'})
+  let looksLikePath = '/' in req or '\\' in req or req == "." or req == ".."
+  if not looksLikePath:
+    let initCand = pgxtoolInitDir / cleanReq
+    if dirExists(initCand) and (fileExists(initCand / "src" / "main.nim") or dirExists(initCand / "src")):
+      return (cleanReq.lastPathPart, initCand)
+
+  let absCand = absolutePath(req).strip(leading = false, trailing = true, chars = {'/', '\\'})
+  if dirExists(absCand) and (fileExists(absCand / "src" / "main.nim") or dirExists(absCand / "src")):
+    return (absCand.lastPathPart, absCand)
+
+  return ("", "")
+
 template prepare_working_directory =
   if fileExists(pgxtool_config):
     echo "working directory " & pgxtool_init_dir & " already exists." 
@@ -972,6 +1021,7 @@ proc check_command(pc: int) =
     var entry_point = resolvedDir / "src" / "main.nim"
     if fileExists(entry_point):
       let detectedTargetVer = detectHostPgVersion()
+      discard syncProjectNimCfg(resolvedDir, detectedTargetVer)
       if resolvedName in available_hooks:
         compile2hook(entry_point, targetPgVersion = detectedTargetVer, verbose = verboseBuild, debug = debugBuild)
       else:
@@ -1017,6 +1067,55 @@ Clean build artifacts (.so, .sql, .control, install.sh) and the build cache (.pg
     """
   of "init":
     prepare_working_directory
+  of "sync-lsp":
+    var pgVer = 0
+    req = ""
+    var idx = 2
+    while idx <= pc:
+      let flag = paramStr(idx)
+      if flag in ["--help", "-h", "help"]:
+        sync_lsp_cli_helper()
+        return
+      elif flag == "--pg":
+        if idx + 1 > pc:
+          quit("❌ Missing PostgreSQL version after '--pg'. Example: pgxtool sync-lsp my_ext --pg 18")
+        let v = parsePgTargetVersion(paramStr(idx + 1))
+        if v == -1:
+          quit("❌ Unsupported PostgreSQL version: '" & paramStr(idx + 1) & "'. Supported versions: " & $LspSupportedPgVersions)
+        pgVer = v
+        idx += 2
+      elif flag.startsWith("--pg="):
+        let val = flag[5..^1]
+        let v = parsePgTargetVersion(val)
+        if v == -1:
+          quit("❌ Unsupported PostgreSQL version: '" & val & "'. Supported versions: " & $LspSupportedPgVersions)
+        pgVer = v
+        idx += 1
+      elif flag.startsWith("-"):
+        quit("❌ Unknown option for sync-lsp: " & flag)
+      elif req.len == 0:
+        req = flag
+        idx += 1
+      else:
+        quit("❌ Unexpected argument for sync-lsp: " & flag)
+
+    let (_, projectDir) = resolveLspProject(pgxtool_init_dir, req)
+    if projectDir.len == 0:
+      if req.len == 0:
+        quit("❌ Not inside a pgxcrown project directory (expected src/main.nim or src/). Pass [name|path] or run 'pgxtool sync-lsp --help'.")
+      else:
+        quit("❌ Project not found (expected src/main.nim or src/): " & req)
+
+    let info = syncProjectNimCfg(projectDir, pgVersionOverride = pgVer)
+    echo "✅ Synced LSP configuration: ", info.cfgPath
+    echo "   • pgxcrown source : ", (if info.pgxcrownSrcDir.len > 0: info.pgxcrownSrcDir else: "(not detected)")
+    echo "   • pgTargetVersion : ", (if info.pgVersion > 0: $info.pgVersion else: "(none)")
+    var incList: seq[string] = @[]
+    if info.pgIncServer.len > 0:
+      incList.add(info.pgIncServer)
+    if info.pgIncBase.len > 0 and info.pgIncBase != info.pgIncServer:
+      incList.add(info.pgIncBase)
+    echo "   • PostgreSQL inc  : ", (if incList.len > 0: incList.join(", ") else: "(none detected)")
   of "test":
     if pc == 1:
       let (implicitName, _) = resolveTestProject(pgxtool_init_dir, "")

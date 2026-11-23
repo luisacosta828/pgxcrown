@@ -36,9 +36,10 @@ jobs:
           echo "Expected: pgxtool v${EXPECTED_VER} | Actual: ${ACTUAL_VER}"
           [ "${ACTUAL_VER}" = "pgxtool v${EXPECTED_VER}" ]
 
-      - name: Validate docs JS and GitHub workflow YAML
+      - name: Validate docs JS, test_matrix.sh, and GitHub workflow YAML
         run: |
           node --check docs/script.js
+          bash -n scripts/test_matrix.sh
           if python3 -c "import yaml" 2>/dev/null; then
             python3 - <<'PY'
           import glob, yaml
@@ -102,25 +103,18 @@ jobs:
             cp -r /repo/tests /tmp/repo_check/tests
             cd /tmp/repo_check
 
-            for t in \
-              tests/test_allocator.nim \
-              tests/test_base_types.nim \
-              tests/test_bgworker.nim \
-              tests/test_bytea_uuid.nim \
-              tests/test_converters_datum.nim \
-              tests/test_errors.nim \
-              tests/test_lwlock.nim \
-              tests/test_milestone2_arch.nim \
-              tests/test_pgtext.nim \
-              tests/test_pgvector.nim \
-              tests/test_query_builder.nim \
-              tests/test_shm_mq.nim \
-              tests/test_shmem.nim \
-              tests/test_syscache_catalog.nim \
-              tests/test_temporal_numeric.nim
-            do
-              echo "==> Running unit suite: $t"
+            shopt -s nullglob
+            mapfile -t unit_tests < <(printf "%s\n" tests/test_*.nim | LC_ALL=C sort)
+            if [ "${#unit_tests[@]}" -eq 0 ]; then
+              echo "❌ No unit test files found matching tests/test_*.nim"
+              exit 1
+            fi
+
+            for t in "${unit_tests[@]}"; do
+              echo "==> Running unit suite (debug): $t"
               nim c -r --hints:off --path:src "$t"
+              echo "==> Running unit suite (release+ARC): $t"
+              nim c -r -d:release --mm:arc --hints:off --path:src "$t"
             done
 
             chmod +x tests/negative/verify_security_blocks.sh
@@ -134,6 +128,13 @@ jobs:
             pgxtool create-hook post_parse_analyze
             pgxtool build-extension post_parse_analyze
             rm -rf "$TMP_HOOK_HOME"
+
+            TMP_LSP_HOME="$(mktemp -d)"
+            export PGXTOOL_HOME="$TMP_LSP_HOME"
+            pgxtool init >/dev/null
+            pgxtool create-project lsp_smoke
+            (cd "$TMP_LSP_HOME/lsp_smoke" && nim check src/main.nim)
+            rm -rf "$TMP_LSP_HOME"
           '
 
       - name: Run All 13 E2E Regression Suites (PG ${{ matrix.pg_version }})
@@ -175,6 +176,8 @@ jobs:
           pgxtool create-worker order_archiver
           pgxtool create-hook emit_log
           pgxtool create-hook post_parse_analyze
+          [ -f "$TMP_HOME/sample_ext/nim.cfg" ]
+          pgxtool sync-lsp sample_ext --pg "${{ matrix.pg_version }}"
 
           for prj in sample_ext factorial geo_coord nickname is_active grade_code big_counter order_archiver emit_log post_parse_analyze; do
             pgxtool test "$prj" --pg "${{ matrix.pg_version }}" --bless
