@@ -1,0 +1,19 @@
+{
+  "name": "bgworker-service",
+  "description": "Dynamic PostgreSQL background worker service with lifecycle tracking and status UDFs",
+  "minPgxcrownVersion": "0.31.0",
+  "variables": [
+    {
+      "name": "interval_ms",
+      "default": "500",
+      "pattern": "^[1-9][0-9]{1,5}$"
+    }
+  ],
+  "files": [
+    "pgxext.json",
+    "src/main.nim",
+    {"src": "regress/sql/01_basic.sql", "dest": "tests/sql/01_basic.sql"},
+    {"src": "regress/expected/01_basic.out", "dest": "tests/expected/01_basic.out"},
+    "README.md"
+  ]
+}

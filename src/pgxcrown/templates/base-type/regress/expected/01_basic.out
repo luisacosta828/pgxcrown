@@ -1,0 +1,11 @@
+SELECT '  ab-42  '::{{type_name}} AS parsed_code;
+ parsed_code
+-------------
+ AB-42
+(1 row)
+
+SELECT {{project_snake}}_prefix('pgx-99'::{{type_name}}) AS code_prefix;
+ code_prefix
+-------------
+ PGX
+(1 row)

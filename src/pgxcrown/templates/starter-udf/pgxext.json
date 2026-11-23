@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "comment": "{{project_name}} starter extension (author: {{author}})",
+  "relocatable": true,
+  "trusted": true
+}

@@ -1,0 +1,17 @@
+SELECT {{project_snake}}_hook_reset() AS hook_armed;
+ hook_armed
+------------
+ t
+(1 row)
+
+SELECT 42 AS probe_select;
+ probe_select
+--------------
+           42
+(1 row)
+
+SELECT {{project_snake}}_hook_stats() = 'label={{hook_label}}|installed=true|total=2|selects=2' AS hook_stats_ok;
+ hook_stats_ok
+---------------
+ t
+(1 row)

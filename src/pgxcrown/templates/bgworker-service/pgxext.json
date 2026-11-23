@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "comment": "{{project_name}} background worker service extension",
+  "relocatable": true,
+  "trusted": false
+}

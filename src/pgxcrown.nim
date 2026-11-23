@@ -21,6 +21,7 @@ import pgxcrown/shmem
 import pgxcrown/shm_mq
 import pgxcrown/guc
 import pgxcrown/hooks/registry
+import pgxcrown/plugin_api
 
 template trusted*() {.pragma: [raises: [ValueError], forbids: [IOEffect, TimeEffect], tags: []].}
 template immutable*() {.pragma: [noSideEffect, trusted, forbids: [DbReadEffect, DbWriteEffect]].}
@@ -161,4 +162,5 @@ export shmem
 export shm_mq
 export guc
 export registry
+export plugin_api
 

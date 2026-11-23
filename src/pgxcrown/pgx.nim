@@ -246,6 +246,107 @@ proc isGenericRoutine(fn: NimNode): bool =
 proc isNoSqlRoutine(fn: NimNode): bool =
   hasProcPragma(fn.pragma, "nosql") or hasProcPragma(fn.pragma, "no_sql")
 
+proc isPluginHookRoutine(fn: NimNode): bool =
+  let fnNameNorm = fn.name.repr.strip(chars = {'*'}).strip().toLowerAscii().replace("_", "")
+  fnNameNorm in ["pgxsqltype", "pgxtodatum", "pgxfromdatum", "toparam", "toqueryparam"]
+
+proc isPgxSqlCall(stmt: NimNode): bool =
+  if stmt.kind notin {nnkCall, nnkCommand} or stmt.len < 1:
+    return false
+  let head = stmt[0]
+  let rawHead =
+    if head.kind == nnkDotExpr and head.len >= 2: head[1].repr
+    else: head.repr
+  rawHead.strip().toLowerAscii().replace("_", "") == "pgxsql"
+
+proc extractPgxSqlStrLit(n: NimNode, fieldName: string): string =
+  if n.kind notin {nnkStrLit, nnkTripleStrLit, nnkRStrLit}:
+    error("❌ pgxSql '" & fieldName & "' must be a string literal", n)
+  result = n.strVal
+
+proc parsePgxSqlStmt(
+  stmt: NimNode,
+  seenIds: var HashSet[string],
+  sqlPre: var string,
+  sqlPost: var string,
+  customSnaps: var seq[CustomSqlSchema]
+) =
+  var idSet = false
+  var ddlSet = false
+  var phaseSet = false
+  var idVal = ""
+  var ddlVal = ""
+  var phaseVal = "post"
+  var posIdx = 0
+
+  for i in 1 ..< stmt.len:
+    let arg = stmt[i]
+    if arg.kind == nnkExprEqExpr and arg.len >= 2:
+      let key = arg[0].repr.strip().toLowerAscii()
+      let valNode = arg[1]
+      case key
+      of "id":
+        if idSet: error("❌ Duplicate 'id' argument in pgxSql", arg)
+        idVal = extractPgxSqlStrLit(valNode, "id")
+        idSet = true
+      of "ddl":
+        if ddlSet: error("❌ Duplicate 'ddl' argument in pgxSql", arg)
+        ddlVal = extractPgxSqlStrLit(valNode, "ddl")
+        ddlSet = true
+      of "phase":
+        if phaseSet: error("❌ Duplicate 'phase' argument in pgxSql", arg)
+        phaseVal = extractPgxSqlStrLit(valNode, "phase")
+        phaseSet = true
+      else:
+        error("❌ Unknown pgxSql argument '" & arg[0].repr & "' (expected id, ddl, or phase)", arg)
+    else:
+      if idSet and ddlSet and phaseSet:
+        error("❌ Too many positional arguments in pgxSql (expected id, ddl[, phase])", arg)
+      if (posIdx == 0 and idSet) or (posIdx == 1 and ddlSet) or (posIdx == 2 and phaseSet):
+        error("❌ Positional argument conflicts with named argument in pgxSql", arg)
+      case posIdx
+      of 0:
+        idVal = extractPgxSqlStrLit(arg, "id")
+        idSet = true
+      of 1:
+        ddlVal = extractPgxSqlStrLit(arg, "ddl")
+        ddlSet = true
+      of 2:
+        phaseVal = extractPgxSqlStrLit(arg, "phase")
+        phaseSet = true
+      else:
+        error("❌ Too many positional arguments in pgxSql (expected id, ddl[, phase])", arg)
+      inc posIdx
+
+  if not idSet or not ddlSet:
+    error("❌ pgxSql requires 'id' and 'ddl' string arguments", stmt)
+  if '\0' in idVal or '\0' in ddlVal or '\0' in phaseVal:
+    error("❌ pgxSql arguments cannot contain NUL bytes", stmt)
+  if idVal.strip().len == 0:
+    error("❌ pgxSql 'id' must be non-empty", stmt)
+  if idVal in seenIds:
+    error("❌ Duplicate pgxSql id '" & idVal & "' across extension modules", stmt)
+  if ddlVal.strip().len == 0:
+    error("❌ pgxSql 'ddl' must be non-empty", stmt)
+  if phaseVal notin ["pre", "post"]:
+    error("❌ pgxSql 'phase' must be \"pre\" or \"post\", got '" & phaseVal & "'", stmt)
+
+  seenIds.incl(idVal)
+  var normalizedDdl = ddlVal.strip()
+  if not normalizedDdl.endsWith(";"):
+    normalizedDdl.add(";")
+
+  if phaseVal == "pre":
+    sqlPre.add "\n" & normalizedDdl & "\n"
+  else:
+    sqlPost.add "\n" & normalizedDdl & "\n"
+
+  customSnaps.add CustomSqlSchema(
+    id: idVal,
+    phase: phaseVal,
+    ddl: normalizedDdl
+  )
+
 proc injectStackDepthGuard(fn: NimNode) =
   ## Injects `checkStackDepth()` at the entry of pure-Nim helpers so deep recursion raises SQLSTATE 54001.
   if fn.kind notin {nnkProcDef, nnkFuncDef} or fn.body.kind == nnkEmpty:
@@ -832,7 +933,9 @@ proc buildGuardedInitBody(innerBody: NimNode): NimNode =
       try:
         pgxWithTopMemoryContext:
           installPgxSharedHooks()
+          runPgxPluginInits()
           `initScoped`
+          runPgxPluginInits()
       except Defect as `eIdent`:
         prepareNimDefect(`eIdent`, `errCodeIdent`, `errMsgIdent`, `errDetailIdent`, `errHintIdent`)
         `pendingErrIdent` = true
@@ -978,35 +1081,33 @@ macro decorateMainFunctions*() =
 
   var baseTypes = initTable[string, BaseTypeInfo]()
   var custom_datatypes = initTable[string, string]()
+  var sql_pre_custom = ""
   var sql_shell_types = ""
   var sql_enums = ""
   var sql_objects = ""
   var sql_base_type_fns = ""
   var sql_base_type_ddls = ""
   var sql_functions = ""
+  var sql_post_custom = ""
 
   var enumSnaps: seq[EnumSchema] = @[]
   var compSnaps: seq[CompositeSchema] = @[]
   var baseSnaps: seq[BaseTypeSchema] = @[]
   var routineSnaps: seq[RoutineSchema] = @[]
+  var customSqlSnaps: seq[CustomSqlSchema] = @[]
+  var seenCustomSqlIds = initHashSet[string]()
 
   let pgx_pragma = newNimNode(nnkPragma)
   pgx_pragma.add(newIdentNode("pgx"))
 
-  var hasPgxSharedVars = false
-
-  # Pass 1 (all modules in topological order): Types, {.pgxShared.} vars, pgxExtension
+  # Pass 1 (all modules in topological order): Types, pgxSql blocks, pgxExtension
   for modIdx in 0 ..< orderedModules.len:
     let ast = orderedModules[modIdx].ast
     for el in ast:
       if el.kind == nnkCall and el.len >= 1 and el[0].repr.toLowerAscii() == "pgxextension":
         applyAstExtensionMeta(el, meta)
-      elif el.kind == nnkVarSection:
-        for idDef in el:
-          if idDef.kind == nnkIdentDefs and idDef.len >= 3 and idDef[0].kind == nnkPragmaExpr:
-            let pNode = idDef[0][1]
-            if hasProcPragma(pNode, "pgxshared") or hasProcPragma(pNode, "pgx_shared"):
-              hasPgxSharedVars = true
+      elif isPgxSqlCall(el):
+        parsePgxSqlStmt(el, seenCustomSqlIds, sql_pre_custom, sql_post_custom, customSqlSnaps)
       elif el.kind == nnkTypeSection:
         for e in el:
           if e.kind != nnkTypeDef:
@@ -1057,7 +1158,7 @@ macro decorateMainFunctions*() =
   for modIdx in 0 ..< orderedModules.len:
     for el in orderedModules[modIdx].ast:
       if el.kind in {nnkProcDef, nnkFuncDef, nnkIteratorDef}:
-        if isInitProc(el) or isWorkerProc(el) or isImportc(el) or isGenericRoutine(el) or isNoSqlRoutine(el):
+        if isInitProc(el) or isWorkerProc(el) or isImportc(el) or isGenericRoutine(el) or isNoSqlRoutine(el) or isPluginHookRoutine(el):
           continue
         let (role, _) = getFnRole(el)
         let isExp = isExportedProc(el) or role.len > 0
@@ -1105,7 +1206,7 @@ macro decorateMainFunctions*() =
         if isImportc(el):
           continue
 
-        if isGenericRoutine(el) or isNoSqlRoutine(el):
+        if isGenericRoutine(el) or isNoSqlRoutine(el) or isPluginHookRoutine(el):
           injectStackDepthGuard(el)
           continue
 
@@ -1181,12 +1282,14 @@ macro decorateMainFunctions*() =
       )
 
   var sql_scripts = ""
+  sql_scripts.add sql_pre_custom
   sql_scripts.add sql_shell_types
   sql_scripts.add sql_base_type_fns
   sql_scripts.add sql_base_type_ddls
   sql_scripts.add sql_enums
   sql_scripts.add sql_objects
   sql_scripts.add sql_functions
+  sql_scripts.add sql_post_custom
 
   createDir(realOutDir)
   let controlContent = renderControlFile(meta)
@@ -1201,7 +1304,8 @@ macro decorateMainFunctions*() =
     enums: enumSnaps,
     composites: compSnaps,
     baseTypes: baseSnaps,
-    routines: routineSnaps
+    routines: routineSnaps,
+    customSql: customSqlSnaps
   )
   let buildDir = projectDir / ".pgx_build"
   let snapSqlDir = buildDir / "sql_snapshots"
@@ -1275,21 +1379,20 @@ macro decorateMainFunctions*() =
         PG_FUNCTION_INFO_V1(`el.repr`)
 
     if m.isMain:
-      if hasPgxSharedVars or chainedInitSymbols.len > 0:
-        var combinedInitCalls = newStmtList()
-        if chainedInitSymbols.len == 0:
-          combinedInitCalls.add(newNimNode(nnkDiscardStmt).add(newEmptyNode()))
-        else:
-          for i, sym in chainedInitSymbols:
-            let fwdProc = newIdentNode("pgxFwdModInit_" & $i)
-            combinedInitCalls.add quote do:
-              proc `fwdProc`() {.cdecl, importc: `sym`.}
-              `fwdProc`()
-        let autoInitName = newIdentNode("pgxCombinedPgInit")
-        let guardedInitBody = buildGuardedInitBody(combinedInitCalls)
-        res.add quote do:
-          proc `autoInitName`() {.cdecl, exportc: "_PG_init", dynlib, stackTrace: off.} =
-            `guardedInitBody`
+      var combinedInitCalls = newStmtList()
+      if chainedInitSymbols.len == 0:
+        combinedInitCalls.add(newNimNode(nnkDiscardStmt).add(newEmptyNode()))
+      else:
+        for i, sym in chainedInitSymbols:
+          let fwdProc = newIdentNode("pgxFwdModInit_" & $i)
+          combinedInitCalls.add quote do:
+            proc `fwdProc`() {.cdecl, importc: `sym`.}
+            `fwdProc`()
+      let autoInitName = newIdentNode("pgxCombinedPgInit")
+      let guardedInitBody = buildGuardedInitBody(combinedInitCalls)
+      res.add quote do:
+        proc `autoInitName`() {.cdecl, exportc: "_PG_init", dynlib, stackTrace: off.} =
+          `guardedInitBody`
 
       res.add newNimNode(nnkPragma).add(
         newColonExpr(

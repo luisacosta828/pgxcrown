@@ -1,6 +1,7 @@
-import std/[os, strutils, json, osproc, hashes, times, algorithm]
+import std/[os, strutils, json, osproc, hashes, times, algorithm, tables]
 import pathfinders
 import test_suite
+import template_engine
 
 const
   available_hooks = ["emit_log", "post_parse_analyze", "executor", "process_utility"]
@@ -238,6 +239,14 @@ Commands:
   init: Initialize working directory
      * pgxtool init
 
+  list-templates: List available builtin and external project templates
+     * pgxtool list-templates
+
+  new: Scaffold a new pgxcrown extension project from a template
+     * pgxtool new <name|path> [--template <name|dir>] [--var key=val]
+     * pgxtool new ./my_ext --template starter-udf
+     * pgxtool new . --template base-type --var type_name=short_code
+
   create-project: Initialize a new pgxcrown project template to edit
      * pgxtool create-project <name>
 
@@ -284,6 +293,28 @@ Commands:
 
   version: Show installed pgxcrown / pgxtool version
      * pgxtool --version
+"""
+
+proc new_cli_helper() =
+  echo """
+Usage: pgxtool new <name|path> [options]
+
+Scaffold a new pgxcrown extension project from a builtin or external template.
+Works anywhere (including '.' or './my_ext') without requiring 'pgxtool init'.
+
+Arguments:
+  <name|path>             Project name or target directory path (e.g. my_ext, ./my_ext, .)
+
+Options:
+  --template, -t <spec>   Template name (builtin or in $PGXTOOL_HOME/templates) or directory path
+                          (default: starter-udf)
+  --var <key=val>         Template variable override (repeatable)
+  --help, -h              Display this help message
+
+Examples:
+  * pgxtool new ./my_ext --template starter-udf
+  * pgxtool new . --template base-type --var type_name=email_tag
+  * pgxtool new my_plugin --template plugin-custom-type
 """
 
 proc test_cli_helper() =
@@ -925,7 +956,7 @@ proc check_command(pc: int) =
     arg = paramStr(1)
     req: string
 
-  if arg in ["available-hooks", "path-finders", "init", "--help", "-h", "help", "--version", "version"]: 
+  if arg in ["available-hooks", "path-finders", "init", "list-templates", "--help", "-h", "help", "--version", "version"]: 
     req = ""    
 
   case arg
@@ -1048,6 +1079,109 @@ Clean build artifacts (.so, .sql, .control, install.sh) and the build cache (.pg
     """
   of "init":
     prepare_working_directory
+  of "list-templates":
+    let extTplDir = pgxtool_init_dir / "templates"
+    let (templates, warnings) = listAvailableTemplates(extTplDir)
+    for w in warnings:
+      echo "⚠️  ", w
+    echo "Available pgxcrown templates (pgxcrown v", PgxcrownVersion, "):"
+    for tpl in templates:
+      let srcTag = if tpl.sourceKind == "builtin": "builtin" else: "external: " & tpl.sourcePath
+      echo "  * ", tpl.name, "  [", srcTag, "] (min pgxcrown >= ", tpl.minPgxcrownVersion, ")"
+      if tpl.description.len > 0:
+        echo "      ", tpl.description
+      if tpl.variables.len > 0:
+        var varList: seq[string] = @[]
+        for v in tpl.variables:
+          varList.add(v.name & "=" & v.defaultVal)
+        echo "      vars: ", varList.join(", ")
+  of "new":
+    if pc == 1:
+      new_cli_helper()
+      return
+    var targetArg = ""
+    var templateSpec = "starter-udf"
+    var cliVars = initTable[string, string]()
+    var idx = 2
+    while idx <= pc:
+      let flag = paramStr(idx)
+      if flag in ["--help", "-h", "help"]:
+        new_cli_helper()
+        return
+      elif flag in ["--template", "-t"]:
+        if idx + 1 > pc:
+          quit("❌ Missing value after '" & flag & "'. Run 'pgxtool new --help' for usage.")
+        templateSpec = paramStr(idx + 1)
+        idx += 2
+      elif flag.startsWith("--template="):
+        templateSpec = flag[11..^1]
+        idx += 1
+      elif flag == "--var":
+        if idx + 1 > pc:
+          quit("❌ Missing key=value after '--var'. Example: --var type_name=short_code")
+        let kv = paramStr(idx + 1)
+        if '=' notin kv:
+          quit("❌ Invalid '--var' format '" & kv & "' (expected key=val)")
+        let parts = kv.split('=', maxsplit = 1)
+        cliVars[parts[0]] = parts[1]
+        idx += 2
+      elif flag.startsWith("--var="):
+        let kv = flag[6..^1]
+        if '=' notin kv:
+          quit("❌ Invalid '--var' format '" & kv & "' (expected key=val)")
+        let parts = kv.split('=', maxsplit = 1)
+        cliVars[parts[0]] = parts[1]
+        idx += 1
+      elif flag.startsWith("-"):
+        quit("❌ Unknown option for 'pgxtool new': " & flag)
+      elif targetArg.len == 0:
+        targetArg = flag
+        idx += 1
+      else:
+        quit("❌ Unexpected argument for 'pgxtool new': " & flag)
+
+    if targetArg.len == 0:
+      quit("❌ Missing project name or target path. Run 'pgxtool new --help' for usage.")
+
+    try:
+      validateTargetArg(targetArg)
+      let isExplicitPath = targetArg == "." or '/' in targetArg or '\\' in targetArg
+      var destDir = ""
+      var registerInConfig = false
+      if isExplicitPath:
+        destDir = absolutePath(targetArg)
+      elif fileExists(pgxtool_config):
+        destDir = pgxtool_init_dir / targetArg
+        registerInConfig = true
+      else:
+        destDir = getCurrentDir() / targetArg
+
+      let res = scaffoldFromTemplate(
+        templateSpec = templateSpec,
+        destDir = destDir,
+        pgxcrownVersion = PgxcrownVersion,
+        cliVars = cliVars,
+        externalTemplatesDir = pgxtool_init_dir / "templates",
+        rawTargetArg = targetArg
+      )
+      if registerInConfig:
+        try:
+          var cfg = parseJson(readFile(pgxtool_config))
+          if cfg.kind == JObject:
+            if not cfg.hasKey("modules") or cfg["modules"].kind != JObject:
+              cfg["modules"] = newJObject()
+            cfg["modules"][res.projectName] = %*{"test": {}}
+            writeFile(pgxtool_config, pretty(cfg))
+        except CatchableError:
+          discard
+
+      echo "✅ Created extension '", res.projectName, "' from template '", res.templateName, "' (", res.sourceKind, ")"
+      echo "   Directory: ", res.destDir
+      echo "   Files:     ", res.writtenFiles.len
+      echo "   Next:      pgxtool build-extension ", quoteShell(res.destDir)
+      echo "              pgxtool test ", quoteShell(res.destDir)
+    except CatchableError as e:
+      quit("❌ " & e.msg)
   of "test":
     if pc == 1:
       let (implicitName, _) = resolveTestProject(pgxtool_init_dir, "")

@@ -36,12 +36,18 @@ type
     sigKey*: string
     ddl*: string
 
+  CustomSqlSchema* = object
+    id*: string
+    phase*: string
+    ddl*: string
+
   SchemaSnapshot* = object
     version*: string
     enums*: seq[EnumSchema]
     composites*: seq[CompositeSchema]
     baseTypes*: seq[BaseTypeSchema]
     routines*: seq[RoutineSchema]
+    customSql*: seq[CustomSqlSchema]
 
 proc sanitizeSlugToken(raw: string): string =
   result = ""
@@ -272,9 +278,22 @@ proc snapshotToJson*(s: SchemaSnapshot): JsonNode =
   var fnArr = newJArray()
   for r in s.routines:
     fnArr.add(%*{"sigKey": r.sigKey, "ddl": r.ddl})
-  %*{"version": s.version, "enums": enumsArr, "composites": compArr, "baseTypes": baseArr, "routines": fnArr}
+  var customArr = newJArray()
+  for cs in s.customSql:
+    let ph = if cs.phase.len > 0: cs.phase else: "post"
+    customArr.add(%*{"id": cs.id, "phase": ph, "ddl": cs.ddl})
+  %*{
+    "version": s.version,
+    "enums": enumsArr,
+    "composites": compArr,
+    "baseTypes": baseArr,
+    "routines": fnArr,
+    "customSql": customArr
+  }
 
 proc jsonToSnapshot*(n: JsonNode): SchemaSnapshot =
+  if n.isNil or n.kind != JObject:
+    return
   result.version = n.getOrDefault("version").getStr("")
   for e in n.getOrDefault("enums").getElems(@[]):
     var labels: seq[string] = @[]
@@ -290,6 +309,45 @@ proc jsonToSnapshot*(n: JsonNode): SchemaSnapshot =
     result.baseTypes.add(BaseTypeSchema(name: b.getOrDefault("name").getStr(), ddl: b.getOrDefault("ddl").getStr()))
   for r in n.getOrDefault("routines").getElems(@[]):
     result.routines.add(RoutineSchema(sigKey: r.getOrDefault("sigKey").getStr(), ddl: r.getOrDefault("ddl").getStr()))
+  let csNode = n.getOrDefault("customSql")
+  if csNode != nil and csNode.kind == JArray:
+    for cs in csNode:
+      if cs.kind == JObject:
+        let rawPh = cs.getOrDefault("phase").getStr("post")
+        result.customSql.add(CustomSqlSchema(
+          id: cs.getOrDefault("id").getStr(""),
+          phase: (if rawPh.len > 0: rawPh else: "post"),
+          ddl: cs.getOrDefault("ddl").getStr("")
+        ))
+
+proc diffCustomSqlPhase(
+  curList: seq[CustomSqlSchema],
+  prevMap: Table[string, CustomSqlSchema],
+  targetPhase: string,
+  stmts: var seq[string]
+) =
+  for cs in curList:
+    let ph = if cs.phase.len > 0: cs.phase else: "post"
+    let matchesTarget =
+      if targetPhase == "pre": ph == "pre"
+      else: ph != "pre"
+    if not matchesTarget:
+      continue
+    let curDdl = cs.ddl.strip()
+    if cs.id notin prevMap:
+      if curDdl.len > 0:
+        stmts.add(curDdl)
+    else:
+      let oldCs = prevMap[cs.id]
+      let oldPh = if oldCs.phase.len > 0: oldCs.phase else: "post"
+      let oldDdl = oldCs.ddl.strip()
+      if oldDdl != curDdl or oldPh != ph:
+        stmts.add(
+          "-- NOTE: Custom pgxSql block '" & cs.id & "' changed (" &
+          "phase: " & oldPh & " -> " & ph &
+          (if oldDdl != curDdl: ", DDL modified" else: "") &
+          "); review and apply manual migration if required."
+        )
 
 proc diffSnapshotsAndBuildMigration*(prev, cur: SchemaSnapshot): string =
   ## Generates an incremental SQL upgrade script (`ALTER TYPE`, `CREATE TYPE`, `CREATE OR REPLACE`)
@@ -298,6 +356,15 @@ proc diffSnapshotsAndBuildMigration*(prev, cur: SchemaSnapshot): string =
     "-- Auto-generated migration from " & prev.version & " to " & cur.version & " by pgxtool",
     "-- Review before running on production databases; custom manual edits in this file are preserved."
   ]
+
+  var prevCustom = initTable[string, CustomSqlSchema]()
+  for cs in prev.customSql:
+    prevCustom[cs.id] = cs
+  var curCustomIds = initTable[string, bool]()
+  for cs in cur.customSql:
+    curCustomIds[cs.id] = true
+
+  diffCustomSqlPhase(cur.customSql, prevCustom, "pre", stmts)
 
   var prevBases = initTable[string, BaseTypeSchema]()
   for b in prev.baseTypes:
@@ -354,5 +421,10 @@ proc diffSnapshotsAndBuildMigration*(prev, cur: SchemaSnapshot): string =
   for r in prev.routines:
     if r.sigKey notin curRoutineKeys:
       stmts.add("-- NOTE: Previous routine signature removed or renamed: " & r.sigKey)
+
+  diffCustomSqlPhase(cur.customSql, prevCustom, "post", stmts)
+  for cs in prev.customSql:
+    if cs.id notin curCustomIds:
+      stmts.add("-- NOTE: Previous pgxSql block removed: " & cs.id)
 
   result = stmts.join("\n\n") & "\n"
