@@ -1,6 +1,8 @@
 import std/[os, strutils, json, osproc, hashes, times, algorithm]
 import pathfinders
 import test_suite
+import ext_meta
+import security_audit
 
 const
   available_hooks = ["emit_log", "post_parse_analyze"]
@@ -443,59 +445,66 @@ template build_project(req: string, kind: string) =
     writeFile(entry_point, srcCode)
     writeFile(testsSql / "01_basic.sql", testSql)
 
-proc auditBinarySymbols*(soPath: string): bool =
-  result = true
-  if not fileExists(soPath):
-    return true
+proc loadSecurityAuditPolicy*(projectDir: string): SecurityAuditPolicy =
+  result = SecurityAuditPolicy(allowDynamicLoader: false)
+  if projectDir.len == 0:
+    return
+  var meta = initDefaultExtensionMeta(projectDir.splitFile().name)
+  discard applyPgxExtJson(projectDir, meta)
+  result.allowDynamicLoader = meta.allowDynamicLoader
 
-  # 🚫 STRICTLY BLOCKED OS System Calls (Shell execution, process spawning & file destruction)
-  let blockedSymbols = [
-    "system", "execve", "execv", "execl", "execlp", "execvp", "execvpe", "fexecve", "popen", "pclose", "fork", "vfork", "clone",
-    "unlink", "unlinkat", "remove", "rmdir",
-    "chmod", "fchmod", "fchmodat", "chown", "fchown", "lchown", "fchownat", "setuid", "setgid", "seteuid", "setegid"
-  ]
-
-  # ℹ️ ALLOWED Dynamic Library Loader Symbols (Used by language handlers like plnim)
-  let allowedLoaderSymbols = [
-    "dlopen", "dlsym", "dlclose", "dlerror"
-  ]
-
-  if findExe("nm") == "":
-    echo "❌ [SECURITY AUDIT FAILED] 'nm' utility not found. Please install binutils to run security audits."
+proc auditBinaryWithPolicy*(soPath: string, policy: SecurityAuditPolicy, projectDir: string = ""): bool =
+  let ctx = AuditContext(
+    soPath: soPath,
+    projectDir: projectDir,
+    policy: policy
+  )
+  let res = runPipeline(defaultPgxcrownPipeline(), ctx)
+  for w in res.warnings:
+    echo "⚠️  [SECURITY WARNING] ", w
+  if not res.passed:
+    if res.blockedOsSymbols.len > 0:
+      echo "❌ [SECURITY VIOLATION] Restricted OS System Calls Detected in ", soPath, ":"
+      for s in res.blockedOsSymbols:
+        echo "   • Blocked Symbol: '", s, "' (Forbidden by Pgxcrown Security Policy)"
+      echo "   Exposing raw shell/OS execution calls compromises PostgreSQL server security."
+    if res.blockedLoaderSymbols.len > 0:
+      echo "❌ [SECURITY VIOLATION] Dynamic Library Loader Symbols Detected in ", soPath, ":"
+      for s in res.blockedLoaderSymbols:
+        echo "   • Blocked Loader Symbol: '", s, "' (Blocked by default)"
+      echo "   To explicitly opt in, set \"allowDynamicLoader\": true in pgxext.json."
+    if res.unsafeRunpaths.len > 0:
+      echo "❌ [SECURITY VIOLATION] ELF RPATH/RUNPATH Entries Forbidden in ", soPath, ":"
+      for rp in res.unsafeRunpaths:
+        echo "   • Forbidden RPATH/RUNPATH: '", rp, "'"
+      echo "   Extensions and hooks must not embed RPATH/RUNPATH entries (zero unapproved .so loading)."
+    if res.blockedNeededLibs.len > 0:
+      echo "❌ [SECURITY VIOLATION] Unapproved DT_NEEDED Shared Library Dependencies Detected in ", soPath, ":"
+      for dep in res.blockedNeededLibs:
+        echo "   • Unapproved Dependency: '", dep, "'"
+      if "libdl.so.2" in res.blockedNeededLibs:
+        echo "   To explicitly permit libdl.so.2 dynamic loading, set \"allowDynamicLoader\": true in pgxext.json."
+    if res.blockedOsSymbols.len == 0 and res.blockedLoaderSymbols.len == 0 and
+       res.unsafeRunpaths.len == 0 and res.blockedNeededLibs.len == 0:
+      for err in res.errors:
+        echo err
     return false
 
-  let (output, exitCode) = osproc.execCmdEx("nm -D " & quoteShell(soPath))
-  if exitCode != 0:
-    echo "❌ [SECURITY AUDIT FAILED] 'nm' failed to inspect " & soPath & ": " & output.strip()
-    return false
-
-  var blockedFlagged: seq[string]
-  var loaderFlagged: seq[string]
-  for line in output.splitLines():
-    if " U " in line:
-      let parts = line.splitWhitespace()
-      if parts.len > 0:
-        let symRaw = parts[^1]
-        let symName = symRaw.split('@')[0]
-        if symName in blockedSymbols:
-          blockedFlagged.add(symRaw)
-        elif symName in allowedLoaderSymbols:
-          loaderFlagged.add(symRaw)
-
-  if blockedFlagged.len > 0:
-    echo "❌ [SECURITY VIOLATION] Restricted OS System Calls Detected in ", soPath, ":"
-    for s in blockedFlagged:
-      echo "   • Blocked Symbol: '", s, "' (Forbidden by Pgxcrown Security Policy)"
-    echo "   Exposing raw shell/OS execution calls compromises PostgreSQL server security."
-    return false
-  elif loaderFlagged.len > 0:
-    echo "ℹ️  [SECURITY AUDIT] Dynamic Library Loader Symbols Detected in ", soPath, ":"
-    for s in loaderFlagged:
+  if res.allowedLoaderSymbols.len > 0:
+    echo "ℹ️  [SECURITY AUDIT] Dynamic Library Loader Symbols Explicitly Allowed (\"allowDynamicLoader\": true) in ", soPath, ":"
+    for s in res.allowedLoaderSymbols:
       echo "   • Extension Loader Symbol: '", s, "'"
-    return true
-  else:
-    echo "🛡️  [SECURITY AUDIT PASSED] No blacklisted OS system calls detected in ", soPath
-    return true
+  echo "🛡️  [SECURITY AUDIT PASSED] No blacklisted OS calls, unapproved DT_NEEDED deps, or ELF runpaths detected in ", soPath
+  true
+
+proc auditBinarySymbols*(soPath: string, projectDir: string = ""): bool =
+  var policy: SecurityAuditPolicy
+  try:
+    policy = loadSecurityAuditPolicy(projectDir)
+  except CatchableError as e:
+    echo "❌ [SECURITY POLICY ERROR] Failed to parse pgxext.json in '", projectDir, "': ", e.msg
+    return false
+  auditBinaryWithPolicy(soPath, policy, projectDir)
 
 proc cleanupGeneratedFiles*(dir: string, prjName: string, tmpFile: string) =
   var filesToDelete = @[
@@ -663,7 +672,12 @@ proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = fa
 
   let soFile = dir / prjName & ".so"
   let plainFile = dir / prjName
-  var targetLib = if fileExists(soFile): soFile elif fileExists(plainFile): plainFile else: ""
+  let libSoFile = dir / ("lib" & prjName & ".so")
+  var targetLib =
+    if fileExists(soFile): soFile
+    elif fileExists(plainFile): plainFile
+    elif fileExists(libSoFile): libSoFile
+    else: ""
 
   if cleanBefore:
     cleanupGeneratedFiles(dir, prjName, dir / "tmp_main.nim")
@@ -671,21 +685,32 @@ proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = fa
       removeDir(buildDir)
     targetLib = ""
 
+  var auditPolicy: SecurityAuditPolicy
+  try:
+    auditPolicy = loadSecurityAuditPolicy(projectDir)
+  except CatchableError as e:
+    quit("❌ [SECURITY POLICY ERROR] Failed to parse pgxext.json in '" & projectDir & "': " & e.msg)
+
   ensureProjectGitignore(projectDir)
   createDir(buildDir)
   createDir(nimcacheDir)
 
   let currentSourceHash = computeSourceHash(projectDir)
   const currentPgxcrownVersion = PgxcrownVersion & "-arc"
+  const currentSecurityAuditVersion = 3
 
-  # Smart incremental check: if target library exists and sources haven't changed, skip build (unless debug or force)
+  # Smart incremental check: if target library exists and sources/policy haven't changed, skip build (unless debug or force)
   if not force and not cleanBefore and not debug and targetLib.len > 0 and fileExists(targetLib) and fileExists(manifestFile):
     try:
       let manifest = parseJson(readFile(manifestFile))
       let savedHash = manifest.getOrDefault("source_hash").getStr("")
       let savedVer = manifest.getOrDefault("pgxcrown_version").getStr("")
       let savedTargetVer = manifest.getOrDefault("target_pg_version").getInt(0)
-      if savedHash == currentSourceHash and savedVer == currentPgxcrownVersion and savedTargetVer == targetPgVersion:
+      let savedAuditVer = manifest.getOrDefault("security_audit_version").getInt(0)
+      let savedAllowDyn = manifest.getOrDefault("allow_dynamic_loader").getBool(false)
+      if savedHash == currentSourceHash and savedVer == currentPgxcrownVersion and
+         savedTargetVer == targetPgVersion and savedAuditVer == currentSecurityAuditVersion and
+         savedAllowDyn == auditPolicy.allowDynamicLoader:
         echo "✨ Extension '", prjName, "' is up to date (no changes detected)."
         echo "   Binary: ", targetLib
         echo "   To force a rebuild, run: pgxtool build-extension ", prjName, " --force"
@@ -725,13 +750,17 @@ proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = fa
     if fileExists(manifestFile): removeFile(manifestFile)
     quit "Error executing: emit_pgx_c_extension (Pass 2 - C compilation & linking)"
 
-  targetLib = if fileExists(soFile): soFile elif fileExists(plainFile): plainFile else: ""
+  targetLib =
+    if fileExists(soFile): soFile
+    elif fileExists(plainFile): plainFile
+    elif fileExists(libSoFile): libSoFile
+    else: ""
 
   if targetLib.len > 0:
-    if not auditBinarySymbols(targetLib):
+    if not auditBinarySymbols(targetLib, projectDir):
       cleanupGeneratedFiles(dir, prjName, pass1File)
       if fileExists(manifestFile): removeFile(manifestFile)
-      quit("❌ [SECURITY VIOLATION] Compilation aborted for extension '" & prjName & "' due to restricted C system calls.")
+      quit("❌ [SECURITY VIOLATION] Compilation aborted for extension '" & prjName & "' due to security policy violations.")
 
   # Clean up temporary staged source files to leave only built outputs and incremental cache
   if dirExists(stagedRoot):
@@ -743,6 +772,8 @@ proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = fa
     "source_hash": currentSourceHash,
     "pgxcrown_version": currentPgxcrownVersion,
     "target_pg_version": targetPgVersion,
+    "security_audit_version": currentSecurityAuditVersion,
+    "allow_dynamic_loader": auditPolicy.allowDynamicLoader,
     "last_build_time": $now(),
     "binary_path": targetLib
   }
@@ -753,6 +784,10 @@ proc compile2hook*(input_file: string, targetPgVersion: int = 0, verbose: bool =
   let (dir, _, _) = splitFile(input_file)
   let projectDir = dir.parentDir()
   let prjName = projectDir.splitFile().name
+  try:
+    discard loadSecurityAuditPolicy(projectDir)
+  except CatchableError as e:
+    quit("❌ [SECURITY POLICY ERROR] Failed to parse pgxext.json in '" & projectDir & "': " & e.msg)
   let nimcacheDir = projectDir / ".pgx_build" / (if targetPgVersion > 0: "nimcache_pg" & $targetPgVersion else: "nimcache")
   createDir(nimcacheDir)
   let cmd = emit_pgx_c_extension(input_file, targetPgVersion, nimcacheDir, debug = debug,
@@ -764,10 +799,13 @@ proc compile2hook*(input_file: string, targetPgVersion: int = 0, verbose: bool =
   let targetLib =
     if fileExists(dir / (prjName & ".so")): dir / (prjName & ".so")
     elif fileExists(dir / prjName): dir / prjName
+    elif fileExists(dir / ("lib" & prjName & ".so")): dir / ("lib" & prjName & ".so")
     else: ""
-  if targetLib.len > 0 and not auditBinarySymbols(targetLib):
-    removeFile(targetLib)
-    quit("❌ [SECURITY VIOLATION] Compilation aborted for hook '" & prjName & "' due to restricted C system calls.")
+  if targetLib.len > 0 and not auditBinarySymbols(targetLib, projectDir):
+    for cand in [dir / (prjName & ".so"), dir / prjName, dir / ("lib" & prjName & ".so")]:
+      if fileExists(cand):
+        removeFile(cand)
+    quit("❌ [SECURITY VIOLATION] Compilation aborted for hook '" & prjName & "' due to security policy violations.")
 
 proc generate_install_script*(req: string, projectDirOverride: string = ""): string =
   let prjName = if projectDirOverride.len > 0: projectDirOverride.splitPath.tail else: req

@@ -12,6 +12,7 @@ type
     hasExplicitRelocatable*: bool
     trusted*: bool
     hasExplicitTrusted*: bool
+    allowDynamicLoader*: bool = false
     schema*: string
     requires*: seq[string]
     source*: string
@@ -145,6 +146,7 @@ proc initDefaultExtensionMeta*(prjName: string): ExtensionMeta =
     hasExplicitRelocatable: false,
     trusted: false,
     hasExplicitTrusted: false,
+    allowDynamicLoader: false,
     schema: "",
     requires: @[],
     source: "default"
@@ -200,6 +202,11 @@ proc applyPgxExtJson*(projectDir: string, meta: var ExtensionMeta): bool =
   if obj.hasKey("trusted") and obj["trusted"].kind == JBool:
     meta.trusted = obj["trusted"].getBool()
     meta.hasExplicitTrusted = true
+  if obj.hasKey("allowDynamicLoader"):
+    let adlNode = obj["allowDynamicLoader"]
+    if adlNode.kind != JBool:
+      raise newException(ValueError, "pgxext.json field 'allowDynamicLoader' must be a JSON boolean: " & cfgPath)
+    meta.allowDynamicLoader = adlNode.getBool()
   if obj.hasKey("schema") and obj["schema"].kind == JString:
     meta.schema = obj["schema"].getStr().strip()
   if obj.hasKey("requires"):
