@@ -109,10 +109,13 @@ jobs:
               tests/test_bytea_uuid.nim \
               tests/test_converters_datum.nim \
               tests/test_errors.nim \
+              tests/test_guc.nim \
+              tests/test_hooks_composable.nim \
               tests/test_lwlock.nim \
               tests/test_milestone2_arch.nim \
               tests/test_pgtext.nim \
               tests/test_pgvector.nim \
+              tests/test_plugins_templates.nim \
               tests/test_query_builder.nim \
               tests/test_shm_mq.nim \
               tests/test_shmem.nim \
@@ -129,25 +132,28 @@ jobs:
             TMP_HOOK_HOME="$(mktemp -d)"
             export PGXTOOL_HOME="$TMP_HOOK_HOME"
             pgxtool init >/dev/null
-            pgxtool create-hook emit_log
-            pgxtool build-extension emit_log
-            pgxtool create-hook post_parse_analyze
-            pgxtool build-extension post_parse_analyze
+            for hk in emit_log post_parse_analyze executor process_utility; do
+              pgxtool create-hook "$hk"
+              pgxtool build-extension "$hk"
+            done
             rm -rf "$TMP_HOOK_HOME"
           '
 
-      - name: Run All 13 E2E Regression Suites (PG ${{ matrix.pg_version }})
+      - name: Run All 16 E2E Regression Suites (PG ${{ matrix.pg_version }})
         run: |
           for suite in \
             arrays_suite \
             arch_v30_suite \
             defaults_and_nulls \
+            guc_security_suite \
+            hooks_composable_suite \
             ipc_dsm_suite \
             json_suite \
             null_defense_suite \
             panic_shield \
             pg_ast_lens \
             pgtry_guard \
+            plugin_extensibility_suite \
             security_suite \
             shmem_preload_suite \
             srf_suite \
@@ -165,6 +171,7 @@ jobs:
           cd "$TMP_HOME"
           pgxtool init
           pgxtool available-hooks
+          pgxtool list-templates
           pgxtool create-project sample_ext
           pgxtool create-type factorial --base-type int
           pgxtool create-type geo_coord --base-type float64
@@ -175,7 +182,15 @@ jobs:
           pgxtool create-worker order_archiver
           pgxtool create-hook emit_log
           pgxtool create-hook post_parse_analyze
+          pgxtool create-hook executor
+          pgxtool create-hook process_utility
 
-          for prj in sample_ext factorial geo_coord nickname is_active grade_code big_counter order_archiver emit_log post_parse_analyze; do
+          for prj in sample_ext factorial geo_coord nickname is_active grade_code big_counter order_archiver emit_log post_parse_analyze executor process_utility; do
             pgxtool test "$prj" --pg "${{ matrix.pg_version }}" --bless
+          done
+
+          for tpl in starter-udf base-type bgworker-service hook-observability plugin-custom-type; do
+            tpl_prj="tpl_${tpl//-/_}"
+            pgxtool new "$tpl_prj" --template "$tpl"
+            pgxtool test "$tpl_prj" --pg "${{ matrix.pg_version }}"
           done
