@@ -502,7 +502,8 @@ proc applyAstExtensionMeta(stmt: NimNode, meta: var ExtensionMeta) =
 # -----------------------------------------------------------------------------
 # SQL DDL Builders & Snapshot Collectors
 # -----------------------------------------------------------------------------
-proc buildBaseTypeFunctionSQL(fn: NimNode, role: string, targetType: string, cSym: string, prjName: string): string =
+proc buildBaseTypeFunctionSQL(fn: NimNode, role: string, targetType: string, cSym: string,
+                              prjName: string, attestOut: var FunctionAttestation): string =
   let fnNameStr = fn.name.repr.strip(chars = {'*'})
   var paramsStr = ""
   var returnTypeStr = ""
@@ -523,8 +524,20 @@ proc buildBaseTypeFunctionSQL(fn: NimNode, role: string, targetType: string, cSy
   else:
     discard
 
+  let probinVal = "$libdir/" & prjName
+  attestOut = FunctionAttestation(
+    sqlName: fnNameStr,
+    sigKey: fnNameStr & "(" & normalizeSqlTypeKey(paramsStr) & ")",
+    cSymbol: cSym,
+    probin: probinVal,
+    lang: "c",
+    securityDefiner: false,
+    volatility: 'i',
+    searchPath: ""
+  )
+
   "\nCREATE OR REPLACE FUNCTION " & fnNameStr & "(" & paramsStr & ") returns " & returnTypeStr & " as\n" &
-    "'" & prjName & "', '" & cSym & "'\n" &
+    "'" & probinVal & "', '" & cSym & "'\n" &
     "language c IMMUTABLE PARALLEL SAFE STRICT;\n"
 
 proc extractParamSqlTypes(fn: NimNode): seq[tuple[sqlType: string, isOption: bool, defaultNode: NimNode]] =
@@ -544,7 +557,8 @@ proc extractParamSqlTypes(fn: NimNode): seq[tuple[sqlType: string, isOption: boo
       result.add((sqlType: baseTypeStr, isOption: isOptionParam, defaultNode: defaultNode))
 
 proc buildSQLFunction(fn: NimNode, cSym: string, prjName: string,
-                      routineSnapOut: var RoutineSchema): string =
+                      routineSnapOut: var RoutineSchema,
+                      attestOut: var FunctionAttestation): string =
   var
     returnTypeStr = ""
     hasOptionOrDefault = false
@@ -666,6 +680,7 @@ proc buildSQLFunction(fn: NimNode, cSym: string, prjName: string,
   var sawExplicitStrict = false
   var leakproofClause = ""
   var searchPathClause = ""
+  var searchPathVal = ""
   var isStrict = not hasOptionOrDefault
 
   if fn.pragma.kind != nnkEmpty:
@@ -706,7 +721,8 @@ proc buildSQLFunction(fn: NimNode, cSym: string, prjName: string,
         let (spIdents, spErr) = validateSafeIdentList(p[1].strVal, "searchPath")
         if spErr.len > 0:
           error("Invalid searchPath pragma: " & spErr, p)
-        searchPathClause = " SET search_path = " & spIdents.join(", ")
+        searchPathVal = spIdents.join(", ")
+        searchPathClause = " SET search_path = " & searchPathVal
       else: discard
 
   if isProcedure:
@@ -724,16 +740,33 @@ proc buildSQLFunction(fn: NimNode, cSym: string, prjName: string,
   if sawDefiner and sawInvoker:
     error("Cannot specify both securityDefiner and securityInvoker on the same SQL routine", fn)
 
+  let probinVal = "$libdir/" & prjName
   let strictStr = if isStrict and not isProcedure: " STRICT" else: ""
   let optionsStr = "language c" & volatility & parallel & strictStr & securityClause & leakproofClause & searchPathClause & ";\n"
 
   let fnNameStr = fn.name.repr.strip(chars = {'*'})
   let ddl = "\nCREATE OR REPLACE " & procTy & fnNameStr & '(' & param_list.join(", ") & ')' & returnTypeStr & " as\n" &
-            "'" & prjName & "', '" & cSym & "'\n" &
+            "'" & probinVal & "', '" & cSym & "'\n" &
             optionsStr
+  let sigKeyVal = fnNameStr & "(" & sigParamKeys.join(",") & ")"
   routineSnapOut = RoutineSchema(
-    sigKey: fnNameStr & "(" & sigParamKeys.join(",") & ")",
+    sigKey: sigKeyVal,
     ddl: ddl.strip()
+  )
+  let volChar =
+    case volatility
+    of " IMMUTABLE": 'i'
+    of " STABLE": 's'
+    else: 'v'
+  attestOut = FunctionAttestation(
+    sqlName: fnNameStr,
+    sigKey: sigKeyVal,
+    cSymbol: cSym,
+    probin: probinVal,
+    lang: "c",
+    securityDefiner: sawDefiner,
+    volatility: volChar,
+    searchPath: searchPathVal
   )
   ddl
 
@@ -989,6 +1022,7 @@ macro decorateMainFunctions*() =
   var compSnaps: seq[CompositeSchema] = @[]
   var baseSnaps: seq[BaseTypeSchema] = @[]
   var routineSnaps: seq[RoutineSchema] = @[]
+  var functionAttestations: seq[FunctionAttestation] = @[]
 
   let pgx_pragma = newNimNode(nnkPragma)
   pgx_pragma.add(newIdentNode("pgx"))
@@ -1134,11 +1168,15 @@ macro decorateMainFunctions*() =
               of "send": info.sendFn = fnNameStr
               else: discard
               baseTypes[targetType] = info
-              sql_base_type_fns.add buildBaseTypeFunctionSQL(el, role, targetType, cSym, prjName)
+              var att: FunctionAttestation
+              sql_base_type_fns.add buildBaseTypeFunctionSQL(el, role, targetType, cSym, prjName, att)
+              functionAttestations.add(att)
             else:
               var snap: RoutineSchema
-              sql_functions.add buildSQLFunction(el, cSym, prjName, snap)
+              var att: FunctionAttestation
+              sql_functions.add buildSQLFunction(el, cSym, prjName, snap, att)
               routineSnaps.add(snap)
+              functionAttestations.add(att)
             if el.pragma.kind == nnkEmpty:
               el.pragma = newNimNode(nnkPragma)
             el.pragma.add(newIdentNode("pgx"))
@@ -1150,8 +1188,10 @@ macro decorateMainFunctions*() =
             let cSym = buildMangledCSymbol(fnNameStr, rawParamTypes)
             orderedModules[modIdx].v1Fns.add newIdentNode(cSym)
             var snap: RoutineSchema
-            sql_functions.add buildSQLFunction(el, cSym, prjName, snap)
+            var att: FunctionAttestation
+            sql_functions.add buildSQLFunction(el, cSym, prjName, snap, att)
             routineSnaps.add(snap)
+            functionAttestations.add(att)
             if custom_datatypes.len > 0:
               lift_base_datatypes(el, custom_datatypes)
             if el.pragma.kind == nnkEmpty:
@@ -1188,12 +1228,14 @@ macro decorateMainFunctions*() =
   sql_scripts.add sql_objects
   sql_scripts.add sql_functions
 
+  let sortedAttestations = sortAttestations(functionAttestations)
   createDir(realOutDir)
   let controlContent = renderControlFile(meta)
   writeFile(realOutDir / (prjName & ".control"), controlContent)
   writeFile(realOutDir / (prjName & ".sql"), sql_scripts)
   let targetVersionSql = realOutDir / (prjName & "--" & meta.version & ".sql")
   writeFile(targetVersionSql, sql_scripts)
+  writeFile(realOutDir / (prjName & ".functions.json"), pretty(functionsToJson(sortedAttestations)))
 
   # Structured schema snapshot & automatic migration generation
   let curSnapshot = SchemaSnapshot(
@@ -1248,6 +1290,42 @@ macro decorateMainFunctions*() =
     res.add newNimNode(nnkImportStmt).add newIdentNode("pgxcrown")
     if m.isMain:
       res.add newIdentNode("PG_MODULE_MAGIC")
+      var fnBracket = newNimNode(nnkBracket)
+      for att in sortedAttestations:
+        fnBracket.add newTree(
+          nnkObjConstr,
+          newIdentNode("FunctionAttestation"),
+          newColonExpr(newIdentNode("sqlName"), newLit(att.sqlName)),
+          newColonExpr(newIdentNode("sigKey"), newLit(att.sigKey)),
+          newColonExpr(newIdentNode("cSymbol"), newLit(att.cSymbol)),
+          newColonExpr(newIdentNode("probin"), newLit(att.probin)),
+          newColonExpr(newIdentNode("lang"), newLit(att.lang)),
+          newColonExpr(newIdentNode("securityDefiner"), newLit(att.securityDefiner)),
+          newColonExpr(newIdentNode("volatility"), newLit(att.volatility)),
+          newColonExpr(newIdentNode("searchPath"), newLit(att.searchPath))
+        )
+      let fnSeqExpr = newTree(nnkPrefix, newIdentNode("@"), fnBracket)
+      let extNameConst = newTree(
+        nnkConstDef,
+        newTree(
+          nnkPragmaExpr,
+          nnkPostfix.newTree(newIdentNode("*"), newIdentNode("PgxExtensionName")),
+          newTree(nnkPragma, newIdentNode("used"))
+        ),
+        newEmptyNode(),
+        newLit(prjName)
+      )
+      let fnsConst = newTree(
+        nnkConstDef,
+        newTree(
+          nnkPragmaExpr,
+          nnkPostfix.newTree(newIdentNode("*"), newIdentNode("PgxCompiledFunctions")),
+          newTree(nnkPragma, newIdentNode("used"))
+        ),
+        newTree(nnkBracketExpr, newIdentNode("seq"), newIdentNode("FunctionAttestation")),
+        fnSeqExpr
+      )
+      res.add newTree(nnkConstSection, extNameConst, fnsConst)
     else:
       res.add newIdentNode("PGX_SUBMODULE_HEADERS")
 
