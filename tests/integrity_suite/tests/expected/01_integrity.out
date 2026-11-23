@@ -1,0 +1,131 @@
+CREATE FUNCTION pg_temp.try_assert_intact() RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  res text;
+BEGIN
+  res := att_assert_intact();
+  RETURN 'OK:' || res;
+EXCEPTION WHEN insufficient_privilege THEN
+  RETURN 'CAUGHT:' || SQLSTATE || ':' || (SQLERRM LIKE '%Catalog integrity violation%')::text;
+END $$;
+CREATE FUNCTION
+-- 1. Baseline intact extension verification
+SELECT att_compiled_count() AS attested_fn_count;
+ attested_fn_count
+-------------------
+                10
+(1 row)
+
+SELECT att_is_intact() AS initial_intact;
+ initial_intact
+----------------
+ t
+(1 row)
+
+SELECT att_check_catalog() AS initial_violations;
+ initial_violations
+--------------------
+ OK
+(1 row)
+
+SELECT pg_temp.try_assert_intact() AS initial_assert;
+ initial_assert
+----------------
+ OK:INTACT
+(1 row)
+
+SELECT att_loaded_so_info() AS loaded_so_info;
+                             loaded_so_info
+------------------------------------------------------------------------
+ path_ok=true|len64=true|hex=true|deterministic=true|missing_empty=true
+(1 row)
+
+SELECT att_echo(21::int4) AS echo_i4,
+       att_echo('crown'::text) AS echo_txt,
+       att_sec_fn(5::int4) AS sec_fn_val;
+ echo_i4 |  echo_txt  | sec_fn_val
+---------+------------+------------
+      42 | echo:crown |        105
+(1 row)
+
+CALL att_ping_proc(7);
+CALL
+SELECT att_proc_total() AS proc_total_7;
+ proc_total_7
+--------------
+            7
+(1 row)
+
+-- 2. Language / probin / prosrc tamper on overloaded att_echo(int4)
+CREATE OR REPLACE FUNCTION att_echo(int4) RETURNS int4 LANGUAGE plpgsql AS $$
+BEGIN
+  RETURN 999;
+END $$;
+CREATE FUNCTION
+SELECT att_is_intact() AS after_plpgsql_intact;
+ after_plpgsql_intact
+----------------------
+ f
+(1 row)
+
+SELECT att_check_catalog() AS after_plpgsql_violations;
+                                                     after_plpgsql_violations
+-----------------------------------------------------------------------------------------------------------------------------------
+ LANGUAGE_TAMPERED:att_echo(int4),PROBIN_TAMPERED:att_echo(int4),PROSRC_TAMPERED:att_echo(int4),VOLATILITY_TAMPERED:att_echo(int4)
+(1 row)
+
+SELECT pg_temp.try_assert_intact() AS after_plpgsql_assert;
+ after_plpgsql_assert
+----------------------
+ CAUGHT:42501:true
+(1 row)
+
+-- 3. SECURITY DEFINER & search_path tamper on overloaded att_echo(text)
+ALTER FUNCTION att_echo(text) SECURITY DEFINER SET search_path = pg_temp;
+ALTER FUNCTION
+SELECT att_check_catalog() AS after_secdef_searchpath_violations;
+                                                                                       after_secdef_searchpath_violations
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ LANGUAGE_TAMPERED:att_echo(int4),PROBIN_TAMPERED:att_echo(int4),PROSRC_TAMPERED:att_echo(int4),SEARCH_PATH_TAMPERED:att_echo(text),SECURITY_DEFINER_TAMPERED:att_echo(text),VOLATILITY_TAMPERED:att_echo(int4)
+(1 row)
+
+-- 4. Volatility, SECURITY DEFINER, and search_path tamper on att_sec_fn(int4)
+ALTER FUNCTION att_sec_fn(int4) VOLATILE SECURITY INVOKER RESET search_path;
+ALTER FUNCTION
+SELECT att_check_catalog() AS after_secfn_tamper_violations;
+                                                                                                                                                    after_secfn_tamper_violations
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ LANGUAGE_TAMPERED:att_echo(int4),PROBIN_TAMPERED:att_echo(int4),PROSRC_TAMPERED:att_echo(int4),SEARCH_PATH_TAMPERED:att_echo(text),SEARCH_PATH_TAMPERED:att_sec_fn(int4),SECURITY_DEFINER_TAMPERED:att_echo(text),SECURITY_DEFINER_TAMPERED:att_sec_fn(int4),VOLATILITY_TAMPERED:att_echo(int4),VOLATILITY_TAMPERED:att_sec_fn(int4)
+(1 row)
+
+-- 5. Procedure attribute tampering
+ALTER PROCEDURE att_ping_proc(int4) SECURITY DEFINER SET search_path = pg_temp;
+ALTER PROCEDURE
+SELECT att_check_catalog() AS after_proc_tamper_violations;
+                                                                                                                                                                                                after_proc_tamper_violations
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ LANGUAGE_TAMPERED:att_echo(int4),PROBIN_TAMPERED:att_echo(int4),PROSRC_TAMPERED:att_echo(int4),SEARCH_PATH_TAMPERED:att_echo(text),SEARCH_PATH_TAMPERED:att_ping_proc(int4),SEARCH_PATH_TAMPERED:att_sec_fn(int4),SECURITY_DEFINER_TAMPERED:att_echo(text),SECURITY_DEFINER_TAMPERED:att_ping_proc(int4),SECURITY_DEFINER_TAMPERED:att_sec_fn(int4),VOLATILITY_TAMPERED:att_echo(int4),VOLATILITY_TAMPERED:att_sec_fn(int4)
+(1 row)
+
+-- 6. Detach function from extension -> EXTENSION_DETACHED
+ALTER EXTENSION integrity_suite DROP FUNCTION att_echo(text);
+ALTER EXTENSION
+SELECT att_check_catalog() AS after_detach_violations;
+                                                                                                                                                                                                                    after_detach_violations
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ EXTENSION_DETACHED:att_echo(text),LANGUAGE_TAMPERED:att_echo(int4),PROBIN_TAMPERED:att_echo(int4),PROSRC_TAMPERED:att_echo(int4),SEARCH_PATH_TAMPERED:att_echo(text),SEARCH_PATH_TAMPERED:att_ping_proc(int4),SEARCH_PATH_TAMPERED:att_sec_fn(int4),SECURITY_DEFINER_TAMPERED:att_echo(text),SECURITY_DEFINER_TAMPERED:att_ping_proc(int4),SECURITY_DEFINER_TAMPERED:att_sec_fn(int4),VOLATILITY_TAMPERED:att_echo(int4),VOLATILITY_TAMPERED:att_sec_fn(int4)
+(1 row)
+
+-- 7. Drop detached function -> FUNCTION_MISSING
+DROP FUNCTION att_echo(text);
+DROP FUNCTION
+SELECT att_check_catalog() AS after_drop_violations;
+                                                                                                                                                                             after_drop_violations
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ FUNCTION_MISSING:att_echo(text),LANGUAGE_TAMPERED:att_echo(int4),PROBIN_TAMPERED:att_echo(int4),PROSRC_TAMPERED:att_echo(int4),SEARCH_PATH_TAMPERED:att_ping_proc(int4),SEARCH_PATH_TAMPERED:att_sec_fn(int4),SECURITY_DEFINER_TAMPERED:att_ping_proc(int4),SECURITY_DEFINER_TAMPERED:att_sec_fn(int4),VOLATILITY_TAMPERED:att_echo(int4),VOLATILITY_TAMPERED:att_sec_fn(int4)
+(1 row)
+
+SELECT pg_temp.try_assert_intact() AS final_assert;
+   final_assert
+-------------------
+ CAUGHT:42501:true
+(1 row)

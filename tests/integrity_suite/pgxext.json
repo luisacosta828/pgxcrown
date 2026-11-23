@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "comment": "Function and binary integrity attestation E2E suite",
+  "relocatable": true,
+  "trusted": false
+}

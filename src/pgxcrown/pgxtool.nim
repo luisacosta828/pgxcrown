@@ -1,6 +1,7 @@
 import std/[os, strutils, json, osproc, hashes, times, algorithm]
 import pathfinders
 import test_suite
+import integrity
 
 const
   available_hooks = ["emit_log", "post_parse_analyze"]
@@ -231,6 +232,11 @@ Commands:
   install: Automatically copy built extension files (.so, .control, .sql) to PostgreSQL directories
      * pgxtool install <name>
 
+  verify: Verify extension integrity manifest, SHA-256 hashes, optional HMAC signature, and binary symbols
+     * pgxtool verify <name|path>
+     * pgxtool verify <name|path> --installed
+     * pgxtool verify <name|path> --require-signature
+
   create-hook: Initialize a new project template for creating Postgres hooks
      * pgxtool create-hook emit_log
 
@@ -255,6 +261,28 @@ Commands:
 
   version: Show installed pgxcrown / pgxtool version
      * pgxtool --version
+"""
+
+proc verify_cli_helper() =
+  echo """
+Usage: pgxtool verify <name|path> [options]
+
+Verify extension integrity manifest (<ext>.integrity.json), artifact SHA-256 hashes
+(.so, .sql, .control), optional HMAC-SHA256 signature (via PGX_INTEGRITY_KEY),
+and ELF symbol security audit.
+
+Arguments:
+  <name|path>             Extension name (in PGXTOOL_HOME or installed dir) or project path
+
+Options:
+  --installed             Verify files installed in PostgreSQL pkglibdir & extensiondir
+  --require-signature     Require valid HMAC-SHA256 signature verified against PGX_INTEGRITY_KEY
+  --help, -h              Display this help message
+
+Examples:
+  * pgxtool verify my_ext
+  * pgxtool verify ./tests/integrity_suite --require-signature
+  * pgxtool verify integrity_suite --installed
 """
 
 proc test_cli_helper() =
@@ -506,6 +534,8 @@ proc cleanupGeneratedFiles*(dir: string, prjName: string, tmpFile: string) =
     dir / "lib" & prjName & ".so",
     dir / prjName & ".control",
     dir / prjName & ".sql",
+    dir / prjName & ".functions.json",
+    dir / prjName & ".integrity.json",
     dir / "install.sh"
   ]
   if dirExists(dir):
@@ -642,6 +672,23 @@ proc clean_extension*(req: string) =
     removeDir(buildDir)
   echo "🧹 Cleaned build artifacts and cache for extension '", prjName, "'."
 
+proc parseControlDefaultVersion(controlPath: string): string =
+  result = "0.1.0"
+  if not fileExists(controlPath):
+    return
+  try:
+    for line in readFile(controlPath).splitLines():
+      let trimmed = line.strip()
+      if trimmed.len == 0 or trimmed.startsWith("#") or '=' notin trimmed:
+        continue
+      let parts = trimmed.split('=', maxsplit = 1)
+      if parts.len == 2 and parts[0].strip().toLowerAscii() == "default_version":
+        let val = parts[1].strip().strip(chars = {'\'', '"'})
+        if val.len > 0:
+          return val
+  except CatchableError:
+    discard
+
 proc ensureHostCompileToolchain() =
   if findExe("nim").len == 0:
     quit("❌ 'nim' compiler not found on host PATH.\nℹ️  Tip: run 'pgxtool test <project>' to compile and test inside prebuilt GHCR/Docker containers, or install Nim >= 2.0.0.")
@@ -678,14 +725,20 @@ proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = fa
   let currentSourceHash = computeSourceHash(projectDir)
   const currentPgxcrownVersion = PgxcrownVersion & "-arc"
 
+  let integrityKey = getEnv("PGX_INTEGRITY_KEY", "")
+  let integrityJsonPath = dir / (prjName & ".integrity.json")
+
   # Smart incremental check: if target library exists and sources haven't changed, skip build (unless debug or force)
-  if not force and not cleanBefore and not debug and targetLib.len > 0 and fileExists(targetLib) and fileExists(manifestFile):
+  if not force and not cleanBefore and not debug and targetLib.len > 0 and fileExists(targetLib) and
+     fileExists(manifestFile) and fileExists(integrityJsonPath):
     try:
       let manifest = parseJson(readFile(manifestFile))
       let savedHash = manifest.getOrDefault("source_hash").getStr("")
       let savedVer = manifest.getOrDefault("pgxcrown_version").getStr("")
       let savedTargetVer = manifest.getOrDefault("target_pg_version").getInt(0)
-      if savedHash == currentSourceHash and savedVer == currentPgxcrownVersion and savedTargetVer == targetPgVersion:
+      let savedSigned = manifest.getOrDefault("integrity_signed").getBool(false)
+      if savedHash == currentSourceHash and savedVer == currentPgxcrownVersion and
+         savedTargetVer == targetPgVersion and savedSigned == (integrityKey.len > 0):
         echo "✨ Extension '", prjName, "' is up to date (no changes detected)."
         echo "   Binary: ", targetLib
         echo "   To force a rebuild, run: pgxtool build-extension ", prjName, " --force"
@@ -733,6 +786,31 @@ proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = fa
       if fileExists(manifestFile): removeFile(manifestFile)
       quit("❌ [SECURITY VIOLATION] Compilation aborted for extension '" & prjName & "' due to restricted C system calls.")
 
+    let controlPath = dir / (prjName & ".control")
+    let extVersion = parseControlDefaultVersion(controlPath)
+    let versionedSql = dir / (prjName & "--" & extVersion & ".sql")
+    let plainSql = dir / (prjName & ".sql")
+    let sqlPath = if fileExists(versionedSql): versionedSql else: plainSql
+    let fnJsonPath = dir / (prjName & ".functions.json")
+    let fnAttestations =
+      if fileExists(fnJsonPath):
+        jsonToFunctions(parseJson(readFile(fnJsonPath)))
+      else:
+        @[]
+    var integrityManifest = IntegrityManifest(
+      schemaVersion: IntegritySchemaVersion,
+      extension: prjName,
+      version: extVersion,
+      soSha256: sha256File(targetLib),
+      sqlSha256: sha256File(sqlPath),
+      controlSha256: sha256File(controlPath),
+      functions: fnAttestations,
+      hmacSha256: ""
+    )
+    if integrityKey.len > 0:
+      signManifest(integrityManifest, integrityKey)
+    writeFile(integrityJsonPath, pretty(manifestToJson(integrityManifest)))
+
   # Clean up temporary staged source files to leave only built outputs and incremental cache
   if dirExists(stagedRoot):
     removeDir(stagedRoot)
@@ -743,6 +821,7 @@ proc compile2pgx*(input_file: string, targetPgVersion: int = 0, force: bool = fa
     "source_hash": currentSourceHash,
     "pgxcrown_version": currentPgxcrownVersion,
     "target_pg_version": targetPgVersion,
+    "integrity_signed": (integrityKey.len > 0),
     "last_build_time": $now(),
     "binary_path": targetLib
   }
@@ -800,6 +879,9 @@ proc generate_install_script*(req: string, projectDirOverride: string = ""): str
   script_content.add "if [ -f \"" & prjName & ".control\" ]; then\n"
   script_content.add "  cp -f \"" & prjName & ".control\" \"$EXTDIR/\"\n"
   script_content.add "fi\n"
+  script_content.add "if [ -f \"" & prjName & ".integrity.json\" ]; then\n"
+  script_content.add "  cp -f \"" & prjName & ".integrity.json\" \"$EXTDIR/\"\n"
+  script_content.add "fi\n"
   script_content.add "for f in " & prjName & "--*.sql; do\n"
   script_content.add "  [ -f \"$f\" ] && cp -f \"$f\" \"$EXTDIR/\"\n"
   script_content.add "done\n"
@@ -831,6 +913,108 @@ proc install_extension(req: string) =
   echo "Generated install script: ", script_path
   echo "To install into PostgreSQL with privileges, run:"
   echo "  sudo ", script_path
+
+proc verifyExtension*(req: string, installed: bool = false, requireSignature: bool = false): bool =
+  var
+    prjName = ""
+    manifestPath = ""
+    soPath = ""
+    controlPath = ""
+    sqlDir = ""
+
+  if installed:
+    if req.len == 0:
+      let cwd = getCurrentDir().strip(leading = false, trailing = true, chars = {'/', '\\'})
+      if fileExists(cwd / "src" / "main.nim"):
+        prjName = cwd.lastPathPart
+    else:
+      let cleaned = req.strip(leading = false, trailing = true, chars = {'/', '\\'})
+      prjName = cleaned.lastPathPart
+    if prjName.len == 0:
+      echo "❌ [INTEGRITY VIOLATION] Could not resolve extension name for installed verification."
+      return false
+    let pkglibdir = pgLibFinder()
+    let extdir = pgExtensionDirFinder()
+    if pkglibdir.len == 0 or extdir.len == 0:
+      echo "❌ [INTEGRITY VIOLATION] Failed to locate PostgreSQL pkglibdir / extensiondir via pg_config."
+      return false
+    manifestPath = extdir / (prjName & ".integrity.json")
+    soPath = pkglibdir / (prjName & ".so")
+    controlPath = extdir / (prjName & ".control")
+    sqlDir = extdir
+  else:
+    var (resolvedName, resolvedDir) = resolveExtProject(pgxtool_init_dir, req)
+    if not dirExists(resolvedDir) and req.len > 0:
+      let absCand = absolutePath(req).strip(leading = false, trailing = true, chars = {'/', '\\'})
+      if dirExists(absCand / "src"):
+        resolvedName = absCand.lastPathPart
+        resolvedDir = absCand
+    prjName = resolvedName
+    if prjName.len == 0 or not dirExists(resolvedDir):
+      echo "❌ [INTEGRITY VIOLATION] Extension project not found: ", (if req.len > 0: req else: getCurrentDir())
+      return false
+    let srcDir = resolvedDir / "src"
+    manifestPath = srcDir / (prjName & ".integrity.json")
+    if fileExists(srcDir / (prjName & ".so")):
+      soPath = srcDir / (prjName & ".so")
+    elif fileExists(srcDir / prjName):
+      soPath = srcDir / prjName
+    elif fileExists(srcDir / ("lib" & prjName & ".so")):
+      soPath = srcDir / ("lib" & prjName & ".so")
+    else:
+      soPath = srcDir / (prjName & ".so")
+    controlPath = srcDir / (prjName & ".control")
+    sqlDir = srcDir
+
+  if not fileExists(manifestPath):
+    echo "❌ [INTEGRITY VIOLATION] Integrity manifest not found: ", manifestPath
+    return false
+
+  var manifest: IntegrityManifest
+  try:
+    manifest = jsonToManifest(parseJson(readFile(manifestPath)))
+  except CatchableError as e:
+    echo "❌ [INTEGRITY VIOLATION] Invalid integrity manifest (", manifestPath, "): ", e.msg
+    return false
+
+  if manifest.extension != prjName:
+    echo "❌ [INTEGRITY VIOLATION] Manifest extension mismatch: expected '", prjName, "', got '", manifest.extension, "'"
+    return false
+
+  let key = getEnv("PGX_INTEGRITY_KEY", "")
+  if requireSignature or manifest.hmacSha256.len > 0:
+    if key.len == 0:
+      if requireSignature:
+        echo "❌ [INTEGRITY VIOLATION] --require-signature was specified, but PGX_INTEGRITY_KEY is not set."
+      else:
+        echo "❌ [INTEGRITY VIOLATION] Manifest contains an HMAC-SHA256 signature, but PGX_INTEGRITY_KEY is not set."
+      return false
+    if manifest.hmacSha256.len == 0:
+      echo "❌ [INTEGRITY VIOLATION] --require-signature was specified, but manifest is unsigned (empty hmacSha256)."
+      return false
+    if not verifyManifestSignature(manifest, key):
+      echo "❌ [INTEGRITY VIOLATION] HMAC-SHA256 signature verification failed for ", manifestPath
+      return false
+
+  let versionedSql = sqlDir / (prjName & "--" & manifest.version & ".sql")
+  let plainSql = sqlDir / (prjName & ".sql")
+  let sqlPath = if fileExists(versionedSql): versionedSql else: plainSql
+
+  let artifactErrors = verifyDiskArtifacts(manifest, soPath, sqlPath, controlPath)
+  if artifactErrors.len > 0:
+    echo "❌ [INTEGRITY VIOLATION] Artifact hash verification failed for extension '", prjName, "':"
+    for err in artifactErrors:
+      echo "   • ", err
+    return false
+
+  if not auditBinarySymbols(soPath):
+    echo "❌ [INTEGRITY VIOLATION] Binary security audit failed for ", soPath
+    return false
+
+  let sigStatus = if manifest.hmacSha256.len > 0: "HMAC-SHA256 verified" else: "unsigned"
+  echo "✅ [INTEGRITY VERIFIED] Extension '", prjName, "' v", manifest.version,
+       " (", manifest.functions.len, " attested routines, ", sigStatus, ")"
+  return true
 
 template build_project_template(req: string, kind: string = "") =
   if dirExists( pgxtool_init_dir / req):
@@ -1003,6 +1187,37 @@ Clean build artifacts (.so, .sql, .control, install.sh) and the build cache (.pg
       cli_helper()
       return
     install_extension(req)
+
+  of "verify":
+    var installedMode = false
+    var requireSig = false
+    req = ""
+    var idx = 2
+    while idx <= pc:
+      let flag = paramStr(idx)
+      if flag in ["--help", "-h", "help"]:
+        verify_cli_helper()
+        return
+      elif flag == "--installed":
+        installedMode = true
+        idx += 1
+      elif flag == "--require-signature":
+        requireSig = true
+        idx += 1
+      elif flag.startsWith("-"):
+        quit("❌ [INTEGRITY VIOLATION] Unknown option for verify: " & flag)
+      elif req.len == 0:
+        req = flag
+        idx += 1
+      else:
+        quit("❌ [INTEGRITY VIOLATION] Unexpected argument for verify: " & flag)
+    if req.len == 0 and not installedMode:
+      let (implicitName, _) = resolveExtProject(pgxtool_init_dir, "")
+      if implicitName.len == 0:
+        verify_cli_helper()
+        quit(1)
+    if not verifyExtension(req, installed = installedMode, requireSignature = requireSig):
+      quit(1)
 
   of "path-finders":
     echo "pg_config  = ", pgconfigFinder()
