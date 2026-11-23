@@ -1,0 +1,184 @@
+\set VERBOSITY terse
+CREATE FUNCTION pg_temp.try_set_suset() RETURNS text LANGUAGE plpgsql AS $$
+BEGIN
+  SET ex11.strict_guard = off;
+  RETURN 'UNEXPECTED_OK';
+EXCEPTION WHEN insufficient_privilege THEN
+  RETURN 'BLOCKED_42501';
+END $$;
+CREATE FUNCTION
+CREATE FUNCTION pg_temp.try_show_token() RETURNS text LANGUAGE plpgsql AS $$
+BEGIN
+  EXECUTE 'SHOW ex11.audit_token';
+  RETURN 'UNEXPECTED_OK';
+EXCEPTION WHEN insufficient_privilege THEN
+  RETURN 'BLOCKED_42501';
+END $$;
+CREATE FUNCTION
+CREATE FUNCTION pg_temp.try_read_token_udf() RETURNS text LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM ex11_read_audit_token();
+  RETURN 'UNEXPECTED_OK';
+EXCEPTION WHEN insufficient_privilege THEN
+  RETURN 'BLOCKED_42501';
+END $$;
+CREATE FUNCTION
+CREATE FUNCTION pg_temp.try_drop_protected() RETURNS text LANGUAGE plpgsql AS $$
+BEGIN
+  EXECUTE 'DROP TABLE ex11_protected_tbl';
+  RETURN 'UNEXPECTED_OK';
+EXCEPTION WHEN insufficient_privilege THEN
+  RETURN 'BLOCKED_42501';
+END $$;
+CREATE FUNCTION
+-- 1. Preload & Secure GUCs (pg_settings excludes superuserOnly ex11.audit_token)
+SHOW shared_preload_libraries;
+      shared_preload_libraries
+-------------------------------------
+ 11_secure_gucs_and_composable_hooks
+(1 row)
+
+SHOW ex11.max_rows;
+ ex11.max_rows
+---------------
+ 50
+(1 row)
+
+SHOW ex11.strict_guard;
+ ex11.strict_guard
+-------------------
+ on
+(1 row)
+
+SHOW ex11.audit_token;
+ ex11.audit_token
+------------------
+ ex11-secret-boot
+(1 row)
+
+SELECT name, setting, context FROM pg_settings WHERE name LIKE 'ex11.%' ORDER BY name;
+       name        | setting |  context
+-------------------+---------+-----------
+ ex11.max_rows     | 50      | user
+ ex11.strict_guard | on      | superuser
+(2 rows)
+
+-- 2. SET LOCAL transactional rollback & RBAC with non-superuser role
+BEGIN;
+BEGIN
+SET LOCAL ex11.max_rows = 12;
+SET
+SELECT ex11_guc_status() AS status_in_tx;
+         status_in_tx
+-------------------------------
+ max_rows=12|strict_guard=true
+(1 row)
+
+ROLLBACK;
+ROLLBACK
+SELECT ex11_guc_status() AS status_after_rollback;
+     status_after_rollback
+-------------------------------
+ max_rows=50|strict_guard=true
+(1 row)
+
+CREATE ROLE ex11_lowpriv LOGIN NOSUPERUSER;
+CREATE ROLE
+SET ROLE ex11_lowpriv;
+SET
+BEGIN;
+BEGIN
+SELECT ex11_set_max_rows_local('25') AS local_set_res;
+ local_set_res
+---------------
+ ok
+(1 row)
+
+SHOW ex11.max_rows;
+ ex11.max_rows
+---------------
+ 25
+(1 row)
+
+COMMIT;
+COMMIT
+SELECT pg_temp.try_set_suset() AS suset_blocked,
+       pg_temp.try_show_token() AS show_token_blocked,
+       pg_temp.try_read_token_udf() AS udf_token_blocked;
+ suset_blocked | show_token_blocked | udf_token_blocked
+---------------+--------------------+-------------------
+ BLOCKED_42501 | BLOCKED_42501      | BLOCKED_42501
+(1 row)
+
+RESET ROLE;
+RESET
+DROP ROLE ex11_lowpriv;
+DROP ROLE
+-- 3. Composable ExecutorEnd + ProcessUtility hooks coexisting with UDFs
+SELECT ex11_reset_hooks() AS hooks_reset;
+  hooks_reset
+----------------
+ hooks_reset_ok
+(1 row)
+
+CREATE TABLE ex11_protected_tbl (id int PRIMARY KEY);
+CREATE TABLE
+CREATE TABLE ex11_scratch_tbl (id int PRIMARY KEY);
+CREATE TABLE
+CREATE TABLE ex11_tracked_tbl (id int PRIMARY KEY, label text NOT NULL);
+CREATE TABLE
+INSERT INTO ex11_tracked_tbl VALUES (1, 'a'), (2, 'b');
+INSERT 0 2
+SELECT id, label FROM ex11_tracked_tbl ORDER BY id;
+ id | label
+----+-------
+  1 | a
+  2 | b
+(2 rows)
+
+UPDATE ex11_tracked_tbl SET label = 'b2' WHERE id = 2;
+UPDATE 1
+SELECT pg_temp.try_drop_protected() AS protected_drop_blocked;
+ protected_drop_blocked
+------------------------
+ BLOCKED_42501
+(1 row)
+
+DROP TABLE ex11_scratch_tbl;
+DROP TABLE
+SELECT ex11_hook_stats() AS hook_stats;
+                                hook_stats
+--------------------------------------------------------------------------
+ exec_end=true|util=true|queries=3|rows=5|blocked_drops=1|allowed_drops=1
+(1 row)
+
+-- 4. Live catalog integrity attestation + SHA-256 verification + tamper detection
+SELECT ex11_integrity_report() AS integrity_ok;
+                        integrity_ok
+-------------------------------------------------------------
+ intact=true|violations=0|codes=NONE|sha64=true|fns_gt0=true
+(1 row)
+
+SELECT ex11_assert_intact() AS assert_ok;
+ assert_ok
+-----------
+ INTACT
+(1 row)
+
+BEGIN;
+BEGIN
+ALTER FUNCTION ex11_assert_intact() VOLATILE;
+ALTER FUNCTION
+SELECT ex11_integrity_report() AS tampered_report;
+                                         tampered_report
+--------------------------------------------------------------------------------------------------
+ intact=false|violations=1|codes=VOLATILITY_TAMPERED:ex11_assert_intact()|sha64=true|fns_gt0=true
+(1 row)
+
+ROLLBACK;
+ROLLBACK
+SELECT ex11_assert_intact() AS restored_after_rollback;
+ restored_after_rollback
+-------------------------
+ INTACT
+(1 row)

@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "comment": "Plugin API (pgxSql pre/post, mixin traits, registerPgxPluginInit) and custom scaffolding template",
+  "relocatable": true,
+  "trusted": true
+}

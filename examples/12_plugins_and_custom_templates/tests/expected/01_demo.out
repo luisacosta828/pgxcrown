@@ -1,0 +1,77 @@
+\set VERBOSITY terse
+-- 1. Verify pre-phase table, post-phase index/view, and zero leaked mixin procs
+SELECT to_regclass('ex12_audit_log') IS NOT NULL AS has_pre_table,
+       to_regclass('idx_ex12_audit_tag') IS NOT NULL AS has_post_idx,
+       to_regclass('ex12_audit_summary') IS NOT NULL AS has_post_view;
+ has_pre_table | has_post_idx | has_post_view
+---------------+--------------+---------------
+ t             | t            | t
+(1 row)
+
+SELECT count(*) AS leaked_mixin_procs
+FROM pg_proc
+WHERE proname IN ('pgxsqltype', 'pgxtodatum', 'pgxfromdatum', 'toparam', 'toqueryparam');
+ leaked_mixin_procs
+--------------------
+                  0
+(1 row)
+
+-- 2. Verify automatic _PG_init execution of registerPgxPluginInit (idempotent)
+SELECT ex12_plugin_ready() AS plugin_initialized;
+ plugin_initialized
+--------------------
+ t
+(1 row)
+
+-- 3. Custom base type normalization & plugin_api mixin contract
+SELECT '  SecOps  '::"Ex12AuditTag" AS parsed_tag;
+ parsed_tag
+------------
+ secops
+(1 row)
+
+SELECT ex12_describe_tag('SecOps'::"Ex12AuditTag") AS described_tag;
+               described_tag
+--------------------------------------------
+ sql=Ex12AuditTag|val=secops|param='secops'
+(1 row)
+
+-- 4. Binary SPI v2 QueryBuilder combining Ex12AuditTag + Option[string] (EMPTY / NULL / SOME)
+SELECT ex12_record_audit('secops'::"Ex12AuditTag", '') AS id_empty;
+ id_empty
+----------
+        1
+(1 row)
+
+SELECT ex12_record_audit('SECOPS'::"Ex12AuditTag", NULL) AS id_null;
+ id_null
+---------
+       2
+(1 row)
+
+SELECT ex12_record_audit('  SecOps '::"Ex12AuditTag", 'login_ok') AS id_some;
+ id_some
+---------
+       3
+(1 row)
+
+SELECT ex12_record_audit('billing'::"Ex12AuditTag", 'invoice_1') AS id_billing;
+ id_billing
+------------
+          4
+(1 row)
+
+SELECT ex12_fetch_audit('secops'::"Ex12AuditTag") AS secops_entries;
+                    secops_entries
+------------------------------------------------------
+ 1:secops:EMPTY|2:secops:NULL|3:secops:SOME(login_ok)
+(1 row)
+
+SELECT tag, entry_count, tag_meta
+FROM ex12_audit_summary
+ORDER BY tag;
+   tag   | entry_count |                   tag_meta
+---------+-------------+----------------------------------------------
+ billing |           1 | sql=Ex12AuditTag|val=billing|param='billing'
+ secops  |           3 | sql=Ex12AuditTag|val=secops|param='secops'
+(2 rows)

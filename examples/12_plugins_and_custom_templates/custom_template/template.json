@@ -1,0 +1,19 @@
+{
+  "name": "ex12-custom-service",
+  "description": "Custom reusable pgxcrown service template with configurable service_tag and SQL regression suite",
+  "minPgxcrownVersion": "0.31.0",
+  "variables": [
+    {
+      "name": "service_tag",
+      "default": "core",
+      "pattern": "^[a-z][a-z0-9_]{1,20}$"
+    }
+  ],
+  "files": [
+    "pgxext.json",
+    "src/main.nim",
+    {"src": "regress/sql/01_basic.sql", "dest": "tests/sql/01_basic.sql"},
+    {"src": "regress/expected/01_basic.out", "dest": "tests/expected/01_basic.out"},
+    "README.md"
+  ]
+}

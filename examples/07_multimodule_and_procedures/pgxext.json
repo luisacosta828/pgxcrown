@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "comment": "Fallback metadata from pgxext.json (overridden by pgxExtension in main.nim)",
+  "relocatable": true,
+  "trusted": false
+}
