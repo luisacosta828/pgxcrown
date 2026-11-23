@@ -1,9 +1,19 @@
+## =============================================================================
+## Pgxcrown post_parse_analyze Hook Types & Safe Parse/Query Accessors
+## =============================================================================
+
+import std/os
+
+const
+  PgxPostParseCHeadersDir = currentSourcePath.parentDir.parentDir / "c_headers"
+  pgHookTargetVersion {.intdefine: "pgTargetVersion".}: int = 0
+
+{.passC: "-I" & quoteShell(PgxPostParseCHeadersDir).}
+
 {.emit: """/*INCLUDESECTION*/
 #include "postgres.h"
 #include "parser/analyze.h"
 """.}
-
-const pgHookTargetVersion {.intdefine: "pgTargetVersion".}: int = 0
 
 proc detectHookPgMajor(): int {.compileTime.} =
   when pgHookTargetVersion > 0:
@@ -59,3 +69,23 @@ type
   post_parse_analyze_hook_type* {.exportc.} = proc(pstate: ptr ParseState, query: ptr Query, jstate: JumbleStatePtr) {.cdecl.}
 
 {.pop.}
+
+type
+  PostParseHook* = proc(pstate: ptr ParseState, query: ptr Query, jstate: JumbleStatePtr)
+  PostParseCallback* = PostParseHook
+
+{.push header: "pgx_hooks.h".}
+proc pgxPstateSourceText(pstate: ptr ParseState): cstring {.importc: "pgx_pstate_source_text".}
+proc pgxQueryId(query: ptr Query): int64 {.importc: "pgx_query_id".}
+{.pop.}
+
+proc sourceText*(pstate: ptr ParseState): string {.inline.} =
+  ## Safely extracts ParseState.p_sourcetext (returns "" if nil).
+  if pstate == nil:
+    return ""
+  let s = pgxPstateSourceText(pstate)
+  if s == nil: "" else: $s
+
+proc queryId*(query: ptr Query): int64 {.inline.} =
+  ## Safely extracts Query.queryId across PG 14-18 (returns 0 if nil).
+  pgxQueryId(query)

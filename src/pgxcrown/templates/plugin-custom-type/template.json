@@ -1,0 +1,20 @@
+{
+  "name": "plugin-custom-type",
+  "description": "Extensible plugin submodule implementing pgxSqlType/pgxToDatum/pgxFromDatum/toParam, registerPgxPluginInit, and pgxSql",
+  "minPgxcrownVersion": "0.31.0",
+  "variables": [
+    {
+      "name": "type_name",
+      "default": "metric_tag",
+      "pattern": "^[a-z][a-z0-9_]{1,31}$"
+    }
+  ],
+  "files": [
+    "pgxext.json",
+    "src/plugin_type.nim",
+    "src/main.nim",
+    {"src": "regress/sql/01_basic.sql", "dest": "tests/sql/01_basic.sql"},
+    {"src": "regress/expected/01_basic.out", "dest": "tests/expected/01_basic.out"},
+    "README.md"
+  ]
+}

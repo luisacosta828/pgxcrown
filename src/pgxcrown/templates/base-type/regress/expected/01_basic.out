@@ -1,0 +1,54 @@
+CREATE FUNCTION pg_temp.check_invalid_{{type_name}}(raw text) RETURNS text LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM raw::{{type_name}};
+  RETURN 'UNEXPECTED_OK';
+EXCEPTION WHEN invalid_parameter_value THEN
+  RETURN 'REJECTED_22023';
+END $$;
+CREATE FUNCTION
+SELECT '  ab-42  '::{{type_name}} AS parsed_code;
+ parsed_code
+-------------
+ AB-42
+(1 row)
+
+SELECT {{project_snake}}_prefix('pgx-99'::{{type_name}}) AS code_prefix;
+ code_prefix
+-------------
+ PGX
+(1 row)
+
+SELECT {{project_snake}}_opt_prefix(NULL::{{type_name}}) IS NULL AS null_prefix_is_null;
+ null_prefix_is_null
+---------------------
+ t
+(1 row)
+
+SELECT pg_temp.check_invalid_{{type_name}}('   ') AS empty_rejected;
+ empty_rejected
+----------------
+ REJECTED_22023
+(1 row)
+
+CREATE TABLE {{project_snake}}_items (
+  id int4 PRIMARY KEY,
+  code {{type_name}}
+);
+CREATE TABLE
+INSERT INTO {{project_snake}}_items VALUES
+  (1, '  ab-42  '),
+  (2, 'pgx-99'),
+  (3, NULL);
+INSERT 0 3
+SELECT id,
+       code,
+       {{project_snake}}_opt_prefix(code) AS opt_prefix,
+       {{project_snake}}_coalesce_code(code, 'dflt-0'::{{type_name}}) AS effective_code
+FROM {{project_snake}}_items
+ORDER BY id;
+ id |  code  | opt_prefix | effective_code
+----+--------+------------+----------------
+  1 | AB-42  | AB         | AB-42
+  2 | PGX-99 | PGX        | PGX-99
+  3 |        |            | DFLT-0
+(3 rows)

@@ -1,0 +1,93 @@
+CREATE FUNCTION pg_temp.check_empty_label() RETURNS text LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM {{project_snake}}_record('   ', 'ignored');
+  RETURN 'UNEXPECTED_OK';
+EXCEPTION WHEN invalid_parameter_value THEN
+  RETURN 'REJECTED_22023';
+END $$;
+CREATE FUNCTION
+SHOW {{guc_prefix}}.max_limit;
+ {{guc_prefix}}.max_limit
+------------------
+ 100
+(1 row)
+
+SHOW {{guc_prefix}}.strict_mode;
+ {{guc_prefix}}.strict_mode
+--------------------
+ on
+(1 row)
+
+SELECT {{project_snake}}_policy_status() AS policy_default;
+       policy_default
+----------------------------
+ max_limit=100|strict_mode=true
+(1 row)
+
+SELECT pg_temp.check_empty_label() AS strict_empty_check;
+ strict_empty_check
+--------------------
+ REJECTED_22023
+(1 row)
+
+BEGIN;
+BEGIN
+SELECT {{project_snake}}_record('empty_item', '') > 0 AS empty_saved;
+ empty_saved
+-------------
+ t
+(1 row)
+
+SELECT {{project_snake}}_record('val_item', 'hello') > 0 AS val_saved;
+ val_saved
+-----------
+ t
+(1 row)
+
+COMMIT;
+COMMIT
+BEGIN;
+BEGIN
+SELECT {{project_snake}}_record('rolled_back', NULL) > 0 AS abort_probe;
+ abort_probe
+-------------
+ t
+(1 row)
+
+ROLLBACK;
+ROLLBACK
+SELECT {{project_snake}}_record('null_item', NULL) > 0 AS null_saved;
+ null_saved
+------------
+ t
+(1 row)
+
+SELECT {{project_snake}}_xact_stats() AS xact_stats;
+     xact_stats
+---------------------
+ committed=3|aborted=1
+(1 row)
+
+SELECT {{project_snake}}_fetch_summary() AS all_rows_summary;
+                  all_rows_summary
+----------------------------------------------------
+ empty_item:EMPTY|val_item:SOME(hello)|null_item:NULL
+(1 row)
+
+BEGIN;
+BEGIN
+SET LOCAL {{guc_prefix}}.max_limit = 2;
+SET
+SELECT {{project_snake}}_fetch_summary() AS limited_summary;
+         limited_summary
+---------------------------------
+ empty_item:EMPTY|val_item:SOME(hello)
+(1 row)
+
+COMMIT;
+COMMIT
+SELECT {{project_snake}}_integrity_status() AS integrity_status;
+            integrity_status
+----------------------------------------
+ intact=true|violations=0|sha64=true
+(1 row)

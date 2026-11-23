@@ -1,0 +1,63 @@
+SELECT {{project_snake}}_hook_reset() AS hook_armed;
+ hook_armed
+------------
+ t
+(1 row)
+
+SELECT {{project_snake}}_hook_enabled() AS enabled_default;
+ enabled_default
+-----------------
+ t
+(1 row)
+
+SET {{guc_prefix}}.enabled = off;
+SET
+SELECT {{project_snake}}_hook_enabled() AS enabled_off;
+ enabled_off
+-------------
+ f
+(1 row)
+
+SELECT 101 AS ignored_while_disabled;
+ ignored_while_disabled
+------------------------
+                    101
+(1 row)
+
+SELECT {{project_snake}}_hook_stats() = 'label={{hook_label}}|installed=true|enabled=false|parsed=0|selects=0|exec_end=0' AS disabled_stats_ok;
+ disabled_stats_ok
+-------------------
+ t
+(1 row)
+
+SET {{guc_prefix}}.enabled = on;
+SET
+SELECT {{project_snake}}_hook_enabled() AS enabled_on;
+ enabled_on
+------------
+ t
+(1 row)
+
+SELECT 42 AS probe_select;
+ probe_select
+--------------
+           42
+(1 row)
+
+SELECT {{project_snake}}_hook_stats() = 'label={{hook_label}}|installed=true|enabled=true|parsed=1|selects=1|exec_end=1' AS enabled_stats_ok;
+ enabled_stats_ok
+------------------
+ t
+(1 row)
+
+SELECT {{project_snake}}_hook_reset() AS hook_reset_ok;
+ hook_reset_ok
+---------------
+ t
+(1 row)
+
+SELECT {{project_snake}}_hook_stats() = 'label={{hook_label}}|installed=true|enabled=true|parsed=0|selects=0|exec_end=0' AS reset_stats_ok;
+ reset_stats_ok
+----------------
+ t
+(1 row)

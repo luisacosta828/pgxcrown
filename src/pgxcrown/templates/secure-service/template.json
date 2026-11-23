@@ -1,0 +1,20 @@
+{
+  "name": "secure-service",
+  "description": "Production-ready v0.32+v0.33 service with Secure GUCs, Binary SPI v2, Xact callbacks, and live catalog integrity verification",
+  "minPgxcrownVersion": "0.31.0",
+  "variables": [
+    {
+      "name": "guc_prefix",
+      "default": "pgxsvc",
+      "pattern": "^[a-z][a-z0-9_]{1,20}$"
+    }
+  ],
+  "files": [
+    "pgxext.json",
+    "src/main.nim",
+    {"src": "regress/sql/01_basic.sql", "dest": "tests/sql/01_basic.sql"},
+    {"src": "regress/expected/01_basic.out", "dest": "tests/expected/01_basic.out"},
+    {"src": "regress/preload", "dest": "tests/preload"},
+    "README.md"
+  ]
+}

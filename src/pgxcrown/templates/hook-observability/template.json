@@ -1,0 +1,25 @@
+{
+  "name": "hook-observability",
+  "description": "Composable PostgreSQL post_parse_analyze + ExecutorEnd observability hooks with Secure GUC gating and stats UDFs",
+  "minPgxcrownVersion": "0.31.0",
+  "variables": [
+    {
+      "name": "hook_label",
+      "default": "observability",
+      "pattern": "^[A-Za-z0-9_-]{1,32}$"
+    },
+    {
+      "name": "guc_prefix",
+      "default": "pgxobs",
+      "pattern": "^[a-z][a-z0-9_]{1,20}$"
+    }
+  ],
+  "files": [
+    "pgxext.json",
+    "src/main.nim",
+    {"src": "regress/sql/01_basic.sql", "dest": "tests/sql/01_basic.sql"},
+    {"src": "regress/expected/01_basic.out", "dest": "tests/expected/01_basic.out"},
+    {"src": "regress/preload", "dest": "tests/preload"},
+    "README.md"
+  ]
+}

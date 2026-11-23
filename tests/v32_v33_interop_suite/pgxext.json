@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "comment": "Cross-version v0.32 + v0.33 interop E2E verification suite",
+  "relocatable": true,
+  "trusted": false
+}

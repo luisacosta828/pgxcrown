@@ -123,10 +123,10 @@ jobs:
             TMP_HOOK_HOME="$(mktemp -d)"
             export PGXTOOL_HOME="$TMP_HOOK_HOME"
             pgxtool init >/dev/null
-            pgxtool create-hook emit_log
-            pgxtool build-extension emit_log
-            pgxtool create-hook post_parse_analyze
-            pgxtool build-extension post_parse_analyze
+            for hk in emit_log post_parse_analyze executor process_utility; do
+              pgxtool create-hook "$hk"
+              pgxtool build-extension "$hk"
+            done
             rm -rf "$TMP_HOOK_HOME"
 
             TMP_LSP_HOME="$(mktemp -d)"
@@ -149,16 +149,23 @@ jobs:
               echo "❌ Expected pgxtool verify to reject mismatched PGX_INTEGRITY_KEY!"
               exit 1
             fi
+
+            pgxtool build-extension /tmp/repo_check/tests/v32_v33_interop_suite --force
+            pgxtool verify /tmp/repo_check/tests/v32_v33_interop_suite --require-signature
+            /tmp/repo_check/tests/v32_v33_interop_suite/src/install.sh >/dev/null
+            pgxtool verify v32_v33_interop_suite --installed --require-signature
             unset PGX_INTEGRITY_KEY
             rm -rf "$TMP_VERIFY_HOME"
           '
 
-      - name: Run All 16 E2E Regression Suites (PG ${{ matrix.pg_version }})
+      - name: Run All 20 E2E Regression Suites (PG ${{ matrix.pg_version }})
         run: |
           for suite in \
             arch_v30_suite \
             arrays_suite \
             defaults_and_nulls \
+            guc_security_suite \
+            hooks_composable_suite \
             integrity_suite \
             ipc_dsm_suite \
             json_suite \
@@ -166,18 +173,20 @@ jobs:
             panic_shield \
             pg_ast_lens \
             pgtry_guard \
+            plugin_extensibility_suite \
             security_suite \
             shmem_preload_suite \
             spi_binary_suite \
             srf_suite \
             types_v29_suite \
+            v32_v33_interop_suite \
             xact_callbacks_suite
           do
             echo "==> Running E2E suite: tests/$suite (PG ${{ matrix.pg_version }})"
             pgxtool test "tests/$suite" --pg "${{ matrix.pg_version }}"
           done
 
-      - name: Run CLI Scaffolding Smoke Tests (PG ${{ matrix.pg_version }})
+      - name: Run CLI Scaffolding & LSP Smoke Tests (PG ${{ matrix.pg_version }})
         run: |
           TMP_HOME="$(mktemp -d)"
           trap 'rm -rf "$TMP_HOME"' EXIT
@@ -185,6 +194,7 @@ jobs:
           cd "$TMP_HOME"
           pgxtool init
           pgxtool available-hooks
+          pgxtool list-templates
           pgxtool verify --help >/dev/null
           if pgxtool verify nonexistent_smoke_ext >/dev/null 2>&1; then
             echo "❌ Expected pgxtool verify on nonexistent project to fail!"
@@ -200,9 +210,20 @@ jobs:
           pgxtool create-worker order_archiver
           pgxtool create-hook emit_log
           pgxtool create-hook post_parse_analyze
+          pgxtool create-hook executor
+          pgxtool create-hook process_utility
+
           [ -f "$TMP_HOME/sample_ext/nim.cfg" ]
           pgxtool sync-lsp sample_ext --pg "${{ matrix.pg_version }}"
 
-          for prj in sample_ext factorial geo_coord nickname is_active grade_code big_counter order_archiver emit_log post_parse_analyze; do
+          for prj in sample_ext factorial geo_coord nickname is_active grade_code big_counter order_archiver emit_log post_parse_analyze executor process_utility; do
             pgxtool test "$prj" --pg "${{ matrix.pg_version }}" --bless
+          done
+
+          for tpl in starter-udf base-type bgworker-service hook-observability plugin-custom-type secure-service; do
+            tpl_prj="tpl_${tpl//-/_}"
+            pgxtool new "$tpl_prj" --template "$tpl"
+            [ -f "$TMP_HOME/$tpl_prj/nim.cfg" ]
+            pgxtool sync-lsp "$tpl_prj" --pg "${{ matrix.pg_version }}"
+            pgxtool test "$tpl_prj" --pg "${{ matrix.pg_version }}"
           done

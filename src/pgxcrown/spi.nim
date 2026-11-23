@@ -456,6 +456,11 @@ proc datumToNim*[T](d: Datum, typid: Oid, isnull: bool): T {.tags: [].} =
       return default(T)
     {.cast(tags: []).}:
       return pgxFromDatum(d, default(T).typeof)
+  elif compiles(pgxFromDatum(default(T).typeof, d)):
+    if isnull:
+      return default(T)
+    {.cast(tags: []).}:
+      return pgxFromDatum(default(T).typeof, d)
   elif T is distinct:
     return T(datumToNim[distinctBase(T)](d, typid, isnull))
   else:
