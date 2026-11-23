@@ -3,7 +3,7 @@ import pathfinders
 import test_suite
 
 const
-  available_hooks = ["emit_log", "post_parse_analyze"]
+  available_hooks = ["emit_log", "post_parse_analyze", "executor", "process_utility"]
   NimblePackageSpec =
     when compiles(staticRead("../../pgxcrown.nimble")):
       staticRead("../../pgxcrown.nimble")
@@ -172,6 +172,35 @@ proc generateHookSource*(hookName: string): (string, string) =
       "  post_parse_analyze_hook = custom_proc\n\n" &
       "proc pg_fini() {.exportc: \"_PG_fini\".} =\n" &
       "  post_parse_analyze_hook = prev_post_parse_analyze\n"
+    of "executor":
+      "import pgxcrown\n\n" &
+      "PG_MODULE_MAGIC\n" &
+      "ActivateHooks\n\n" &
+      "proc onExecutorStart(info: ExecutorQueryInfo, eflags: cint) =\n" &
+      "  discard\n\n" &
+      "proc onExecutorRun(info: ExecutorQueryInfo, direction: ScanDirection, count: uint64, executeOnce: bool) =\n" &
+      "  discard\n\n" &
+      "proc onExecutorFinish(info: ExecutorQueryInfo) =\n" &
+      "  discard\n\n" &
+      "proc onExecutorEnd(info: ExecutorQueryInfo) =\n" &
+      "  discard\n\n" &
+      "proc pg_init() {.exportc: \"_PG_init\", pginitexport.} =\n" &
+      "  registerExecutorStartHook(onExecutorStart)\n" &
+      "  registerExecutorRunHook(onExecutorRun)\n" &
+      "  registerExecutorFinishHook(onExecutorFinish)\n" &
+      "  registerExecutorEndHook(onExecutorEnd)\n\n" &
+      "proc pg_fini() {.exportc: \"_PG_fini\".} =\n" &
+      "  uninstallExecutorHooks()\n"
+    of "process_utility":
+      "import pgxcrown\n\n" &
+      "PG_MODULE_MAGIC\n" &
+      "ActivateHooks\n\n" &
+      "proc onProcessUtility(info: UtilityStmtInfo) =\n" &
+      "  discard\n\n" &
+      "proc pg_init() {.exportc: \"_PG_init\", pginitexport.} =\n" &
+      "  registerProcessUtilityHook(onProcessUtility)\n\n" &
+      "proc pg_fini() {.exportc: \"_PG_fini\".} =\n" &
+      "  uninstallProcessUtilityHook()\n"
     else:
       quit("Unsupported hook template: " & hookName)
   let testSql = "SELECT 1 AS hook_loaded;\n"
@@ -1014,6 +1043,8 @@ Clean build artifacts (.so, .sql, .control, install.sh) and the build cache (.pg
     echo """
     * emit_log
     * post_parse_analyze
+    * executor
+    * process_utility
     """
   of "init":
     prepare_working_directory

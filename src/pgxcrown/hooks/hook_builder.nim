@@ -12,6 +12,8 @@ template remove_and_install_dependencies(file: string, kind: string) =
     case kind:
     of "emit_log": "emit_hook"
     of "post_parse_analyze": "post_parse_hook"
+    of "executor": "executor_hook"
+    of "process_utility": "utility_hook"
     else: ""
 
   var res {.inject.} = newNimNode(nnkStmtList)
@@ -71,17 +73,72 @@ template init_hook(file: string, kind: string, params: seq[NimNode]) =
 macro build_hook*() =
   var (dir, _, _) = splitFile(entrypoint)
   var selectedHook = dir.parentDir.lastPathPart
- 
-  var params: seq[NimNode] = case selectedHook
-    of "emit_log": @[newIdentDefs(ident("edata"), newNimNode(nnkPtrTy).add(ident("ErrorData")))]
-    of "post_parse_analyze": @[
-      newIdentDefs(ident("pstate"), newNimNode(nnkPtrTy).add(ident("ParseState"))),
-      newIdentDefs(ident("query"), newNimNode(nnkPtrTy).add(ident("Query"))),
-      newIdentDefs(ident("jstate"), ident("JumbleStatePtr"))
-    ]
-    else: @[]
 
-  init_hook(entrypoint, selectedHook, params)
+  if selectedHook == "executor":
+    var source = parseStmt(readFile(entrypoint))
+    del(source)
+    let code = """
+import pgxcrown
+import pgxcrown/hooks/executor_hook
+import pgxcrown/hooks/registry
+
+PG_MODULE_MAGIC
+ActivateHooks
+
+proc onExecutorStart(info: ExecutorQueryInfo, eflags: cint) =
+  discard
+
+proc onExecutorRun(info: ExecutorQueryInfo, direction: ScanDirection, count: uint64, executeOnce: bool) =
+  discard
+
+proc onExecutorFinish(info: ExecutorQueryInfo) =
+  discard
+
+proc onExecutorEnd(info: ExecutorQueryInfo) =
+  discard
+
+proc pg_init() {.exportc: "_PG_init", pginitexport.} =
+  registerExecutorStartHook(onExecutorStart)
+  registerExecutorRunHook(onExecutorRun)
+  registerExecutorFinishHook(onExecutorFinish)
+  registerExecutorEndHook(onExecutorEnd)
+
+proc pg_fini() {.exportc: "_PG_fini".} =
+  uninstallExecutorHooks()
+"""
+    writeFile(entrypoint.replace("tmp_", ""), code)
+  elif selectedHook == "process_utility":
+    var source = parseStmt(readFile(entrypoint))
+    del(source)
+    let code = """
+import pgxcrown
+import pgxcrown/hooks/utility_hook
+import pgxcrown/hooks/registry
+
+PG_MODULE_MAGIC
+ActivateHooks
+
+proc onProcessUtility(info: UtilityStmtInfo) =
+  discard
+
+proc pg_init() {.exportc: "_PG_init", pginitexport.} =
+  registerProcessUtilityHook(onProcessUtility)
+
+proc pg_fini() {.exportc: "_PG_fini".} =
+  uninstallProcessUtilityHook()
+"""
+    writeFile(entrypoint.replace("tmp_", ""), code)
+  else:
+    var params: seq[NimNode] = case selectedHook
+      of "emit_log": @[newIdentDefs(ident("edata"), newNimNode(nnkPtrTy).add(ident("ErrorData")))]
+      of "post_parse_analyze": @[
+        newIdentDefs(ident("pstate"), newNimNode(nnkPtrTy).add(ident("ParseState"))),
+        newIdentDefs(ident("query"), newNimNode(nnkPtrTy).add(ident("Query"))),
+        newIdentDefs(ident("jstate"), ident("JumbleStatePtr"))
+      ]
+      else: @[]
+
+    init_hook(entrypoint, selectedHook, params)
 
 
 build_hook()
